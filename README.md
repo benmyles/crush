@@ -543,11 +543,19 @@ API. Don't forget to set `DEEPSEEK_API_KEY` in your environment.
 ```json
 {
   "$schema": "https://charm.land/crush.json",
+  "models": {
+    "large": {
+      "model": "deepseek-chat",
+      "provider": "deepseek",
+      "disable_streaming": true
+    }
+  },
   "providers": {
     "deepseek": {
       "type": "openai-compat",
       "base_url": "https://api.deepseek.com/v1",
       "api_key": "$DEEPSEEK_API_KEY",
+      "disable_streaming_models": ["deepseek-chat"],
       "models": [
         {
           "id": "deepseek-chat",
@@ -564,6 +572,10 @@ API. Don't forget to set `DEEPSEEK_API_KEY` in your environment.
   }
 }
 ```
+
+Provider-level `disable_streaming_models` sets the default stream behavior for
+listed model IDs. You can override that per selected model with
+`models.large.disable_streaming` or `models.small.disable_streaming`.
 
 #### Anthropic-Compatible APIs
 
@@ -641,6 +653,44 @@ To add specific models to the configuration, configure as such:
   }
 }
 ```
+
+For self-deployed Vertex AI models that expose the OpenAI-compatible endpoint,
+configure them as a custom `openai-compat` provider and let Crush use Google
+Application Default Credentials:
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "models": {
+    "large": {
+      "model": "zai-org/glm-5-maas",
+      "provider": "vertex-openapi",
+      "disable_streaming": true
+    }
+  },
+  "providers": {
+    "vertex-openapi": {
+      "type": "openai-compat",
+      "auth_mode": "google-adc",
+      "base_url": "https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi",
+      "disable_streaming_models": ["zai-org/glm-5-maas"],
+      "models": [
+        {
+          "id": "zai-org/glm-5-maas",
+          "name": "GLM 5",
+          "context_window": 128000,
+          "default_max_tokens": 8192
+        }
+      ]
+    }
+  }
+}
+```
+
+When `auth_mode` is set to `google-adc`, Crush ignores any configured
+`Authorization` header and uses ADC bearer tokens automatically. Run
+`gcloud auth application-default login` or otherwise provide ADC credentials
+before starting Crush.
 
 ### Local Models
 

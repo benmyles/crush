@@ -679,6 +679,59 @@ func TestConfig_configureProvidersCustomProviderValidation(t *testing.T) {
 		require.Equal(t, "https://api.custom.com/v1", customProvider.BaseURL)
 	})
 
+	t.Run("custom openai-compatible provider with google adc auth is supported without api key", func(t *testing.T) {
+		cfg := &Config{
+			Providers: csync.NewMapFrom(map[string]ProviderConfig{
+				"vertex-openapi": {
+					BaseURL:  "https://example.com/v1/projects/test/locations/us-central1/endpoints/openapi",
+					Type:     catwalk.TypeOpenAICompat,
+					AuthMode: ProviderAuthModeGoogleADC,
+					Models: []catwalk.Model{{
+						ID: "zai-org/glm-5-maas",
+					}},
+				},
+			}),
+		}
+		cfg.setDefaults("/tmp", "")
+
+		env := env.NewFromMap(map[string]string{})
+		resolver := NewEnvironmentVariableResolver(env)
+		err := cfg.configureProviders(testStore(cfg), env, resolver, []catwalk.Provider{})
+		require.NoError(t, err)
+
+		require.Equal(t, 1, cfg.Providers.Len())
+		customProvider, exists := cfg.Providers.Get("vertex-openapi")
+		require.True(t, exists)
+		require.Equal(t, ProviderAuthModeGoogleADC, customProvider.AuthMode)
+		require.Empty(t, customProvider.APIKey)
+		require.Empty(t, customProvider.APIKeyTemplate)
+	})
+
+	t.Run("custom provider with unsupported google adc auth combination is removed", func(t *testing.T) {
+		cfg := &Config{
+			Providers: csync.NewMapFrom(map[string]ProviderConfig{
+				"custom-anthropic": {
+					BaseURL:  "https://api.anthropic.com/v1",
+					Type:     catwalk.TypeAnthropic,
+					AuthMode: ProviderAuthModeGoogleADC,
+					Models: []catwalk.Model{{
+						ID: "claude-sonnet-4-20250514",
+					}},
+				},
+			}),
+		}
+		cfg.setDefaults("/tmp", "")
+
+		env := env.NewFromMap(map[string]string{})
+		resolver := NewEnvironmentVariableResolver(env)
+		err := cfg.configureProviders(testStore(cfg), env, resolver, []catwalk.Provider{})
+		require.NoError(t, err)
+
+		require.Equal(t, 0, cfg.Providers.Len())
+		_, exists := cfg.Providers.Get("custom-anthropic")
+		require.False(t, exists)
+	})
+
 	t.Run("custom anthropic provider is supported", func(t *testing.T) {
 		cfg := &Config{
 			Providers: csync.NewMapFrom(map[string]ProviderConfig{

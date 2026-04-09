@@ -277,6 +277,48 @@ func TestRunSubAgent(t *testing.T) {
 	})
 }
 
+func TestResolveDisableStreaming(t *testing.T) {
+	t.Parallel()
+
+	t.Run("provider model default is used when selected model does not override it", func(t *testing.T) {
+		t.Parallel()
+
+		disabled := resolveDisableStreaming(
+			config.SelectedModel{Model: "zai-org/glm-5-maas"},
+			config.ProviderConfig{DisableStreamingModels: []string{"zai-org/glm-5-maas"}},
+		)
+		require.True(t, disabled)
+	})
+
+	t.Run("selected model can explicitly re-enable streaming", func(t *testing.T) {
+		t.Parallel()
+
+		override := false
+		disabled := resolveDisableStreaming(
+			config.SelectedModel{
+				Model:            "zai-org/glm-5-maas",
+				DisableStreaming: &override,
+			},
+			config.ProviderConfig{DisableStreamingModels: []string{"zai-org/glm-5-maas"}},
+		)
+		require.False(t, disabled)
+	})
+
+	t.Run("selected model can explicitly disable streaming", func(t *testing.T) {
+		t.Parallel()
+
+		override := true
+		disabled := resolveDisableStreaming(
+			config.SelectedModel{
+				Model:            "zai-org/glm-5-maas",
+				DisableStreaming: &override,
+			},
+			config.ProviderConfig{},
+		)
+		require.True(t, disabled)
+	})
+}
+
 func TestUpdateParentSessionCost(t *testing.T) {
 	t.Run("accumulates cost correctly", func(t *testing.T) {
 		env := testEnv(t)

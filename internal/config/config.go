@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +18,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/env"
+	"github.com/charmbracelet/crush/internal/googleadc"
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/invopop/jsonschema"
@@ -46,6 +49,8 @@ var defaultContextPaths = []string{
 	"Agents.md",
 }
 
+var newGoogleADCHTTPClient = googleadc.NewHTTPClient
+
 type SelectedModelType string
 
 // String returns the string representation of the [SelectedModelType].
@@ -63,6 +68,13 @@ const (
 	AgentTask  string = "task"
 )
 
+type ProviderAuthMode string
+
+const (
+	ProviderAuthModeAPIKey    ProviderAuthMode = "api-key"
+	ProviderAuthModeGoogleADC ProviderAuthMode = "google-adc"
+)
+
 type SelectedModel struct {
 	// The model id as used by the provider API.
 	// Required.
@@ -76,6 +88,9 @@ type SelectedModel struct {
 
 	// Used by anthropic models that can reason to indicate if the model should think.
 	Think bool `json:"think,omitempty" jsonschema:"description=Enable thinking mode for Anthropic models that support reasoning"`
+
+	// Overrides the provider default stream behavior for this selected model.
+	DisableStreaming *bool `json:"disable_streaming,omitempty" jsonschema:"description=Disable streaming for this selected model, overriding the provider default when set"`
 
 	// Overrides the default model configuration.
 	MaxTokens        int64    `json:"max_tokens,omitempty" jsonschema:"description=Maximum number of tokens for model responses,maximum=200000,example=4096"`
@@ -100,6 +115,8 @@ type ProviderConfig struct {
 	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=openai-compat,enum=anthropic,enum=gemini,enum=azure,enum=vertexai,default=openai"`
 	// The provider's API key.
 	APIKey string `json:"api_key,omitempty" jsonschema:"description=API key for authentication with the provider,example=$OPENAI_API_KEY"`
+	// The provider authentication mode.
+	AuthMode ProviderAuthMode `json:"auth_mode,omitempty" jsonschema:"description=Authentication mode for the provider,enum=api-key,enum=google-adc,default=api-key"`
 	// The original API key template before resolution (for re-resolution on auth errors).
 	APIKeyTemplate string `json:"-"`
 	// OAuthToken for providers that use OAuth2 authentication.
@@ -114,6 +131,8 @@ type ProviderConfig struct {
 	ExtraHeaders map[string]string `json:"extra_headers,omitempty" jsonschema:"description=Additional HTTP headers to send with requests"`
 	// Extra body
 	ExtraBody map[string]any `json:"extra_body,omitempty" jsonschema:"description=Additional fields to include in request bodies, only works with openai-compatible providers"`
+	// Disable streaming for the listed model IDs by default.
+	DisableStreamingModels []string `json:"disable_streaming_models,omitempty" jsonschema:"description=List of model IDs that should default to non-streaming execution for this provider"`
 
 	ProviderOptions map[string]any `json:"provider_options,omitempty" jsonschema:"description=Additional provider-specific options for this provider"`
 
@@ -156,6 +175,32 @@ func (c *ProviderConfig) ToProvider() catwalk.Provider {
 
 func (c *ProviderConfig) SetupGitHubCopilot() {
 	maps.Copy(c.ExtraHeaders, copilot.Headers())
+}
+
+func (c ProviderConfig) NormalizedAuthMode() ProviderAuthMode {
+	if c.AuthMode == "" {
+		return ProviderAuthModeAPIKey
+	}
+	return c.AuthMode
+}
+
+func (c ProviderConfig) UsesGoogleADC() bool {
+	return c.NormalizedAuthMode() == ProviderAuthModeGoogleADC
+}
+
+func (c ProviderConfig) SupportsAuthMode() bool {
+	switch c.NormalizedAuthMode() {
+	case ProviderAuthModeAPIKey:
+		return true
+	case ProviderAuthModeGoogleADC:
+		return c.Type == catwalk.TypeOpenAICompat
+	default:
+		return false
+	}
+}
+
+func (c ProviderConfig) StreamingDisabledForModel(modelID string) bool {
+	return slices.Contains(c.DisableStreamingModels, modelID)
 }
 
 type MCPType string
@@ -547,6 +592,10 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 		apiKey, _  = resolver.ResolveValue(c.APIKey)
 	)
 
+	if !c.SupportsAuthMode() {
+		return fmt.Errorf("provider %s does not support auth mode %q", c.ID, c.NormalizedAuthMode())
+	}
+
 	switch providerID {
 	case catwalk.InferenceProviderMiniMax, catwalk.InferenceProviderMiniMaxChina:
 		// NOTE: MiniMax has no good endpoint we can use to validate the API key.
@@ -562,16 +611,22 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 		baseURL, _ := resolver.ResolveValue(c.BaseURL)
 		baseURL = cmp.Or(baseURL, "https://api.openai.com/v1")
 
-		switch providerID {
-		case catwalk.InferenceProviderOpenRouter:
-			testURL = baseURL + "/credits"
-		case catwalk.InferenceProviderOpenCodeGo:
-			testURL = strings.Replace(baseURL, "/go", "", 1) + "/models"
-		default:
-			testURL = baseURL + "/models"
+		if c.UsesGoogleADC() {
+			if len(c.Models) == 0 {
+				return fmt.Errorf("provider %s has no models configured", c.ID)
+			}
+			testURL = strings.TrimRight(baseURL, "/") + "/chat/completions"
+		} else {
+			switch providerID {
+			case catwalk.InferenceProviderOpenRouter:
+				testURL = baseURL + "/credits"
+			case catwalk.InferenceProviderOpenCodeGo:
+				testURL = strings.Replace(baseURL, "/go", "", 1) + "/models"
+			default:
+				testURL = baseURL + "/models"
+			}
+			headers["Authorization"] = "Bearer " + apiKey
 		}
-
-		headers["Authorization"] = "Bearer " + apiKey
 	case catwalk.TypeAnthropic:
 		baseURL, _ := resolver.ResolveValue(c.BaseURL)
 		baseURL = cmp.Or(baseURL, "https://api.anthropic.com/v1")
@@ -609,7 +664,38 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 	defer cancel()
 
 	client := &http.Client{}
-	req, err := http.NewRequestWithContext(ctx, "GET", testURL, nil)
+	var err error
+	if c.UsesGoogleADC() {
+		client, err = newGoogleADCHTTPClient(ctx, client)
+		if err != nil {
+			return fmt.Errorf("failed to initialize google adc client for provider %s: %w", c.ID, err)
+		}
+	}
+
+	method := http.MethodGet
+	var body *bytes.Reader
+	if c.UsesGoogleADC() {
+		method = http.MethodPost
+		payload, err := json.Marshal(map[string]any{
+			"model":  c.Models[0].ID,
+			"stream": false,
+			"messages": []map[string]string{
+				{
+					"role":    "user",
+					"content": "ping",
+				},
+			},
+			"max_tokens": 1,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to encode connection test body for provider %s: %w", c.ID, err)
+		}
+		body = bytes.NewReader(payload)
+	} else {
+		body = bytes.NewReader(nil)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, testURL, body)
 	if err != nil {
 		return fmt.Errorf("failed to create request for provider %s: %w", c.ID, err)
 	}
@@ -617,7 +703,13 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 		req.Header.Set(k, v)
 	}
 	for k, v := range c.ExtraHeaders {
+		if c.UsesGoogleADC() && strings.EqualFold(k, "Authorization") {
+			continue
+		}
 		req.Header.Set(k, v)
+	}
+	if c.UsesGoogleADC() {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	resp, err := client.Do(req)
@@ -626,8 +718,12 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 	}
 	defer resp.Body.Close()
 
-	switch providerID {
-	case catwalk.InferenceProviderZAI:
+	switch {
+	case c.UsesGoogleADC():
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return fmt.Errorf("failed to connect to provider %s: %s", c.ID, resp.Status)
+		}
+	case providerID == catwalk.InferenceProviderZAI:
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("failed to connect to provider %s: %s", c.ID, resp.Status)
 		}

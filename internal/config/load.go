@@ -224,19 +224,22 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			headers[k] = resolved
 		}
 		prepared := ProviderConfig{
-			ID:                 string(p.ID),
-			Name:               p.Name,
-			BaseURL:            p.APIEndpoint,
-			APIKey:             p.APIKey,
-			APIKeyTemplate:     p.APIKey, // Store original template for re-resolution
-			OAuthToken:         config.OAuthToken,
-			Type:               p.Type,
-			Disable:            config.Disable,
-			SystemPromptPrefix: config.SystemPromptPrefix,
-			ExtraHeaders:       headers,
-			ExtraBody:          config.ExtraBody,
-			ExtraParams:        make(map[string]string),
-			Models:             p.Models,
+			ID:                     string(p.ID),
+			Name:                   p.Name,
+			BaseURL:                p.APIEndpoint,
+			APIKey:                 p.APIKey,
+			AuthMode:               config.AuthMode,
+			APIKeyTemplate:         p.APIKey, // Store original template for re-resolution
+			OAuthToken:             config.OAuthToken,
+			Type:                   p.Type,
+			Disable:                config.Disable,
+			SystemPromptPrefix:     config.SystemPromptPrefix,
+			ExtraHeaders:           headers,
+			ExtraBody:              config.ExtraBody,
+			DisableStreamingModels: slices.Clone(config.DisableStreamingModels),
+			ProviderOptions:        config.ProviderOptions,
+			ExtraParams:            make(map[string]string),
+			Models:                 p.Models,
 		}
 
 		switch {
@@ -311,6 +314,12 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			}
 		default:
 			// if the provider api or endpoint are missing we skip them
+			if prepared.UsesGoogleADC() {
+				prepared.APIKey = ""
+				prepared.APIKeyTemplate = ""
+				break
+			}
+
 			v, err := resolver.ResolveValue(p.APIKey)
 			if v == "" || err != nil {
 				if configExists {
@@ -319,6 +328,14 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 				}
 				continue
 			}
+		}
+
+		if !prepared.SupportsAuthMode() {
+			slog.Warn("Skipping provider due to unsupported auth mode", "provider", p.ID, "auth_mode", prepared.AuthMode)
+			if configExists {
+				c.Providers.Del(string(p.ID))
+			}
+			continue
 		}
 		c.Providers.Set(string(p.ID), prepared)
 	}
@@ -345,7 +362,15 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			c.Providers.Del(id)
 			continue
 		}
-		if providerConfig.APIKey == "" {
+		if !providerConfig.SupportsAuthMode() {
+			slog.Warn("Skipping custom provider due to unsupported auth mode", "provider", id, "auth_mode", providerConfig.AuthMode)
+			c.Providers.Del(id)
+			continue
+		}
+		if providerConfig.UsesGoogleADC() {
+			providerConfig.APIKey = ""
+			providerConfig.APIKeyTemplate = ""
+		} else if providerConfig.APIKey == "" {
 			slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
 		}
 		if providerConfig.BaseURL == "" {
@@ -359,7 +384,7 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			continue
 		}
 		apiKey, err := resolver.ResolveValue(providerConfig.APIKey)
-		if apiKey == "" || err != nil {
+		if !providerConfig.UsesGoogleADC() && (apiKey == "" || err != nil) {
 			slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
 		}
 		baseURL, err := resolver.ResolveValue(providerConfig.BaseURL)

@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/filetracker"
+	"github.com/charmbracelet/crush/internal/googleadc"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/home"
 	"github.com/charmbracelet/crush/internal/log"
@@ -60,6 +61,8 @@ var (
 	errLargeModelNotFound              = errors.New("large model not found in provider config")
 	errSmallModelNotFound              = errors.New("small model not found in provider config")
 )
+
+var newGoogleADCHTTPClient = googleadc.NewHTTPClient
 
 type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
@@ -549,7 +552,7 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		return Model{}, Model{}, errLargeModelProviderNotConfigured
 	}
 
-	largeProvider, err := c.buildProvider(largeProviderCfg, largeModelCfg, isSubAgent)
+	largeProvider, err := c.buildProvider(ctx, largeProviderCfg, largeModelCfg, isSubAgent)
 	if err != nil {
 		return Model{}, Model{}, err
 	}
@@ -559,7 +562,7 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		return Model{}, Model{}, errSmallModelProviderNotConfigured
 	}
 
-	smallProvider, err := c.buildProvider(smallProviderCfg, smallModelCfg, true)
+	smallProvider, err := c.buildProvider(ctx, smallProviderCfg, smallModelCfg, true)
 	if err != nil {
 		return Model{}, Model{}, err
 	}
@@ -607,13 +610,15 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 	}
 
 	return Model{
-			Model:      largeModel,
-			CatwalkCfg: *largeCatwalkModel,
-			ModelCfg:   largeModelCfg,
+			Model:            largeModel,
+			CatwalkCfg:       *largeCatwalkModel,
+			ModelCfg:         largeModelCfg,
+			DisableStreaming: resolveDisableStreaming(largeModelCfg, largeProviderCfg),
 		}, Model{
-			Model:      smallModel,
-			CatwalkCfg: *smallCatwalkModel,
-			ModelCfg:   smallModelCfg,
+			Model:            smallModel,
+			CatwalkCfg:       *smallCatwalkModel,
+			ModelCfg:         smallModelCfg,
+			DisableStreaming: resolveDisableStreaming(smallModelCfg, smallProviderCfg),
 		}, nil
 }
 
@@ -695,7 +700,7 @@ func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]s
 	return vercel.New(opts...)
 }
 
-func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerID string, isSubAgent bool) (fantasy.Provider, error) {
+func (c *coordinator) buildOpenaiCompatProvider(ctx context.Context, baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerID string, authMode config.ProviderAuthMode, isSubAgent bool) (fantasy.Provider, error) {
 	opts := []openaicompat.Option{
 		openaicompat.WithBaseURL(baseURL),
 		openaicompat.WithAPIKey(apiKey),
@@ -708,6 +713,18 @@ func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers 
 		httpClient = copilot.NewClient(isSubAgent, c.cfg.Config().Options.Debug)
 	} else if c.cfg.Config().Options.Debug {
 		httpClient = log.NewHTTPClient()
+	}
+	if authMode == config.ProviderAuthModeGoogleADC {
+		for header := range headers {
+			if strings.EqualFold(header, "Authorization") {
+				delete(headers, header)
+			}
+		}
+		adcHTTPClient, err := newGoogleADCHTTPClient(ctx, httpClient)
+		if err != nil {
+			return nil, err
+		}
+		httpClient = adcHTTPClient
 	}
 	if httpClient != nil {
 		opts = append(opts, openaicompat.WithHTTPClient(httpClient))
@@ -808,7 +825,14 @@ func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {
 	return err == nil && opts.Thinking != nil
 }
 
-func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model config.SelectedModel, isSubAgent bool) (fantasy.Provider, error) {
+func resolveDisableStreaming(model config.SelectedModel, providerCfg config.ProviderConfig) bool {
+	if model.DisableStreaming != nil {
+		return *model.DisableStreaming
+	}
+	return providerCfg.StreamingDisabledForModel(model.Model)
+}
+
+func (c *coordinator) buildProvider(ctx context.Context, providerCfg config.ProviderConfig, model config.SelectedModel, isSubAgent bool) (fantasy.Provider, error) {
 	headers := maps.Clone(providerCfg.ExtraHeaders)
 	if headers == nil {
 		headers = make(map[string]string)
@@ -854,7 +878,7 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 			}
 			providerCfg.ExtraBody["tool_stream"] = true
 		}
-		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, isSubAgent)
+		return c.buildOpenaiCompatProvider(ctx, baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, providerCfg.NormalizedAuthMode(), isSubAgent)
 	default:
 		return nil, fmt.Errorf("provider type not supported: %q", providerCfg.Type)
 	}

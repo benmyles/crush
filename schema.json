@@ -532,6 +532,15 @@
             "$OPENAI_API_KEY"
           ]
         },
+        "auth_mode": {
+          "type": "string",
+          "enum": [
+            "api-key",
+            "google-adc"
+          ],
+          "description": "Authentication mode for the provider",
+          "default": "api-key"
+        },
         "oauth": {
           "$ref": "#/$defs/Token",
           "description": "OAuth2 token for authentication with the provider"
@@ -555,6 +564,13 @@
         "extra_body": {
           "type": "object",
           "description": "Additional fields to include in request bodies"
+        },
+        "disable_streaming_models": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "List of model IDs that should default to non-streaming execution for this provider"
         },
         "provider_options": {
           "type": "object",
@@ -599,6 +615,10 @@
         "think": {
           "type": "boolean",
           "description": "Enable thinking mode for Anthropic models that support reasoning"
+        },
+        "disable_streaming": {
+          "type": "boolean",
+          "description": "Disable streaming for this selected model"
         },
         "max_tokens": {
           "type": "integer",

@@ -30,7 +30,7 @@ The `$schema` property enables IDE autocomplete but is optional.
 
 ## Common Tasks
 
-- Add a custom provider: add an entry under `providers` with `type`, `base_url`, `api_key`, and `models`.
+- Add a custom provider: add an entry under `providers` with `type`, `base_url`, `models`, and either `api_key` or `auth_mode: "google-adc"` for Vertex OpenAI-compatible endpoints.
 - Disable a builtin or local skill: add the skill name to `options.disabled_skills`.
 - Add an MCP server: add an entry under `mcp` with `type` and either `command` (stdio) or `url` (http/sse).
 
@@ -54,7 +54,7 @@ The `$schema` property enables IDE autocomplete but is optional.
 
 - `large` is the primary coding model; `small` is for summarization.
 - Only `model` and `provider` are required.
-- Optional tuning: `reasoning_effort`, `think`, `max_tokens`, `temperature`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, `provider_options`.
+- Optional tuning: `reasoning_effort`, `think`, `disable_streaming`, `max_tokens`, `temperature`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, `provider_options`.
 
 ## Custom Providers
 
@@ -65,6 +65,7 @@ The `$schema` property enables IDE autocomplete but is optional.
       "type": "openai-compat",
       "base_url": "https://api.deepseek.com/v1",
       "api_key": "$DEEPSEEK_API_KEY",
+      "disable_streaming_models": ["deepseek-chat"],
       "models": [
         {
           "id": "deepseek-chat",
@@ -79,6 +80,8 @@ The `$schema` property enables IDE autocomplete but is optional.
 
 - `type` (required): `openai`, `openai-compat`, or `anthropic`
 - `api_key` supports `$ENV_VAR` syntax.
+- `auth_mode: "google-adc"` is supported for `openai-compat` providers such as self-deployed Vertex AI OpenAPI endpoints.
+- `disable_streaming_models` sets provider-level non-stream defaults for listed model IDs.
 - Additional fields: `disable`, `system_prompt_prefix`, `extra_headers`, `extra_body`, `provider_options`.
 
 ## LSP Configuration
