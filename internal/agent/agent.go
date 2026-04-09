@@ -159,31 +159,7 @@ func NewSessionAgent(
 	}
 }
 
-func toAgentCall(call fantasy.AgentStreamCall) fantasy.AgentCall {
-	return fantasy.AgentCall{
-		Prompt:           call.Prompt,
-		Files:            call.Files,
-		Messages:         call.Messages,
-		MaxOutputTokens:  call.MaxOutputTokens,
-		Temperature:      call.Temperature,
-		TopP:             call.TopP,
-		TopK:             call.TopK,
-		PresencePenalty:  call.PresencePenalty,
-		FrequencyPenalty: call.FrequencyPenalty,
-		ActiveTools:      call.ActiveTools,
-		ProviderOptions:  call.ProviderOptions,
-		OnRetry:          call.OnRetry,
-		MaxRetries:       call.MaxRetries,
-		StopWhen:         call.StopWhen,
-		PrepareStep:      call.PrepareStep,
-		RepairToolCall:   call.RepairToolCall,
-	}
-}
-
-func executeAgent(ctx context.Context, agent fantasy.Agent, disableStreaming bool, call fantasy.AgentStreamCall) (*fantasy.AgentResult, error) {
-	if disableStreaming {
-		return agent.Generate(ctx, toAgentCall(call))
-	}
+func executeAgent(ctx context.Context, agent fantasy.Agent, call fantasy.AgentStreamCall) (*fantasy.AgentResult, error) {
 	return agent.Stream(ctx, call)
 }
 
@@ -254,7 +230,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	}
 
 	agent := fantasy.NewAgent(
-		largeModel.Model,
+		wrapLanguageModelForNonStreaming(largeModel.Model, largeModel.DisableStreaming),
 		fantasy.WithSystemPrompt(systemPrompt),
 		fantasy.WithTools(agentTools...),
 		fantasy.WithUserAgent(userAgent),
@@ -302,7 +278,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	a.eventPromptSent(call.SessionID)
 
 	var currentAssistant *message.Message
-	var assistantSteps []*message.Message
 	var shouldSummarize bool
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
@@ -375,7 +350,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
 			currentAssistant = &assistantMsg
-			assistantSteps = append(assistantSteps, currentAssistant)
 			return callContext, prepared, err
 		},
 		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
@@ -485,10 +459,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			},
 		},
 	}
-	result, err := executeAgent(genCtx, agent, largeModel.DisableStreaming, streamCall)
-	if err == nil && largeModel.DisableStreaming {
-		err = a.persistGeneratedResult(genCtx, call.SessionID, largeModel, &currentSession, &sessionLock, assistantSteps, result)
-	}
+	result, err := executeAgent(genCtx, agent, streamCall)
 
 	a.eventPromptResponded(call.SessionID, time.Since(startTime).Truncate(time.Second))
 
@@ -675,7 +646,8 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	defer a.activeRequests.Del(sessionID)
 	defer cancel()
 
-	agent := fantasy.NewAgent(largeModel.Model,
+	agent := fantasy.NewAgent(
+		wrapLanguageModelForNonStreaming(largeModel.Model, largeModel.DisableStreaming),
 		fantasy.WithSystemPrompt(string(summaryPrompt)),
 		fantasy.WithUserAgent(userAgent),
 	)
@@ -691,7 +663,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
 
-	resp, err := executeAgent(genCtx, agent, largeModel.DisableStreaming, fantasy.AgentStreamCall{
+	resp, err := executeAgent(genCtx, agent, fantasy.AgentStreamCall{
 		Prompt:          summaryPromptText,
 		Messages:        aiMsgs,
 		ProviderOptions: opts,
@@ -701,6 +673,10 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(systemPromptPrefix)}, prepared.Messages...)
 			}
 			return callContext, prepared, nil
+		},
+		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
+			summaryMessage.AppendReasoningContent(reasoning.Text)
+			return a.messages.Update(genCtx, summaryMessage)
 		},
 		OnReasoningDelta: func(id string, text string) error {
 			summaryMessage.AppendReasoningContent(text)
@@ -723,26 +699,6 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			return deleteErr
 		}
 		return err
-	}
-
-	if largeModel.DisableStreaming {
-		for _, content := range resp.Response.Content {
-			switch content.GetType() {
-			case fantasy.ContentTypeReasoning:
-				reasoning, ok := fantasy.AsContentType[fantasy.ReasoningContent](content)
-				if !ok {
-					continue
-				}
-				summaryMessage.AppendReasoningContent(reasoning.Text)
-				a.finalizeReasoningContent(&summaryMessage, reasoning)
-			case fantasy.ContentTypeText:
-				text, ok := fantasy.AsContentType[fantasy.TextContent](content)
-				if !ok {
-					continue
-				}
-				summaryMessage.AppendContent(text.Text)
-			}
-		}
 	}
 
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
@@ -979,8 +935,9 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 		maxOutputTokens = smallModel.CatwalkCfg.DefaultMaxTokens
 	}
 
-	newAgent := func(m fantasy.LanguageModel, p []byte, tok int64) fantasy.Agent {
-		return fantasy.NewAgent(m,
+	newAgent := func(m Model, p []byte, tok int64) fantasy.Agent {
+		return fantasy.NewAgent(
+			wrapLanguageModelForNonStreaming(m.Model, m.DisableStreaming),
 			fantasy.WithSystemPrompt(string(p)+"\n /no_think"),
 			fantasy.WithMaxOutputTokens(tok),
 			fantasy.WithUserAgent(userAgent),
@@ -1002,8 +959,8 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 
 	// Use the small model to generate the title.
 	model := smallModel
-	agent := newAgent(model.Model, titlePrompt, maxOutputTokens)
-	resp, err := executeAgent(ctx, agent, model.DisableStreaming, streamCall)
+	agent := newAgent(model, titlePrompt, maxOutputTokens)
+	resp, err := executeAgent(ctx, agent, streamCall)
 	if err == nil {
 		// We successfully generated a title with the small model.
 		slog.Debug("Generated title with small model")
@@ -1011,8 +968,8 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 		// It didn't work. Let's try with the big model.
 		slog.Error("Error generating title with small model; trying big model", "err", err)
 		model = largeModel
-		agent = newAgent(model.Model, titlePrompt, maxOutputTokens)
-		resp, err = executeAgent(ctx, agent, model.DisableStreaming, streamCall)
+		agent = newAgent(model, titlePrompt, maxOutputTokens)
+		resp, err = executeAgent(ctx, agent, streamCall)
 		if err == nil {
 			slog.Debug("Generated title with large model")
 		} else {
@@ -1235,95 +1192,6 @@ func (a *sessionAgent) finalizeReasoningContent(msg *message.Message, reasoning 
 		}
 	}
 	msg.FinishThinking()
-}
-
-func (a *sessionAgent) persistGeneratedResult(
-	ctx context.Context,
-	sessionID string,
-	model Model,
-	currentSession *session.Session,
-	sessionLock *sync.Mutex,
-	stepAssistants []*message.Message,
-	result *fantasy.AgentResult,
-) error {
-	if len(stepAssistants) != len(result.Steps) {
-		return fmt.Errorf("assistant step count mismatch: got %d messages for %d steps", len(stepAssistants), len(result.Steps))
-	}
-
-	for i, step := range result.Steps {
-		assistantMsg := stepAssistants[i]
-		if assistantMsg == nil {
-			return fmt.Errorf("missing assistant message for step %d", i)
-		}
-
-		for _, content := range step.Content {
-			switch content.GetType() {
-			case fantasy.ContentTypeText:
-				text, ok := fantasy.AsContentType[fantasy.TextContent](content)
-				if !ok {
-					continue
-				}
-				if len(assistantMsg.Parts) == 0 {
-					text.Text = strings.TrimPrefix(text.Text, "\n")
-				}
-				assistantMsg.AppendContent(text.Text)
-			case fantasy.ContentTypeReasoning:
-				reasoning, ok := fantasy.AsContentType[fantasy.ReasoningContent](content)
-				if !ok {
-					continue
-				}
-				assistantMsg.AppendReasoningContent(reasoning.Text)
-				a.finalizeReasoningContent(assistantMsg, reasoning)
-			case fantasy.ContentTypeToolCall:
-				toolCall, ok := fantasy.AsContentType[fantasy.ToolCallContent](content)
-				if !ok {
-					continue
-				}
-				assistantMsg.AddToolCall(message.ToolCall{
-					ID:               toolCall.ToolCallID,
-					Name:             toolCall.ToolName,
-					Input:            toolCall.Input,
-					ProviderExecuted: toolCall.ProviderExecuted,
-					Finished:         true,
-				})
-			case fantasy.ContentTypeToolResult:
-				toolResult, ok := fantasy.AsContentType[fantasy.ToolResultContent](content)
-				if !ok {
-					continue
-				}
-				if _, err := a.messages.Create(ctx, assistantMsg.SessionID, message.CreateMessageParams{
-					Role: message.Tool,
-					Parts: []message.ContentPart{
-						a.convertToToolResult(toolResult),
-					},
-				}); err != nil {
-					return err
-				}
-			}
-		}
-
-		assistantMsg.AddFinish(finishReasonFromFantasy(step.FinishReason), "", "")
-
-		sessionLock.Lock()
-		updatedSession, err := a.sessions.Get(ctx, sessionID)
-		if err != nil {
-			sessionLock.Unlock()
-			return err
-		}
-		a.updateSessionUsage(model, &updatedSession, step.Usage, a.openrouterCost(step.ProviderMetadata))
-		if _, err := a.sessions.Save(ctx, updatedSession); err != nil {
-			sessionLock.Unlock()
-			return err
-		}
-		*currentSession = updatedSession
-		sessionLock.Unlock()
-
-		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // convertToToolResult converts a fantasy tool result to a message tool result.
