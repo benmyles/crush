@@ -1,0 +1,49 @@
+README.md
+  43114cd83757b49d 545-551,557,575-577,656-681,688-692
+internal/config/config_auth_test.go
+  43114cd83757b49d 1-111
+internal/agent/non_stream_test.go
+  43114cd83757b49d 1-327
+internal/config/load_test.go
+  43114cd83757b49d 682-734
+internal/swagger/docs.go
+  43114cd83757b49d 1421-1488,2819-2822,3027-3031,3056-3065,3215,3229,3241,3252,3263,3274
+internal/swagger/swagger.yaml
+  43114cd83757b49d 154-157,302-305,321-328,430,439,447,454,461,468,1646-1689
+internal/agent/coordinator_test.go
+  43114cd83757b49d 280-321
+schema.json
+  43114cd83757b49d 535-543,568-573,619-621
+internal/swagger/swagger.json
+  43114cd83757b49d 1414-1481,2812-2815,3020-3024,3049-3058,3208,3222,3234,3245,3256,3267
+internal/config/load.go
+  43114cd83757b49d 227-242,317-322,332-336,338,365-366,370-373,387
+internal/agent/agent.go
+  43114cd83757b49d 100-103,183-206,308,386,420,441,458,465,487,705,1119-1135,1225-1226
+internal/agent/coordinator.go
+  43114cd83757b49d 27,64-65,552,562,610-613,615-618,700,714-724,836-840,843,885
+internal/config/config.go
+  43114cd83757b49d 4,7,21,52-53,71-75,92-93,118-119,134-135,180-184,187-205,595-598,614-626,665-696,704-706,709-711,719-724
+internal/skills/builtin/crush-config/SKILL.md
+  43114cd83757b49d 33,57,68,83-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "c4c42722f3595e3ebb1f16df50d25b15ebf37217",
+  "prompts": {
+    "43114cd83757b49d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d704c-e9e8-7d63-82c7-76ac3e8b8b02",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 1243,
+      "total_deletions": 131,
+      "accepted_lines": 1073,
+      "overriden_lines": 0
+    }
+  }
+}
