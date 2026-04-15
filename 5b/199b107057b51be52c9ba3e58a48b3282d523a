@@ -1,0 +1,28 @@
+internal/agent/generate_stream_language_model.go
+  665aff182ec81d75 1-193
+internal/agent/generate_stream_language_model_test.go
+  665aff182ec81d75 1-132
+internal/agent/agent.go
+  43114cd83757b49d 103-106,162-185,286,363,397,418,435,442,684,1129-1145
+  665aff182ec81d75 161,232,461,647-648,664,675-677,889-891,913-914,922-923
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "5b199b107057b51be52c9ba3e58a48b3282d523a",
+  "prompts": {
+    "665aff182ec81d75": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "9374a210-da54-4899-a02a-b4613e17e46e",
+        "model": "composer-2-fast"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 379,
+      "total_deletions": 186,
+      "accepted_lines": 341,
+      "overriden_lines": 0
+    }
+  }
+}
