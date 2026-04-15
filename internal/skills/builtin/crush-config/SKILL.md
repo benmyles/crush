@@ -54,7 +54,7 @@ The `$schema` property enables IDE autocomplete but is optional.
 
 - `large` is the primary coding model; `small` is for summarization.
 - Only `model` and `provider` are required.
-- Optional tuning: `reasoning_effort`, `think`, `disable_streaming`, `max_tokens`, `temperature`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, `provider_options`.
+- Optional tuning: `reasoning_effort`, `reasoning_summary`, `think`, `disable_streaming`, `max_tokens`, `temperature`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, `provider_options`.
 
 ## Custom Providers
 

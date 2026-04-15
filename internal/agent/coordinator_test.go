@@ -2,12 +2,15 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"charm.land/fantasy/providers/openai"
 	"github.com/charmbracelet/crush/internal/config"
+	openaiapi "github.com/charmbracelet/openai-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,6 +78,291 @@ func agentResultWithText(text string) *fantasy.AgentResult {
 			},
 		},
 	}
+}
+
+func TestGetProviderOptionsReasoningSummary(t *testing.T) {
+	t.Run("uses selected model default for OpenAI responses models", func(t *testing.T) {
+		model := Model{
+			CatwalkCfg: catwalk.Model{ID: "gpt-5"},
+			ModelCfg: config.SelectedModel{
+				Provider:         "openai",
+				ReasoningSummary: "detailed",
+			},
+		}
+		providerCfg := config.ProviderConfig{Type: catwalk.Type(openai.Name)}
+
+		opts := getProviderOptions(model, providerCfg)
+		respOpts, ok := opts[openai.Name].(*openai.ResponsesProviderOptions)
+		require.True(t, ok)
+		require.NotNil(t, respOpts.ReasoningSummary)
+		require.Equal(t, "detailed", *respOpts.ReasoningSummary)
+	})
+
+	t.Run("explicit provider options override the selected model default", func(t *testing.T) {
+		model := Model{
+			CatwalkCfg: catwalk.Model{ID: "gpt-5"},
+			ModelCfg: config.SelectedModel{
+				Provider:         "openai",
+				ReasoningSummary: "detailed",
+				ProviderOptions: map[string]any{
+					"reasoning_summary": "concise",
+				},
+			},
+		}
+		providerCfg := config.ProviderConfig{Type: catwalk.Type(openai.Name)}
+
+		opts := getProviderOptions(model, providerCfg)
+		respOpts, ok := opts[openai.Name].(*openai.ResponsesProviderOptions)
+		require.True(t, ok)
+		require.NotNil(t, respOpts.ReasoningSummary)
+		require.Equal(t, "concise", *respOpts.ReasoningSummary)
+	})
+
+	t.Run("falls back to auto for reasoning models when unset", func(t *testing.T) {
+		model := Model{
+			CatwalkCfg: catwalk.Model{ID: "gpt-5"},
+			ModelCfg: config.SelectedModel{
+				Provider: "openai",
+			},
+		}
+		providerCfg := config.ProviderConfig{Type: catwalk.Type(openai.Name)}
+
+		opts := getProviderOptions(model, providerCfg)
+		respOpts, ok := opts[openai.Name].(*openai.ResponsesProviderOptions)
+		require.True(t, ok)
+		require.NotNil(t, respOpts.ReasoningSummary)
+		require.Equal(t, "auto", *respOpts.ReasoningSummary)
+	})
+}
+
+func TestOpenAICompatExtraBody(t *testing.T) {
+	t.Run("adds the selected model default when absent", func(t *testing.T) {
+		got := openAICompatExtraBody(
+			config.SelectedModel{ReasoningSummary: "detailed"},
+			config.ProviderConfig{},
+		)
+		require.Equal(t, map[string]any{"reasoning_summary": "detailed"}, got)
+	})
+
+	t.Run("preserves explicit extra body overrides", func(t *testing.T) {
+		providerCfg := config.ProviderConfig{
+			ExtraBody: map[string]any{
+				"reasoning_summary": "concise",
+				"foo":               "bar",
+			},
+		}
+
+		got := openAICompatExtraBody(
+			config.SelectedModel{ReasoningSummary: "detailed"},
+			providerCfg,
+		)
+		require.Equal(t, map[string]any{
+			"reasoning_summary": "concise",
+			"foo":               "bar",
+		}, got)
+		require.Equal(t, "concise", providerCfg.ExtraBody["reasoning_summary"])
+	})
+}
+
+func TestOpenAICompatExtraContentFunc(t *testing.T) {
+	t.Run("parses responses-style reasoning details", func(t *testing.T) {
+		choice := mustUnmarshalOpenAICompatChoice(t, `{
+			"index": 0,
+			"message": {
+				"role": "assistant",
+				"reasoning_details": [
+					{
+						"id": "rs_1",
+						"type": "reasoning.summary",
+						"format": "openai-responses-v1",
+						"summary": "first summary",
+						"index": 0
+					},
+					{
+						"id": "rs_1",
+						"type": "reasoning.summary",
+						"format": "openai-responses-v1",
+						"summary": "second summary",
+						"index": 0
+					},
+					{
+						"id": "rs_1",
+						"type": "reasoning.encrypted",
+						"format": "openai-responses-v1",
+						"data": "encrypted",
+						"index": 0
+					}
+				]
+			}
+		}`)
+
+		content := openAICompatExtraContentFunc(choice)
+		require.Len(t, content, 1)
+		reasoning, ok := fantasy.AsContentType[fantasy.ReasoningContent](content[0])
+		require.True(t, ok)
+		require.Equal(t, "first summary\nsecond summary", reasoning.Text)
+		responsesMetadata, ok := reasoning.ProviderMetadata[openai.Name].(*openai.ResponsesReasoningMetadata)
+		require.True(t, ok)
+		require.Equal(t, "rs_1", responsesMetadata.ItemID)
+		require.NotNil(t, responsesMetadata.EncryptedContent)
+		require.Equal(t, "encrypted", *responsesMetadata.EncryptedContent)
+	})
+
+	t.Run("falls back to reasoning field when details are absent", func(t *testing.T) {
+		choice := mustUnmarshalOpenAICompatChoice(t, `{
+			"index": 0,
+			"message": {
+				"role": "assistant",
+				"reasoning": "fallback reasoning"
+			}
+		}`)
+
+		content := openAICompatExtraContentFunc(choice)
+		require.Len(t, content, 1)
+		reasoning, ok := fantasy.AsContentType[fantasy.ReasoningContent](content[0])
+		require.True(t, ok)
+		require.Equal(t, "fallback reasoning", reasoning.Text)
+	})
+}
+
+func TestOpenAICompatStreamExtraFunc(t *testing.T) {
+	t.Run("streams responses-style reasoning summaries", func(t *testing.T) {
+		ctx := map[string]any{}
+		var parts []fantasy.StreamPart
+		yield := func(part fantasy.StreamPart) bool {
+			parts = append(parts, part)
+			return true
+		}
+
+		for _, raw := range []string{
+			`{
+				"choices": [
+					{
+						"index": 0,
+						"delta": {
+							"reasoning_details": [
+								{
+									"type": "reasoning.summary",
+									"format": "openai-responses-v1",
+									"summary": "first summary",
+									"index": 0
+								}
+							]
+						}
+					}
+				]
+			}`,
+			`{
+				"choices": [
+					{
+						"index": 0,
+						"delta": {
+							"reasoning_details": [
+								{
+									"type": "reasoning.summary",
+									"format": "openai-responses-v1",
+									"summary": "second summary",
+									"index": 1
+								}
+							]
+						}
+					}
+				]
+			}`,
+			`{
+				"choices": [
+					{
+						"index": 0,
+						"delta": {
+							"reasoning_details": [
+								{
+									"id": "rs_2",
+									"type": "reasoning.encrypted",
+									"format": "openai-responses-v1",
+									"data": "encrypted",
+									"index": 1
+								}
+							]
+						}
+					}
+				]
+			}`,
+		} {
+			chunk := mustUnmarshalOpenAICompatChunk(t, raw)
+			var ok bool
+			ctx, ok = openAICompatStreamExtraFunc(chunk, yield, ctx)
+			require.True(t, ok)
+		}
+
+		require.Len(t, parts, 3)
+		require.Equal(t, fantasy.StreamPartTypeReasoningStart, parts[0].Type)
+		require.Equal(t, "first summary", parts[0].Delta)
+		require.Equal(t, fantasy.StreamPartTypeReasoningDelta, parts[1].Type)
+		require.Equal(t, "\nsecond summary", parts[1].Delta)
+		require.Equal(t, fantasy.StreamPartTypeReasoningEnd, parts[2].Type)
+		responsesMetadata, ok := parts[2].ProviderMetadata[openai.Name].(*openai.ResponsesReasoningMetadata)
+		require.True(t, ok)
+		require.Equal(t, "rs_2", responsesMetadata.ItemID)
+		require.NotNil(t, responsesMetadata.EncryptedContent)
+		require.Equal(t, "encrypted", *responsesMetadata.EncryptedContent)
+	})
+
+	t.Run("ends reasoning when regular content starts after reasoning_content", func(t *testing.T) {
+		ctx := map[string]any{}
+		var parts []fantasy.StreamPart
+		yield := func(part fantasy.StreamPart) bool {
+			parts = append(parts, part)
+			return true
+		}
+
+		startChunk := mustUnmarshalOpenAICompatChunk(t, `{
+			"choices": [
+				{
+					"index": 0,
+					"delta": {
+						"reasoning_content": "thinking"
+					}
+				}
+			]
+		}`)
+		var ok bool
+		ctx, ok = openAICompatStreamExtraFunc(startChunk, yield, ctx)
+		require.True(t, ok)
+
+		endChunk := mustUnmarshalOpenAICompatChunk(t, `{
+			"choices": [
+				{
+					"index": 0,
+					"delta": {
+						"content": "answer"
+					}
+				}
+			]
+		}`)
+		_, ok = openAICompatStreamExtraFunc(endChunk, yield, ctx)
+		require.True(t, ok)
+
+		require.Len(t, parts, 2)
+		require.Equal(t, fantasy.StreamPartTypeReasoningStart, parts[0].Type)
+		require.Equal(t, "thinking", parts[0].Delta)
+		require.Equal(t, fantasy.StreamPartTypeReasoningEnd, parts[1].Type)
+	})
+}
+
+func mustUnmarshalOpenAICompatChoice(t *testing.T, raw string) openaiapi.ChatCompletionChoice {
+	t.Helper()
+
+	var choice openaiapi.ChatCompletionChoice
+	require.NoError(t, json.Unmarshal([]byte(raw), &choice))
+	return choice
+}
+
+func mustUnmarshalOpenAICompatChunk(t *testing.T, raw string) openaiapi.ChatCompletionChunk {
+	t.Helper()
+
+	var chunk openaiapi.ChatCompletionChunk
+	require.NoError(t, json.Unmarshal([]byte(raw), &chunk))
+	return chunk
 }
 
 func TestRunSubAgent(t *testing.T) {

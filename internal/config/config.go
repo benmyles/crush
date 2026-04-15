@@ -86,6 +86,10 @@ type SelectedModel struct {
 	// Only used by models that use the openai provider and need this set.
 	ReasoningEffort string `json:"reasoning_effort,omitempty" jsonschema:"description=Reasoning effort level for OpenAI models that support it,enum=low,enum=medium,enum=high"`
 
+	// Used by OpenAI and OpenAI-compatible providers that support reasoning
+	// summaries.
+	ReasoningSummary string `json:"reasoning_summary,omitempty" jsonschema:"description=Default reasoning summary level for OpenAI and OpenAI-compatible providers that support it,enum=auto,enum=concise,enum=detailed"`
+
 	// Used by anthropic models that can reason to indicate if the model should think.
 	Think bool `json:"think,omitempty" jsonschema:"description=Enable thinking mode for Anthropic models that support reasoning"`
 

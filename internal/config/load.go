@@ -633,6 +633,9 @@ func configureSelectedModels(store *ConfigStore, knownProviders []catwalk.Provid
 			if largeModelSelected.ReasoningEffort != "" {
 				large.ReasoningEffort = largeModelSelected.ReasoningEffort
 			}
+			if largeModelSelected.ReasoningSummary != "" {
+				large.ReasoningSummary = largeModelSelected.ReasoningSummary
+			}
 			large.Think = largeModelSelected.Think
 			if largeModelSelected.Temperature != nil {
 				large.Temperature = largeModelSelected.Temperature
@@ -676,6 +679,9 @@ func configureSelectedModels(store *ConfigStore, knownProviders []catwalk.Provid
 			}
 			if smallModelSelected.ReasoningEffort != "" {
 				small.ReasoningEffort = smallModelSelected.ReasoningEffort
+			}
+			if smallModelSelected.ReasoningSummary != "" {
+				small.ReasoningSummary = smallModelSelected.ReasoningSummary
 			}
 			if smallModelSelected.Temperature != nil {
 				small.Temperature = smallModelSelected.Temperature

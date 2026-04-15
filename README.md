@@ -577,6 +577,26 @@ Provider-level `disable_streaming_models` sets the default stream behavior for
 listed model IDs. You can override that per selected model with
 `models.large.disable_streaming` or `models.small.disable_streaming`.
 
+For OpenAI Responses models and OpenAI-compatible backends that accept the same
+request field, you can set a default reasoning summary level on the selected
+model:
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "models": {
+    "large": {
+      "model": "gpt-5",
+      "provider": "openai",
+      "reasoning_summary": "detailed"
+    }
+  }
+}
+```
+
+`reasoning_summary` supports `auto`, `concise`, and `detailed`. Crush treats it
+as a default, so explicit provider-specific overrides still win.
+
 #### Anthropic-Compatible APIs
 
 Custom Anthropic-compatible providers follow this format:

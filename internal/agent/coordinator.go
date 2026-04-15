@@ -301,8 +301,9 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
 		}
 		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
+			mergedOptions = applyDefaultReasoningSummary(mergedOptions, model.ModelCfg.ReasoningSummary)
 			if openai.IsResponsesReasoningModel(model.CatwalkCfg.ID) {
-				mergedOptions["reasoning_summary"] = "auto"
+				mergedOptions = applyDefaultReasoningSummary(mergedOptions, "auto")
 				mergedOptions["include"] = []openai.IncludeType{openai.IncludeReasoningEncryptedContent}
 			}
 			parsed, err := openai.ParseResponsesOptions(mergedOptions)
@@ -386,6 +387,23 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 	}
 
 	return options
+}
+
+func applyDefaultReasoningSummary(options map[string]any, reasoningSummary string) map[string]any {
+	if reasoningSummary == "" {
+		return options
+	}
+	if options == nil {
+		options = map[string]any{}
+	}
+	if _, ok := options["reasoning_summary"]; !ok {
+		options["reasoning_summary"] = reasoningSummary
+	}
+	return options
+}
+
+func openAICompatExtraBody(model config.SelectedModel, providerCfg config.ProviderConfig) map[string]any {
+	return applyDefaultReasoningSummary(maps.Clone(providerCfg.ExtraBody), model.ReasoningSummary)
 }
 
 func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderOptions, *float64, *float64, *int64, *float64, *float64) {
@@ -701,15 +719,21 @@ func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]s
 }
 
 func (c *coordinator) buildOpenaiCompatProvider(ctx context.Context, baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerID string, authMode config.ProviderAuthMode, isSubAgent bool) (fantasy.Provider, error) {
-	opts := []openaicompat.Option{
-		openaicompat.WithBaseURL(baseURL),
-		openaicompat.WithAPIKey(apiKey),
+	// Build openai-compat on top of the OpenAI provider so Crush can supply
+	// local reasoning hooks for both streaming and non-streaming chat
+	// completions.
+	opts := []openai.Option{
+		openai.WithName(openaicompat.Name),
+		openai.WithObjectMode(fantasy.ObjectModeTool),
+		openai.WithLanguageModelOptions(openAICompatLanguageModelOptions()...),
+		openai.WithBaseURL(baseURL),
+		openai.WithAPIKey(apiKey),
 	}
 
 	// Set HTTP client based on provider and debug mode.
 	var httpClient *http.Client
 	if providerID == string(catwalk.InferenceProviderCopilot) {
-		opts = append(opts, openaicompat.WithUseResponsesAPI())
+		opts = append(opts, openai.WithUseResponsesAPI())
 		httpClient = copilot.NewClient(isSubAgent, c.cfg.Config().Options.Debug)
 	} else if c.cfg.Config().Options.Debug {
 		httpClient = log.NewHTTPClient()
@@ -727,18 +751,18 @@ func (c *coordinator) buildOpenaiCompatProvider(ctx context.Context, baseURL, ap
 		httpClient = adcHTTPClient
 	}
 	if httpClient != nil {
-		opts = append(opts, openaicompat.WithHTTPClient(httpClient))
+		opts = append(opts, openai.WithHTTPClient(httpClient))
 	}
 
 	if len(headers) > 0 {
-		opts = append(opts, openaicompat.WithHeaders(headers))
+		opts = append(opts, openai.WithHeaders(headers))
 	}
 
 	for extraKey, extraValue := range extraBody {
-		opts = append(opts, openaicompat.WithSDKOptions(openaisdk.WithJSONSet(extraKey, extraValue)))
+		opts = append(opts, openai.WithSDKOptions(openaisdk.WithJSONSet(extraKey, extraValue)))
 	}
 
-	return openaicompat.New(opts...)
+	return openai.New(opts...)
 }
 
 func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[string]string, options map[string]string) (fantasy.Provider, error) {
@@ -868,17 +892,18 @@ func (c *coordinator) buildProvider(ctx context.Context, providerCfg config.Prov
 	case "google-vertex":
 		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
 	case openaicompat.Name, hyper.Name:
+		extraBody := openAICompatExtraBody(model, providerCfg)
 		switch providerCfg.ID {
 		case hyper.Name:
 			baseURL = hyper.BaseURL() + "/v1"
 			headers["x-crush-id"] = event.GetID()
 		case string(catwalk.InferenceProviderZAI):
-			if providerCfg.ExtraBody == nil {
-				providerCfg.ExtraBody = map[string]any{}
+			if extraBody == nil {
+				extraBody = map[string]any{}
 			}
-			providerCfg.ExtraBody["tool_stream"] = true
+			extraBody["tool_stream"] = true
 		}
-		return c.buildOpenaiCompatProvider(ctx, baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, providerCfg.NormalizedAuthMode(), isSubAgent)
+		return c.buildOpenaiCompatProvider(ctx, baseURL, apiKey, headers, extraBody, providerCfg.ID, providerCfg.NormalizedAuthMode(), isSubAgent)
 	default:
 		return nil, fmt.Errorf("provider type not supported: %q", providerCfg.Type)
 	}

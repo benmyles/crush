@@ -1557,6 +1557,47 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		require.Equal(t, "openai", large.Provider)
 		require.Equal(t, int64(100), large.MaxTokens)
 	})
+
+	t.Run("should preserve reasoning summary overrides", func(t *testing.T) {
+		knownProviders := []catwalk.Provider{
+			{
+				ID:                  "openai",
+				APIKey:              "abc",
+				DefaultLargeModelID: "large-model",
+				DefaultSmallModelID: "small-model",
+				Models: []catwalk.Model{
+					{
+						ID:               "large-model",
+						DefaultMaxTokens: 1000,
+					},
+					{
+						ID:               "small-model",
+						DefaultMaxTokens: 500,
+					},
+				},
+			},
+		}
+
+		cfg := &Config{
+			Models: map[SelectedModelType]SelectedModel{
+				"large": {
+					ReasoningSummary: "detailed",
+				},
+			},
+		}
+		cfg.setDefaults("/tmp", "")
+		env := env.NewFromMap(map[string]string{})
+		resolver := NewEnvironmentVariableResolver(env)
+		err := cfg.configureProviders(testStore(cfg), env, resolver, knownProviders)
+		require.NoError(t, err)
+
+		err = configureSelectedModels(testStore(cfg), knownProviders, true)
+		require.NoError(t, err)
+		large := cfg.Models[SelectedModelTypeLarge]
+		require.Equal(t, "large-model", large.Model)
+		require.Equal(t, "openai", large.Provider)
+		require.Equal(t, "detailed", large.ReasoningSummary)
+	})
 }
 
 func TestConfig_configureProviders_HyperAPIKeyFromEnv(t *testing.T) {
