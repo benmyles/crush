@@ -55,10 +55,15 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		_ = json.Unmarshal([]byte(opts.Result.Metadata), &meta)
 	}
 
+	if opts.CommandOutput != nil && opts.CommandOutput.Background {
+		description := cmp.Or(opts.CommandOutput.Description, params.Command)
+		return renderCommandJobTool(sty, opts, cappedWidth, opts.CommandOutput, "Run", opts.CommandOutput.ShellID, description)
+	}
+
 	if meta.Background {
 		description := cmp.Or(meta.Description, params.Command)
 		content := "Command: " + params.Command + "\n" + opts.Result.Content
-		return renderJobTool(sty, opts, cappedWidth, "Start", meta.ShellID, description, content)
+		return renderCommandJobTool(sty, opts, cappedWidth, nil, "Start", meta.ShellID, description, content)
 	}
 
 	// Regular bash command.
@@ -74,24 +79,25 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		return header
 	}
 
-	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
-		return joinToolParts(header, earlyState)
+	output := ""
+	if opts.CommandOutput != nil {
+		output = opts.CommandOutput.Output
 	}
-
-	if !opts.HasResult() {
-		return header
+	if output == "" {
+		output = meta.Output
 	}
-
-	output := meta.Output
-	if output == "" && opts.Result.Content != tools.BashNoOutput {
+	if output == "" && opts.HasResult() && opts.Result.Content != tools.BashNoOutput {
 		output = opts.Result.Content
 	}
 	if output == "" {
+		if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
+			return joinToolParts(header, earlyState)
+		}
 		return header
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(toolOutputPlainContentTail(sty, output, bodyWidth, opts.ExpandedContent))
 	return joinToolParts(header, body)
 }
 
@@ -195,6 +201,84 @@ func (j *JobKillToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 		content = opts.Result.Content
 	}
 	return renderJobTool(sty, opts, cappedWidth, "Kill", params.ShellID, description, content)
+}
+
+func renderCommandJobTool(
+	sty *styles.Styles,
+	opts *ToolRenderOpts,
+	width int,
+	output *tools.CommandOutputEvent,
+	action string,
+	shellID string,
+	description string,
+	fallback ...string,
+) string {
+	content := strings.Join(fallback, "")
+	if output != nil {
+		content = output.Output
+		switch {
+		case output.Done && (output.ExitCode != 0 || output.Error != ""):
+			action = "Error"
+		case output.Done:
+			action = "Done"
+		}
+	}
+
+	header := jobHeader(sty, opts.Status, action, shellID, description, width)
+	if opts.Compact {
+		return header
+	}
+
+	if output != nil && !opts.ExpandedContent {
+		bodyWidth := width - toolBodyLeftPaddingTotal
+		body := sty.Tool.Body.Render(commandOutputSummary(sty, output, content, bodyWidth))
+		return joinToolParts(header, body)
+	}
+
+	if content == "" {
+		if output == nil {
+			return header
+		}
+		content = commandOutputStatus(output)
+	}
+
+	bodyWidth := width - toolBodyLeftPaddingTotal
+	body := sty.Tool.Body.Render(toolOutputPlainContentTail(sty, content, bodyWidth, opts.ExpandedContent))
+	return joinToolParts(header, body)
+}
+
+func commandOutputSummary(sty *styles.Styles, output *tools.CommandOutputEvent, content string, width int) string {
+	summary := commandOutputStatus(output)
+	if lastLine := lastNonEmptyLine(content); lastLine != "" {
+		summary += ": " + lastLine
+	}
+	line := " " + summary
+	if lipgloss.Width(line) > width {
+		line = ansi.Truncate(line, width, "…")
+	}
+	return sty.Tool.ContentLine.Width(width).Render(line)
+}
+
+func commandOutputStatus(output *tools.CommandOutputEvent) string {
+	switch {
+	case output.Done && (output.ExitCode != 0 || output.Error != ""):
+		return "Failed"
+	case output.Done:
+		return "Completed"
+	default:
+		return "Running"
+	}
+}
+
+func lastNonEmptyLine(content string) string {
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // renderJobTool renders a job-related tool with the common pattern:

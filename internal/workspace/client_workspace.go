@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/crush/internal/agent/notify"
+	agenttools "github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/client"
 	"github.com/charmbracelet/crush/internal/config"
@@ -640,9 +641,34 @@ func translateEvent(ev any) tea.Msg {
 				Type:         notify.Type(e.Payload.Type),
 			},
 		}
+	case pubsub.Event[proto.CommandOutputEvent]:
+		return pubsub.Event[agenttools.CommandOutputEvent]{
+			Type:    e.Type,
+			Payload: protoToCommandOutput(e.Payload),
+		}
 	default:
 		slog.Warn("Unknown event type in translateEvent", "type", fmt.Sprintf("%T", ev))
 		return nil
+	}
+}
+
+func protoToCommandOutput(e proto.CommandOutputEvent) agenttools.CommandOutputEvent {
+	return agenttools.CommandOutputEvent{
+		SessionID:        e.SessionID,
+		MessageID:        e.MessageID,
+		ToolCallID:       e.ToolCallID,
+		ShellID:          e.ShellID,
+		Command:          e.Command,
+		Description:      e.Description,
+		WorkingDirectory: e.WorkingDirectory,
+		Output:           e.Output,
+		Background:       e.Background,
+		Done:             e.Done,
+		ExitCode:         e.ExitCode,
+		Error:            e.Error,
+		StartTime:        e.StartTime,
+		EndTime:          e.EndTime,
+		UpdatedAt:        e.UpdatedAt,
 	}
 }
 

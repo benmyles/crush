@@ -10,12 +10,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/shell"
 )
 
@@ -51,6 +54,8 @@ const (
 	DefaultAutoBackgroundAfter = 60 // Commands taking longer automatically become background jobs
 	MaxOutputLength            = 30000
 	BashNoOutput               = "no output"
+
+	commandOutputPublishInterval = 250 * time.Millisecond
 )
 
 //go:embed bash.tpl
@@ -188,7 +193,125 @@ func blockFuncs() []shell.BlockFunc {
 	}
 }
 
-func NewBashTool(permissions permission.Service, workingDir string, attribution *config.Attribution, modelName string) fantasy.AgentTool {
+type commandOutputStreamer struct {
+	mu        sync.Mutex
+	publisher pubsub.Publisher[CommandOutputEvent]
+	base      CommandOutputEvent
+	last      CommandOutputEvent
+	hasLast   bool
+}
+
+func newCommandOutputStreamer(
+	ctx context.Context,
+	publisher pubsub.Publisher[CommandOutputEvent],
+	call fantasy.ToolCall,
+	params BashParams,
+	shellID string,
+	workingDir string,
+	startTime time.Time,
+) *commandOutputStreamer {
+	if publisher == nil {
+		return nil
+	}
+	sessionID := GetSessionFromContext(ctx)
+	messageID := GetMessageFromContext(ctx)
+	if sessionID == "" || messageID == "" || call.ID == "" {
+		return nil
+	}
+	return &commandOutputStreamer{
+		publisher: publisher,
+		base: CommandOutputEvent{
+			SessionID:        sessionID,
+			MessageID:        messageID,
+			ToolCallID:       call.ID,
+			ShellID:          shellID,
+			Command:          params.Command,
+			Description:      params.Description,
+			WorkingDirectory: workingDir,
+			StartTime:        startTime.UnixMilli(),
+		},
+	}
+}
+
+func (s *commandOutputStreamer) publish(eventType pubsub.EventType, stdout, stderr string, done bool, execErr error, background bool, force bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	output := formatOutputSnapshot(stdout, stderr, execErr, done)
+	event := s.base
+	event.Output = output
+	event.Background = background
+	event.Done = done
+	event.ExitCode = shell.ExitCode(execErr)
+	event.UpdatedAt = now.UnixMilli()
+	if done {
+		event.EndTime = now.UnixMilli()
+	}
+	if execErr != nil {
+		event.Error = execErr.Error()
+	}
+
+	if !force && s.hasLast &&
+		s.last.Output == event.Output &&
+		s.last.Background == event.Background &&
+		s.last.Done == event.Done &&
+		s.last.ExitCode == event.ExitCode &&
+		s.last.Error == event.Error {
+		return
+	}
+
+	s.last = event
+	s.hasLast = true
+	s.publisher.Publish(eventType, event)
+}
+
+func (s *commandOutputStreamer) publishFromShell(eventType pubsub.EventType, bgShell *shell.BackgroundShell, background bool, force bool) {
+	if s == nil {
+		return
+	}
+	stdout, stderr, done, execErr := bgShell.GetOutput()
+	s.publish(eventType, stdout, stderr, done, execErr, background, force || done)
+}
+
+func (s *commandOutputStreamer) monitor(bgShell *shell.BackgroundShell, background bool) {
+	if s == nil {
+		return
+	}
+	ticker := time.NewTicker(commandOutputPublishInterval)
+	defer ticker.Stop()
+	for {
+		s.publishFromShell(pubsub.UpdatedEvent, bgShell, background, false)
+		_, _, done, _ := bgShell.GetOutput()
+		if done {
+			return
+		}
+		<-ticker.C
+	}
+}
+
+func formatOutputSnapshot(stdout, stderr string, execErr error, done bool) string {
+	if done {
+		return formatOutput(stdout, stderr, execErr)
+	}
+	stdout = truncateOutput(stdout)
+	stderr = truncateOutput(stderr)
+	if stdout != "" && stderr != "" {
+		return stdout + "\n" + stderr
+	}
+	return stdout + stderr
+}
+
+func NewBashTool(
+	permissions permission.Service,
+	output pubsub.Publisher[CommandOutputEvent],
+	workingDir string,
+	attribution *config.Attribution,
+	modelName string,
+) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
 		string(bashDescription(attribution, modelName)),
@@ -241,15 +364,53 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				startTime := time.Now()
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
+				var streamerRef atomic.Pointer[commandOutputStreamer]
+				var outputBackground atomic.Bool
+				outputBackground.Store(true)
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
+				bgShell, err := bgManager.StartWithOutputCallback(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description, func(bgShell *shell.BackgroundShell) {
+					streamer := streamerRef.Load()
+					if streamer == nil {
+						return
+					}
+					streamer.publishFromShell(pubsub.UpdatedEvent, bgShell, outputBackground.Load(), false)
+				})
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
+				streamer := newCommandOutputStreamer(ctx, output, call, params, bgShell.ID, bgShell.WorkingDir, startTime)
+				streamer.publish(pubsub.CreatedEvent, "", "", false, nil, true, true)
+				if streamer != nil {
+					streamerRef.Store(streamer)
+				}
 
 				// Wait a short time to detect fast failures (blocked commands, syntax errors, etc.)
-				time.Sleep(1 * time.Second)
-				stdout, stderr, done, execErr := bgShell.GetOutput()
+				fastFailureTicker := time.NewTicker(100 * time.Millisecond)
+				fastFailureTimeout := time.After(1 * time.Second)
+				var stdout, stderr string
+				var done bool
+				var execErr error
+
+			fastFailureLoop:
+				for {
+					select {
+					case <-fastFailureTicker.C:
+						stdout, stderr, done, execErr = bgShell.GetOutput()
+						streamer.publish(pubsub.UpdatedEvent, stdout, stderr, done, execErr, true, done)
+						if done {
+							break fastFailureLoop
+						}
+					case <-fastFailureTimeout:
+						stdout, stderr, done, execErr = bgShell.GetOutput()
+						streamer.publish(pubsub.UpdatedEvent, stdout, stderr, done, execErr, true, done)
+						break fastFailureLoop
+					case <-ctx.Done():
+						fastFailureTicker.Stop()
+						bgManager.Kill(bgShell.ID)
+						return fantasy.ToolResponse{}, ctx.Err()
+					}
+				}
+				fastFailureTicker.Stop()
 
 				if done {
 					// Command failed or completed very quickly
@@ -279,6 +440,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				}
 
 				// Still running after fast-failure check - return as background job
+				go streamer.monitor(bgShell, true)
 				metadata := BashResponseMetadata{
 					StartTime:        startTime.UnixMilli(),
 					EndTime:          time.Now().UnixMilli(),
@@ -297,9 +459,22 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
-			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
+			var streamerRef atomic.Pointer[commandOutputStreamer]
+			var outputBackground atomic.Bool
+			bgShell, err := bgManager.StartWithOutputCallback(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description, func(bgShell *shell.BackgroundShell) {
+				streamer := streamerRef.Load()
+				if streamer == nil {
+					return
+				}
+				streamer.publishFromShell(pubsub.UpdatedEvent, bgShell, outputBackground.Load(), false)
+			})
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
+			}
+			streamer := newCommandOutputStreamer(ctx, output, call, params, bgShell.ID, bgShell.WorkingDir, startTime)
+			streamer.publish(pubsub.CreatedEvent, "", "", false, nil, false, true)
+			if streamer != nil {
+				streamerRef.Store(streamer)
 			}
 
 			// Wait for either completion, auto-background threshold, or context cancellation
@@ -319,16 +494,21 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				select {
 				case <-ticker.C:
 					stdout, stderr, done, execErr = bgShell.GetOutput()
+					streamer.publish(pubsub.UpdatedEvent, stdout, stderr, done, execErr, false, done)
 					if done {
 						break waitLoop
 					}
 				case <-timeout:
 					stdout, stderr, done, execErr = bgShell.GetOutput()
+					outputBackground.Store(true)
+					streamer.publish(pubsub.UpdatedEvent, stdout, stderr, done, execErr, true, true)
 					break waitLoop
 				case <-ctx.Done():
 					// Incoming context was cancelled before we moved to background
 					// Kill the shell and return error
 					bgManager.Kill(bgShell.ID)
+					stdout, stderr, done, execErr = bgShell.GetOutput()
+					streamer.publish(pubsub.UpdatedEvent, stdout, stderr, true, ctx.Err(), false, true)
 					return fantasy.ToolResponse{}, ctx.Err()
 				}
 			}
@@ -363,6 +543,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			}
 
 			// Still running - keep as background job
+			go streamer.monitor(bgShell, true)
 			metadata := BashResponseMetadata{
 				StartTime:        startTime.UnixMilli(),
 				EndTime:          time.Now().UnixMilli(),

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/charmbracelet/crush/internal/agent/notify"
+	agenttools "github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/history"
@@ -91,9 +92,34 @@ func wrapEvent(ev any) *pubsub.Payload {
 				Type:         proto.AgentEventType(e.Payload.Type),
 			},
 		})
+	case pubsub.Event[agenttools.CommandOutputEvent]:
+		return envelope(pubsub.PayloadTypeCommandOutput, pubsub.Event[proto.CommandOutputEvent]{
+			Type:    e.Type,
+			Payload: commandOutputToProto(e.Payload),
+		})
 	default:
 		slog.Warn("Unrecognized event type for SSE wrapping", "type", fmt.Sprintf("%T", ev))
 		return nil
+	}
+}
+
+func commandOutputToProto(e agenttools.CommandOutputEvent) proto.CommandOutputEvent {
+	return proto.CommandOutputEvent{
+		SessionID:        e.SessionID,
+		MessageID:        e.MessageID,
+		ToolCallID:       e.ToolCallID,
+		ShellID:          e.ShellID,
+		Command:          e.Command,
+		Description:      e.Description,
+		WorkingDirectory: e.WorkingDirectory,
+		Output:           e.Output,
+		Background:       e.Background,
+		Done:             e.Done,
+		ExitCode:         e.ExitCode,
+		Error:            e.Error,
+		StartTime:        e.StartTime,
+		EndTime:          e.EndTime,
+		UpdatedAt:        e.UpdatedAt,
 	}
 }
 

@@ -3,7 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/config"
@@ -15,6 +18,38 @@ import (
 
 type mockBashPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
+}
+
+type recordingCommandOutputPublisher struct {
+	mu     sync.Mutex
+	events []pubsub.Event[CommandOutputEvent]
+	ch     chan pubsub.Event[CommandOutputEvent]
+}
+
+func (p *recordingCommandOutputPublisher) Publish(t pubsub.EventType, payload CommandOutputEvent) {
+	event := pubsub.Event[CommandOutputEvent]{
+		Type:    t,
+		Payload: payload,
+	}
+
+	p.mu.Lock()
+	p.events = append(p.events, event)
+	p.mu.Unlock()
+
+	if p.ch != nil {
+		select {
+		case p.ch <- event:
+		default:
+		}
+	}
+}
+
+func (p *recordingCommandOutputPublisher) Events() []pubsub.Event[CommandOutputEvent] {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	events := make([]pubsub.Event[CommandOutputEvent], len(p.events))
+	copy(events, p.events)
+	return events
 }
 
 func (m *mockBashPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
@@ -57,6 +92,68 @@ func TestBashTool_DefaultAutoBackgroundThreshold(t *testing.T) {
 	require.Contains(t, meta.Output, "done")
 }
 
+func TestBashTool_PublishesCommandOutputEvents(t *testing.T) {
+	workingDir := t.TempDir()
+	publisher := &recordingCommandOutputPublisher{}
+	tool := newBashToolForTestWithPublisher(workingDir, publisher)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	ctx = context.WithValue(ctx, MessageIDContextKey, "test-message")
+
+	resp := runBashTool(t, tool, ctx, BashParams{
+		Description: "stream output",
+		Command:     "echo streamed",
+	})
+
+	require.False(t, resp.IsError)
+	events := publisher.Events()
+	require.GreaterOrEqual(t, len(events), 2)
+	require.Equal(t, pubsub.CreatedEvent, events[0].Type)
+	require.Equal(t, "test-session", events[0].Payload.SessionID)
+	require.Equal(t, "test-message", events[0].Payload.MessageID)
+	require.Equal(t, "test-call", events[0].Payload.ToolCallID)
+
+	final := events[len(events)-1]
+	require.Equal(t, pubsub.UpdatedEvent, final.Type)
+	require.True(t, final.Payload.Done)
+	require.False(t, final.Payload.Background)
+	require.Zero(t, final.Payload.ExitCode)
+	require.Contains(t, final.Payload.Output, "streamed")
+}
+
+func TestBashTool_PublishesCommandOutputAsItAppears(t *testing.T) {
+	workingDir := t.TempDir()
+	publisher := &recordingCommandOutputPublisher{
+		ch: make(chan pubsub.Event[CommandOutputEvent], 16),
+	}
+	tool := newBashToolForTestWithPublisher(workingDir, publisher)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	ctx = context.WithValue(ctx, MessageIDContextKey, "test-message")
+
+	done := make(chan fantasy.ToolResponse, 1)
+	go func() {
+		done <- runBashTool(t, tool, ctx, BashParams{
+			Description: "stream output",
+			Command:     "printf 'first\\n'; sleep 1; printf 'second\\n'",
+		})
+	}()
+
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case event := <-publisher.ch:
+			if strings.Contains(event.Payload.Output, "first") && !event.Payload.Done {
+				resp := <-done
+				require.False(t, resp.IsError)
+				return
+			}
+		case <-done:
+			t.Fatal("command finished before publishing partial output")
+		case <-timeout:
+			t.Fatal("timed out waiting for partial command output")
+		}
+	}
+}
+
 func TestBashTool_CustomAutoBackgroundThreshold(t *testing.T) {
 	workingDir := t.TempDir()
 	tool := newBashToolForTest(workingDir)
@@ -80,9 +177,13 @@ func TestBashTool_CustomAutoBackgroundThreshold(t *testing.T) {
 }
 
 func newBashToolForTest(workingDir string) fantasy.AgentTool {
+	return newBashToolForTestWithPublisher(workingDir, nil)
+}
+
+func newBashToolForTestWithPublisher(workingDir string, publisher pubsub.Publisher[CommandOutputEvent]) fantasy.AgentTool {
 	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
 	attribution := &config.Attribution{TrailerStyle: config.TrailerStyleNone}
-	return NewBashTool(permissions, workingDir, attribution, "test-model")
+	return NewBashTool(permissions, publisher, workingDir, attribution, "test-model")
 }
 
 func runBashTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, params BashParams) fantasy.ToolResponse {

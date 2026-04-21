@@ -52,6 +52,12 @@ type ToolMessageItem interface {
 	Status() ToolStatus
 }
 
+// CommandOutputSettable is implemented by tool items that can render live
+// command output events.
+type CommandOutputSettable interface {
+	SetCommandOutput(output *tools.CommandOutputEvent)
+}
+
 // Compactable is an interface for tool items that can render in a compacted mode.
 // When compact mode is enabled, tools render as a compact single-line header.
 type Compactable interface {
@@ -96,6 +102,7 @@ type ToolRenderOpts struct {
 	Compact         bool
 	IsSpinning      bool
 	Status          ToolStatus
+	CommandOutput   *tools.CommandOutputEvent
 }
 
 // IsPending returns true if the tool call is still pending (not finished and
@@ -138,11 +145,12 @@ type baseToolMessageItem struct {
 	*cachedMessageItem
 	*focusableMessageItem
 
-	toolRenderer ToolRenderer
-	toolCall     message.ToolCall
-	result       *message.ToolResult
-	messageID    string
-	status       ToolStatus
+	toolRenderer  ToolRenderer
+	toolCall      message.ToolCall
+	result        *message.ToolResult
+	messageID     string
+	status        ToolStatus
+	commandOutput *tools.CommandOutputEvent
 	// we use this so we can efficiently cache
 	// tools that have a capped width (e.x bash.. and others)
 	hasCappedWidth bool
@@ -312,6 +320,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 			Compact:         t.isCompact,
 			IsSpinning:      t.isSpinning(),
 			Status:          t.computeStatus(),
+			CommandOutput:   t.commandOutput,
 		})
 		height = lipgloss.Height(content)
 		// cache the rendered content
@@ -371,6 +380,12 @@ func (t *baseToolMessageItem) SetStatus(status ToolStatus) {
 	t.clearCache()
 }
 
+// SetCommandOutput sets the latest live command output for this tool.
+func (t *baseToolMessageItem) SetCommandOutput(output *tools.CommandOutputEvent) {
+	t.commandOutput = output
+	t.clearCache()
+}
+
 // Status returns the current tool status.
 func (t *baseToolMessageItem) Status() ToolStatus {
 	return t.status
@@ -378,6 +393,15 @@ func (t *baseToolMessageItem) Status() ToolStatus {
 
 // computeStatus computes the effective status considering the result.
 func (t *baseToolMessageItem) computeStatus() ToolStatus {
+	if t.commandOutput != nil {
+		if !t.commandOutput.Done {
+			return ToolStatusRunning
+		}
+		if t.commandOutput.ExitCode != 0 || t.commandOutput.Error != "" {
+			return ToolStatusError
+		}
+		return ToolStatusSuccess
+	}
 	if t.result != nil {
 		if t.result.IsError {
 			return ToolStatusError
@@ -389,6 +413,9 @@ func (t *baseToolMessageItem) computeStatus() ToolStatus {
 
 // isSpinning returns true if the tool should show animation.
 func (t *baseToolMessageItem) isSpinning() bool {
+	if t.commandOutput != nil && !t.commandOutput.Done {
+		return true
+	}
 	if t.spinningFunc != nil {
 		return t.spinningFunc(SpinningState{
 			ToolCall: t.toolCall,
@@ -566,6 +593,37 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		out = append(out, sty.Tool.ContentTruncation.
 			Width(width).
 			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+	}
+
+	return strings.Join(out, "\n")
+}
+
+// toolOutputPlainContentTail renders plain text, keeping the newest lines
+// visible in collapsed mode.
+func toolOutputPlainContentTail(sty *styles.Styles, content string, width int, expanded bool) string {
+	content = stringext.NormalizeSpace(content)
+	lines := strings.Split(content, "\n")
+
+	displayLines := lines
+	hidden := 0
+	if !expanded && len(lines) > responseContextHeight {
+		hidden = len(lines) - responseContextHeight
+		displayLines = lines[hidden:]
+	}
+
+	var out []string
+	if hidden > 0 {
+		out = append(out, sty.Tool.ContentTruncation.
+			Width(width).
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, hidden)))
+	}
+
+	for _, ln := range displayLines {
+		ln = " " + ln
+		if lipgloss.Width(ln) > width {
+			ln = ansi.Truncate(ln, width, "…")
+		}
+		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
 	}
 
 	return strings.Join(out, "\n")
@@ -1062,18 +1120,21 @@ func (t *baseToolMessageItem) formatResultForCopy() string {
 
 // formatBashResultForCopy formats bash tool results for clipboard.
 func (t *baseToolMessageItem) formatBashResultForCopy() string {
-	if t.result == nil {
+	if t.result == nil && t.commandOutput == nil {
 		return ""
 	}
 
 	var meta tools.BashResponseMetadata
-	if t.result.Metadata != "" {
+	if t.result != nil && t.result.Metadata != "" {
 		json.Unmarshal([]byte(t.result.Metadata), &meta)
 	}
 
 	output := meta.Output
-	if output == "" && t.result.Content != tools.BashNoOutput {
+	if output == "" && t.result != nil && t.result.Content != tools.BashNoOutput {
 		output = t.result.Content
+	}
+	if output == "" && t.commandOutput != nil {
+		output = t.commandOutput.Output
 	}
 
 	if output == "" {

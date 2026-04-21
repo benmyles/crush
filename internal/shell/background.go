@@ -21,26 +21,43 @@ const (
 
 // syncBuffer is a thread-safe wrapper around bytes.Buffer.
 type syncBuffer struct {
-	buf bytes.Buffer
-	mu  sync.RWMutex
+	buf     bytes.Buffer
+	mu      sync.RWMutex
+	onWrite func()
 }
 
 func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	return sb.buf.Write(p)
+	n, err = sb.buf.Write(p)
+	onWrite := sb.onWrite
+	sb.mu.Unlock()
+	if n > 0 && onWrite != nil {
+		onWrite()
+	}
+	return n, err
 }
 
 func (sb *syncBuffer) WriteString(s string) (n int, err error) {
 	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	return sb.buf.WriteString(s)
+	n, err = sb.buf.WriteString(s)
+	onWrite := sb.onWrite
+	sb.mu.Unlock()
+	if n > 0 && onWrite != nil {
+		onWrite()
+	}
+	return n, err
 }
 
 func (sb *syncBuffer) String() string {
 	sb.mu.RLock()
 	defer sb.mu.RUnlock()
 	return sb.buf.String()
+}
+
+func (sb *syncBuffer) setOnWrite(onWrite func()) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	sb.onWrite = onWrite
 }
 
 // BackgroundShell represents a shell running in the background.
@@ -87,6 +104,16 @@ func GetBackgroundShellManager() *BackgroundShellManager {
 
 // Start creates and starts a new background shell with the given command.
 func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, blockFuncs []BlockFunc, command string, description string) (*BackgroundShell, error) {
+	return m.start(ctx, workingDir, blockFuncs, command, description, nil)
+}
+
+// StartWithOutputCallback creates and starts a background shell with a callback
+// that fires whenever stdout or stderr receives bytes.
+func (m *BackgroundShellManager) StartWithOutputCallback(ctx context.Context, workingDir string, blockFuncs []BlockFunc, command string, description string, onOutput func(*BackgroundShell)) (*BackgroundShell, error) {
+	return m.start(ctx, workingDir, blockFuncs, command, description, onOutput)
+}
+
+func (m *BackgroundShellManager) start(ctx context.Context, workingDir string, blockFuncs []BlockFunc, command string, description string, onOutput func(*BackgroundShell)) (*BackgroundShell, error) {
 	// Check job limit
 	if m.shells.Len() >= MaxBackgroundJobs {
 		return nil, fmt.Errorf("maximum number of background jobs (%d) reached. Please terminate or wait for some jobs to complete", MaxBackgroundJobs)
@@ -112,6 +139,13 @@ func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, b
 		stdout:      &syncBuffer{},
 		stderr:      &syncBuffer{},
 		done:        make(chan struct{}),
+	}
+	if onOutput != nil {
+		notify := func() {
+			onOutput(bgShell)
+		}
+		bgShell.stdout.setOnWrite(notify)
+		bgShell.stderr.setOnWrite(notify)
 	}
 
 	m.shells.Set(id, bgShell)

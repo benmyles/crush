@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	agenttools "github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/chat"
 	"github.com/charmbracelet/crush/internal/ui/common"
@@ -166,6 +167,47 @@ func (m *Chat) UpdateNestedToolIDs(containerID string) {
 	for _, nested := range container.NestedTools() {
 		m.idInxMap[nested.ID()] = idx
 	}
+}
+
+// SetCommandOutput applies a live command output update to a direct or nested
+// tool item.
+func (m *Chat) SetCommandOutput(output agenttools.CommandOutputEvent) bool {
+	idx, ok := m.idInxMap[output.ToolCallID]
+	if !ok {
+		return false
+	}
+
+	item, ok := m.list.ItemAt(idx).(chat.MessageItem)
+	if !ok {
+		return false
+	}
+
+	if item.ID() == output.ToolCallID {
+		if settable, ok := item.(chat.CommandOutputSettable); ok {
+			event := output
+			settable.SetCommandOutput(&event)
+			return true
+		}
+	}
+
+	container, ok := item.(chat.NestedToolContainer)
+	if !ok {
+		return false
+	}
+
+	nestedTools := container.NestedTools()
+	for _, nested := range nestedTools {
+		if nested.ID() != output.ToolCallID {
+			continue
+		}
+		if settable, ok := nested.(chat.CommandOutputSettable); ok {
+			event := output
+			settable.SetCommandOutput(&event)
+			container.SetNestedTools(nestedTools)
+			return true
+		}
+	}
+	return false
 }
 
 // Animate animates items in the chat list. Only propagates animation messages

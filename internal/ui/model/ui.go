@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -210,7 +211,8 @@ type UI struct {
 	skillMentionNames        map[string]struct{}
 
 	// Chat components
-	chat *Chat
+	chat                  *Chat
+	pendingCommandOutputs map[string]agenttools.CommandOutputEvent
 
 	// onboarding state
 	onboarding struct {
@@ -314,21 +316,22 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	header := newHeader(com)
 
 	ui := &UI{
-		com:                 com,
-		dialog:              dialog.NewOverlay(),
-		keyMap:              keyMap,
-		textarea:            ta,
-		chat:                ch,
-		header:              header,
-		completions:         comp,
-		attachments:         attachments,
-		todoSpinner:         todoSpinner,
-		lspStates:           make(map[string]app.LSPClientInfo),
-		mcpStates:           make(map[string]mcp.ClientInfo),
-		notifyBackend:       notification.NoopBackend{},
-		notifyWindowFocused: true,
-		initialSessionID:    initialSessionID,
-		continueLastSession: continueLast,
+		com:                   com,
+		dialog:                dialog.NewOverlay(),
+		keyMap:                keyMap,
+		textarea:              ta,
+		chat:                  ch,
+		pendingCommandOutputs: make(map[string]agenttools.CommandOutputEvent),
+		header:                header,
+		completions:           comp,
+		attachments:           attachments,
+		todoSpinner:           todoSpinner,
+		lspStates:             make(map[string]app.LSPClientInfo),
+		mcpStates:             make(map[string]mcp.ClientInfo),
+		notifyBackend:         notification.NoopBackend{},
+		notifyWindowFocused:   true,
+		initialSessionID:      initialSessionID,
+		continueLastSession:   continueLast,
 	}
 
 	status := NewStatus(com, ui)
@@ -506,6 +509,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setState(uiChat, m.focus)
 		m.session = msg.session
 		m.sessionFiles = msg.files
+		m.pendingCommandOutputs = make(map[string]agenttools.CommandOutputEvent)
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		msgs, err := m.com.Workspace.ListMessages(context.Background(), m.session.ID)
 		if err != nil {
@@ -590,6 +594,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.todoSpinner.Tick)
 				m.updateLayoutAndSize()
 			}
+		}
+	case pubsub.Event[agenttools.CommandOutputEvent]:
+		if cmd := m.handleCommandOutputMessage(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case pubsub.Event[message.Message]:
 		// Check if this is a child session message for an agent tool.
@@ -1008,7 +1016,111 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 
 		// Set nested tools on the parent.
 		nestedContainer.SetNestedTools(nestedTools)
+		m.applyPendingCommandOutputs()
 	}
+}
+
+func (m *UI) handleCommandOutputMessage(event pubsub.Event[agenttools.CommandOutputEvent]) tea.Cmd {
+	if m.session == nil {
+		return nil
+	}
+	if m.pendingCommandOutputs == nil {
+		m.pendingCommandOutputs = make(map[string]agenttools.CommandOutputEvent)
+	}
+	output := event.Payload
+	if output.SessionID != m.session.ID {
+		_, parentToolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(output.SessionID)
+		if !ok || m.chat.MessageItem(parentToolCallID) == nil {
+			return nil
+		}
+	}
+
+	if m.chat.SetCommandOutput(output) {
+		delete(m.pendingCommandOutputs, output.ToolCallID)
+		if m.chat.Follow() {
+			return m.chat.ScrollToBottomAndAnimate()
+		}
+		return nil
+	}
+	if cmd := m.appendLiveCommandOutputTool(output); cmd != nil {
+		delete(m.pendingCommandOutputs, output.ToolCallID)
+		return cmd
+	}
+
+	m.pendingCommandOutputs[output.ToolCallID] = output
+	return nil
+}
+
+func (m *UI) applyPendingCommandOutputs() tea.Cmd {
+	if len(m.pendingCommandOutputs) == 0 {
+		return nil
+	}
+	applied := false
+	var cmds []tea.Cmd
+	for toolCallID, output := range m.pendingCommandOutputs {
+		if m.chat.SetCommandOutput(output) {
+			delete(m.pendingCommandOutputs, toolCallID)
+			applied = true
+			continue
+		}
+		if cmd := m.appendLiveCommandOutputTool(output); cmd != nil {
+			delete(m.pendingCommandOutputs, toolCallID)
+			applied = true
+			cmds = append(cmds, cmd)
+		}
+	}
+	if !applied || !m.chat.Follow() {
+		return tea.Batch(cmds...)
+	}
+	cmds = append(cmds, m.chat.ScrollToBottomAndAnimate())
+	return tea.Batch(cmds...)
+}
+
+func (m *UI) appendLiveCommandOutputTool(output agenttools.CommandOutputEvent) tea.Cmd {
+	if m.session == nil || output.SessionID != m.session.ID {
+		return nil
+	}
+	if output.MessageID == "" || m.chat.MessageItem(output.MessageID) == nil {
+		return nil
+	}
+	if m.chat.MessageItem(output.ToolCallID) != nil {
+		return nil
+	}
+
+	params := agenttools.BashParams{
+		Description:     output.Description,
+		Command:         output.Command,
+		WorkingDir:      output.WorkingDirectory,
+		RunInBackground: output.Background,
+	}
+	input, err := json.Marshal(params)
+	if err != nil {
+		return nil
+	}
+	item := chat.NewToolMessageItem(m.com.Styles, output.MessageID, message.ToolCall{
+		ID:       output.ToolCallID,
+		Name:     agenttools.BashToolName,
+		Input:    string(input),
+		Finished: true,
+	}, nil, false)
+	if settable, ok := item.(chat.CommandOutputSettable); ok {
+		event := output
+		settable.SetCommandOutput(&event)
+	}
+
+	var cmds []tea.Cmd
+	if animatable, ok := item.(chat.Animatable); ok {
+		if cmd := animatable.StartAnimation(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	m.chat.AppendMessages(item)
+	if m.chat.Follow() {
+		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // appendSessionMessage appends a new message to the current session in the chat
@@ -1034,6 +1146,9 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
+		if cmd := m.applyPendingCommandOutputs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -1047,6 +1162,9 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
+		if cmd := m.applyPendingCommandOutputs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if m.chat.Follow() {
 			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -1153,6 +1271,9 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	}
 
 	m.chat.AppendMessages(items...)
+	if cmd := m.applyPendingCommandOutputs(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.chat.Follow() {
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1245,6 +1366,9 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Update the chat so it updates the index map for animations to work as expected
 	m.chat.UpdateNestedToolIDs(toolCallID)
+	if cmd := m.applyPendingCommandOutputs(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 
 	if m.chat.Follow() {
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
@@ -3322,6 +3446,7 @@ func (m *UI) newSession() tea.Cmd {
 	m.textarea.Focus()
 	m.chat.Blur()
 	m.chat.ClearMessages()
+	m.pendingCommandOutputs = make(map[string]agenttools.CommandOutputEvent)
 	m.pillsExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""
