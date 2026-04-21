@@ -142,6 +142,19 @@ definitions:
     additionalProperties:
       $ref: '#/definitions/config.MCPConfig'
     type: object
+  config.MorphCompactOptions:
+    properties:
+      api_key:
+        type: string
+      base_url:
+        type: string
+      compression_ratio:
+        type: number
+      enabled:
+        type: boolean
+      preserve_recent:
+        type: integer
+    type: object
   config.Permissions:
     properties:
       allowed_tools:
@@ -179,6 +192,11 @@ definitions:
       reasoning_effort:
         description: Only used by models that use the openai provider and need this
           set.
+        type: string
+      reasoning_summary:
+        description: |-
+          Used by OpenAI and OpenAI-compatible providers that support reasoning
+          summaries.
         type: string
       temperature:
         type: number
@@ -309,6 +327,8 @@ definitions:
         type: array
       initialize_as:
         type: string
+      morph_compact:
+        $ref: '#/definitions/config.MorphCompactOptions'
       progress:
         type: boolean
       skills_paths:
@@ -502,6 +522,18 @@ definitions:
       success:
         type: boolean
       token: {}
+    type: object
+  proto.JobInputRequest:
+    properties:
+      input:
+        type: string
+    type: object
+  proto.JobResizeRequest:
+    properties:
+      cols:
+        type: integer
+      rows:
+        type: integer
     type: object
   proto.LSPClientInfo:
     properties:
@@ -1039,6 +1071,33 @@ paths:
       summary: Cancel agent session
       tags:
       - agent
+  /workspaces/{id}/agent/sessions/{sid}/compact:
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Session ID
+        in: path
+        name: sid
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Compact session
+      tags:
+      - agent
   /workspaces/{id}/agent/sessions/{sid}/prompts/clear:
     post:
       parameters:
@@ -1528,6 +1587,84 @@ paths:
       summary: Record file read
       tags:
       - filetracker
+  /workspaces/{id}/jobs/{shell_id}/input:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Shell ID
+        in: path
+        name: shell_id
+        required: true
+        type: string
+      - description: Job input request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/proto.JobInputRequest'
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Send input to background shell
+      tags:
+      - jobs
+  /workspaces/{id}/jobs/{shell_id}/resize:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Shell ID
+        in: path
+        name: shell_id
+        required: true
+        type: string
+      - description: Job resize request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/proto.JobResizeRequest'
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Resize background shell
+      tags:
+      - jobs
   /workspaces/{id}/lsps:
     get:
       parameters:

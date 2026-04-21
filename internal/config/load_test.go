@@ -36,6 +36,38 @@ func TestConfig_LoadFromBytes(t *testing.T) {
 	require.Equal(t, "https://api.openai.com/v2", pc.BaseURL)
 }
 
+func TestConfig_LoadMorphCompactOptions(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"options":{"morph_compact":{"enabled":true,"api_key":"$MORPH_API_KEY","base_url":"https://example.com/v1","compression_ratio":0.7,"preserve_recent":0}}}`)
+
+	loadedConfig, err := loadFromBytes([][]byte{data})
+
+	require.NoError(t, err)
+	require.NotNil(t, loadedConfig.Options)
+	require.NotNil(t, loadedConfig.Options.MorphCompact)
+	opts := loadedConfig.Options.MorphCompact
+	require.True(t, opts.Enabled)
+	require.Equal(t, "$MORPH_API_KEY", opts.APIKey)
+	require.Equal(t, "https://example.com/v1", opts.BaseURL)
+	require.NotNil(t, opts.CompressionRatio)
+	require.Equal(t, 0.7, *opts.CompressionRatio)
+	require.NotNil(t, opts.PreserveRecent)
+	require.Equal(t, 0, *opts.PreserveRecent)
+	require.Equal(t, 0.7, opts.EffectiveCompressionRatio())
+	require.Equal(t, 0, opts.EffectivePreserveRecent())
+}
+
+func TestMorphCompactOptionsDefaults(t *testing.T) {
+	t.Parallel()
+
+	opts := MorphCompactOptions{}
+
+	require.Equal(t, DefaultMorphCompactBaseURL, opts.EffectiveBaseURL())
+	require.Equal(t, DefaultMorphCompactCompressionRatio, opts.EffectiveCompressionRatio())
+	require.Equal(t, DefaultMorphCompactPreserveRecent, opts.EffectivePreserveRecent())
+}
+
 // testStore wraps a Config in a minimal ConfigStore for testing.
 func testStore(cfg *Config) *ConfigStore {
 	return &ConfigStore{config: cfg}
@@ -494,7 +526,7 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "bash", "crush_info", "crush_logs", "job_output", "job_kill", "multiedit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "sourcegraph", "todos", "view", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "crush_info", "crush_logs", "job_output", "job_input", "job_kill", "multiedit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "sourcegraph", "todos", "view", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
@@ -517,7 +549,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	cfg.SetupAgents()
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "bash", "crush_info", "crush_logs", "job_output", "job_kill", "download", "edit", "multiedit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "todos", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "crush_info", "crush_logs", "job_output", "job_input", "job_kill", "download", "edit", "multiedit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "todos", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)

@@ -497,6 +497,36 @@ place the file in a specific directory (e.g., `CRUSH.md` or
 like build commands, code patterns, and conventions it discovered during
 initialization.
 
+### Morph Compact
+
+Crush can use [Morph Compact](https://www.morphllm.com/products/compact) for
+manual session compaction. This is opt-in. When enabled, the command palette
+shows `Compact Session`, and entering `/compact` in the prompt compacts the
+current session with Morph.
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "options": {
+    "morph_compact": {
+      "enabled": true,
+      "api_key": "$MORPH_API_KEY",
+      "base_url": "https://api.morphllm.com/v1",
+      "compression_ratio": 0.5,
+      "preserve_recent": 3
+    }
+  }
+}
+```
+
+- `enabled`: Enables the manual Morph compaction command.
+- `api_key`: Morph API key or environment variable reference.
+- `base_url`: Optional Morph API base URL. Defaults to
+  `https://api.morphllm.com/v1`.
+- `compression_ratio`: Optional fraction of context to keep. Defaults to `0.5`.
+- `preserve_recent`: Optional number of recent messages to keep verbatim.
+  Defaults to `3`.
+
 ### Attribution Settings
 
 By default, Crush adds attribution information to Git commits and pull requests

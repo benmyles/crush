@@ -97,6 +97,7 @@ type SessionAgent interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string, fantasy.ProviderOptions) error
+	Compact(context.Context, string, config.MorphCompactOptions) error
 	Model() Model
 }
 

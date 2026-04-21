@@ -68,6 +68,17 @@ type FileTrackerReadRequest struct {
 	Path      string `json:"path"`
 }
 
+// JobInputRequest represents input sent to a running background shell.
+type JobInputRequest struct {
+	Input string `json:"input"`
+}
+
+// JobResizeRequest represents a terminal resize for a running background shell.
+type JobResizeRequest struct {
+	Cols int `json:"cols"`
+	Rows int `json:"rows"`
+}
+
 // MCPNameRequest represents a request targeting a named MCP server.
 type MCPNameRequest struct {
 	Name string `json:"name"`

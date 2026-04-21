@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/shell"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -153,12 +154,35 @@ func (w *AppWorkspace) AgentSummarize(ctx context.Context, sessionID string) err
 	return w.app.AgentCoordinator.Summarize(ctx, sessionID)
 }
 
+func (w *AppWorkspace) AgentCompact(ctx context.Context, sessionID string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.Compact(ctx, sessionID)
+}
+
 func (w *AppWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.app.UpdateAgentModel(ctx)
 }
 
 func (w *AppWorkspace) InitCoderAgent(ctx context.Context) error {
 	return w.app.InitCoderAgent(ctx)
+}
+
+func (w *AppWorkspace) JobInput(ctx context.Context, shellID, input string) error {
+	bgShell, ok := shell.GetBackgroundShellManager().Get(shellID)
+	if !ok {
+		return fmt.Errorf("background shell not found: %s", shellID)
+	}
+	return bgShell.WriteInput(input)
+}
+
+func (w *AppWorkspace) JobResize(ctx context.Context, shellID string, cols, rows int) error {
+	bgShell, ok := shell.GetBackgroundShellManager().Get(shellID)
+	if !ok {
+		return fmt.Errorf("background shell not found: %s", shellID)
+	}
+	return bgShell.Resize(cols, rows)
 }
 
 func (w *AppWorkspace) GetDefaultSmallModel(providerID string) config.SelectedModel {

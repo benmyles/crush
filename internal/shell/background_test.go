@@ -173,6 +173,31 @@ func TestBackgroundShell_WithBlockFuncs(t *testing.T) {
 	manager.Kill(bgShell.ID)
 }
 
+func TestBackgroundShell_WriteInput(t *testing.T) {
+	ctx := t.Context()
+	workingDir := t.TempDir()
+	manager := newBackgroundShellManager()
+
+	bgShell, err := manager.Start(ctx, workingDir, nil, "printf 'Name: '; read name; echo \"Hello $name\"", "")
+	require.NoError(t, err)
+	defer manager.Kill(bgShell.ID) //nolint:errcheck
+	if !bgShell.SupportsInput() {
+		t.Skip("PTY input is not supported on this platform")
+	}
+
+	require.Eventually(t, func() bool {
+		stdout, _, _, _ := bgShell.GetOutput()
+		return strings.Contains(stdout, "Name:")
+	}, 3*time.Second, 50*time.Millisecond)
+
+	require.NoError(t, bgShell.WriteInput("Ada\r"))
+	require.True(t, bgShell.WaitContext(ctx))
+	stdout, _, done, err := bgShell.GetOutput()
+	require.NoError(t, err)
+	require.True(t, done)
+	require.Contains(t, stdout, "Hello Ada")
+}
+
 func TestBackgroundShellManager_List(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping flacky test on windows")

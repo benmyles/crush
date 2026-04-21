@@ -46,6 +46,7 @@ type BashResponseMetadata struct {
 	WorkingDirectory string `json:"working_directory"`
 	Background       bool   `json:"background,omitempty"`
 	ShellID          string `json:"shell_id,omitempty"`
+	SupportsInput    bool   `json:"supports_input,omitempty"`
 }
 
 const (
@@ -56,6 +57,7 @@ const (
 	BashNoOutput               = "no output"
 
 	commandOutputPublishInterval = 250 * time.Millisecond
+	interactiveIdleAfter         = 2 * time.Second
 )
 
 //go:embed bash.tpl
@@ -246,6 +248,7 @@ func (s *commandOutputStreamer) publish(eventType pubsub.EventType, stdout, stde
 	event.Output = output
 	event.Background = background
 	event.Done = done
+	event.SupportsInput = shellSupportsInput(event.ShellID)
 	event.ExitCode = shell.ExitCode(execErr)
 	event.UpdatedAt = now.UnixMilli()
 	if done {
@@ -267,6 +270,17 @@ func (s *commandOutputStreamer) publish(eventType pubsub.EventType, stdout, stde
 	s.last = event
 	s.hasLast = true
 	s.publisher.Publish(eventType, event)
+}
+
+func shellSupportsInput(shellID string) bool {
+	if shellID == "" {
+		return false
+	}
+	bgShell, ok := shell.GetBackgroundShellManager().Get(shellID)
+	if !ok {
+		return false
+	}
+	return bgShell.SupportsInput()
 }
 
 func (s *commandOutputStreamer) publishFromShell(eventType pubsub.EventType, bgShell *shell.BackgroundShell, background bool, force bool) {
@@ -431,6 +445,7 @@ func NewBashTool(
 						Description:      params.Description,
 						Background:       params.RunInBackground,
 						WorkingDirectory: bgShell.WorkingDir,
+						SupportsInput:    bgShell.SupportsInput(),
 					}
 					if stdout == "" {
 						return fantasy.WithResponseMetadata(fantasy.NewTextResponse(BashNoOutput), metadata), nil
@@ -448,8 +463,9 @@ func NewBashTool(
 					WorkingDirectory: bgShell.WorkingDir,
 					Background:       true,
 					ShellID:          bgShell.ID,
+					SupportsInput:    bgShell.SupportsInput(),
 				}
-				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+				response := backgroundShellResponse("Background shell started", bgShell)
 				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 			}
 
@@ -498,6 +514,11 @@ func NewBashTool(
 					if done {
 						break waitLoop
 					}
+					if shouldReturnInteractiveJob(bgShell) {
+						outputBackground.Store(true)
+						streamer.publish(pubsub.UpdatedEvent, stdout, stderr, done, execErr, true, true)
+						break waitLoop
+					}
 				case <-timeout:
 					stdout, stderr, done, execErr = bgShell.GetOutput()
 					outputBackground.Store(true)
@@ -534,6 +555,7 @@ func NewBashTool(
 					Description:      params.Description,
 					Background:       params.RunInBackground,
 					WorkingDirectory: bgShell.WorkingDir,
+					SupportsInput:    bgShell.SupportsInput(),
 				}
 				if stdout == "" {
 					return fantasy.WithResponseMetadata(fantasy.NewTextResponse(BashNoOutput), metadata), nil
@@ -551,10 +573,27 @@ func NewBashTool(
 				WorkingDirectory: bgShell.WorkingDir,
 				Background:       true,
 				ShellID:          bgShell.ID,
+				SupportsInput:    bgShell.SupportsInput(),
 			}
-			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+			response := backgroundShellResponse("Command is taking longer than expected and has been moved to background", bgShell)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		})
+}
+
+func shouldReturnInteractiveJob(bgShell *shell.BackgroundShell) bool {
+	if !bgShell.SupportsInput() || !bgShell.HasOutput() {
+		return false
+	}
+	lastOutput := bgShell.LastOutputTime()
+	return !lastOutput.IsZero() && time.Since(lastOutput) >= interactiveIdleAfter
+}
+
+func backgroundShellResponse(prefix string, bgShell *shell.BackgroundShell) string {
+	tools := "Use job_output tool to view output or job_kill to terminate."
+	if bgShell.SupportsInput() {
+		tools = "Use job_output to view output, job_input to send input, or job_kill to terminate."
+	}
+	return fmt.Sprintf("%s.\n\nBackground shell ID: %s\n\n%s", prefix, bgShell.ID, tools)
 }
 
 // formatOutput formats the output of a completed command with error handling

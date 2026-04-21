@@ -495,6 +495,47 @@ const docTemplate = `{
                 }
             }
         },
+        "/workspaces/{id}/agent/sessions/{sid}/compact": {
+            "post": {
+                "tags": [
+                    "agent"
+                ],
+                "summary": "Compact session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/workspaces/{id}/agent/sessions/{sid}/prompts/clear": {
             "post": {
                 "tags": [
@@ -1214,6 +1255,124 @@ const docTemplate = `{
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/proto.FileTrackerReadRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/workspaces/{id}/jobs/{shell_id}/input": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "jobs"
+                ],
+                "summary": "Send input to background shell",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Shell ID",
+                        "name": "shell_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Job input request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/proto.JobInputRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/workspaces/{id}/jobs/{shell_id}/resize": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "jobs"
+                ],
+                "summary": "Resize background shell",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Shell ID",
+                        "name": "shell_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Job resize request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/proto.JobResizeRequest"
                         }
                     }
                 ],
@@ -2802,6 +2961,26 @@ const docTemplate = `{
                 "$ref": "#/definitions/config.MCPConfig"
             }
         },
+        "config.MorphCompactOptions": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "type": "string"
+                },
+                "base_url": {
+                    "type": "string"
+                },
+                "compression_ratio": {
+                    "type": "number"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "preserve_recent": {
+                    "type": "integer"
+                }
+            }
+        },
         "config.Permissions": {
             "type": "object",
             "properties": {
@@ -2845,6 +3024,10 @@ const docTemplate = `{
                 },
                 "reasoning_effort": {
                     "description": "Only used by models that use the openai provider and need this set.",
+                    "type": "string"
+                },
+                "reasoning_summary": {
+                    "description": "Used by OpenAI and OpenAI-compatible providers that support reasoning\nsummaries.",
                     "type": "string"
                 },
                 "temperature": {
@@ -3038,6 +3221,9 @@ const docTemplate = `{
                 },
                 "initialize_as": {
                     "type": "string"
+                },
+                "morph_compact": {
+                    "$ref": "#/definitions/config.MorphCompactOptions"
                 },
                 "progress": {
                     "type": "boolean"
@@ -3328,6 +3514,25 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "token": {}
+            }
+        },
+        "proto.JobInputRequest": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string"
+                }
+            }
+        },
+        "proto.JobResizeRequest": {
+            "type": "object",
+            "properties": {
+                "cols": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "type": "integer"
+                }
             }
         },
         "proto.LSPClientInfo": {

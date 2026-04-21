@@ -142,6 +142,13 @@ The `$schema` property enables IDE autocomplete but is optional.
       "diff_mode": "unified",
       "transparent": false
     },
+    "morph_compact": {
+      "enabled": true,
+      "api_key": "$MORPH_API_KEY",
+      "base_url": "https://api.morphllm.com/v1",
+      "compression_ratio": 0.5,
+      "preserve_recent": 3
+    },
     "auto_lsp": true,
     "debug": false,
     "debug_lsp": false,
@@ -158,6 +165,11 @@ The `$schema` property enables IDE autocomplete but is optional.
 > `.agents/skills`, `.crush/skills`, `.claude/skills`, `.cursor/skills`
 
 Other options: `context_paths`, `progress`, `disable_notifications`, `disable_auto_summarize`, `disable_metrics`, `disable_provider_auto_update`, `disable_default_providers`, `data_directory`, `initialize_as`.
+
+`morph_compact` enables the manual `Compact Session` command and exact
+`/compact` prompt input. It is disabled unless `enabled` is true and requires a
+Morph API key in `api_key`. `base_url`, `compression_ratio`, and
+`preserve_recent` are optional.
 
 ## Tool Permissions
 

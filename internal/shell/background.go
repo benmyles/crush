@@ -3,13 +3,17 @@ package shell
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/crush/internal/csync"
+	"github.com/creack/pty"
 )
 
 const (
@@ -24,6 +28,7 @@ type syncBuffer struct {
 	buf     bytes.Buffer
 	mu      sync.RWMutex
 	onWrite func()
+	wroteAt atomic.Int64
 }
 
 func (sb *syncBuffer) Write(p []byte) (n int, err error) {
@@ -31,6 +36,9 @@ func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 	n, err = sb.buf.Write(p)
 	onWrite := sb.onWrite
 	sb.mu.Unlock()
+	if n > 0 {
+		sb.wroteAt.Store(time.Now().UnixNano())
+	}
 	if n > 0 && onWrite != nil {
 		onWrite()
 	}
@@ -42,6 +50,9 @@ func (sb *syncBuffer) WriteString(s string) (n int, err error) {
 	n, err = sb.buf.WriteString(s)
 	onWrite := sb.onWrite
 	sb.mu.Unlock()
+	if n > 0 {
+		sb.wroteAt.Store(time.Now().UnixNano())
+	}
 	if n > 0 && onWrite != nil {
 		onWrite()
 	}
@@ -54,6 +65,20 @@ func (sb *syncBuffer) String() string {
 	return sb.buf.String()
 }
 
+func (sb *syncBuffer) Len() int {
+	sb.mu.RLock()
+	defer sb.mu.RUnlock()
+	return sb.buf.Len()
+}
+
+func (sb *syncBuffer) LastWriteTime() time.Time {
+	ns := sb.wroteAt.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
+
 func (sb *syncBuffer) setOnWrite(onWrite func()) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -62,18 +87,22 @@ func (sb *syncBuffer) setOnWrite(onWrite func()) {
 
 // BackgroundShell represents a shell running in the background.
 type BackgroundShell struct {
-	ID          string
-	Command     string
-	Description string
-	Shell       *Shell
-	WorkingDir  string
-	ctx         context.Context
-	cancel      context.CancelFunc
-	stdout      *syncBuffer
-	stderr      *syncBuffer
-	done        chan struct{}
-	exitErr     error
-	completedAt atomic.Int64 // Unix timestamp when job completed (0 if still running)
+	ID            string
+	Command       string
+	Description   string
+	Shell         *Shell
+	WorkingDir    string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	stdout        *syncBuffer
+	stderr        *syncBuffer
+	done          chan struct{}
+	exitErr       error
+	completedAt   atomic.Int64 // Unix timestamp when job completed (0 if still running)
+	supportsInput bool
+	ptyMaster     *os.File
+	ptyMu         sync.Mutex
+	closePTYOnce  sync.Once
 }
 
 // BackgroundShellManager manages background shell instances.
@@ -150,16 +179,56 @@ func (m *BackgroundShellManager) start(ctx context.Context, workingDir string, b
 
 	m.shells.Set(id, bgShell)
 
-	go func() {
-		defer close(bgShell.done)
+	if err := bgShell.startPTY(command); err == nil {
+		return bgShell, nil
+	}
 
-		err := shell.ExecStream(shellCtx, command, bgShell.stdout, bgShell.stderr)
-
-		bgShell.exitErr = err
-		bgShell.completedAt.Store(time.Now().Unix())
-	}()
+	go bgShell.runStream(command)
 
 	return bgShell, nil
+}
+
+func (bs *BackgroundShell) startPTY(command string) error {
+	master, tty, err := pty.Open()
+	if err != nil {
+		return err
+	}
+
+	bs.ptyMaster = master
+	bs.supportsInput = true
+
+	go func() {
+		defer close(bs.done)
+		defer tty.Close() //nolint:errcheck
+
+		readDone := make(chan struct{})
+		go func() {
+			defer close(readDone)
+			_, _ = io.Copy(bs.stdout, master)
+		}()
+
+		err := bs.Shell.ExecPTY(bs.ctx, command, tty)
+		bs.exitErr = err
+		bs.completedAt.Store(time.Now().Unix())
+		_ = tty.Close()
+
+		select {
+		case <-readDone:
+		case <-time.After(250 * time.Millisecond):
+		}
+		bs.closePTY()
+	}()
+
+	return nil
+}
+
+func (bs *BackgroundShell) runStream(command string) {
+	defer close(bs.done)
+
+	err := bs.Shell.ExecStream(bs.ctx, command, bs.stdout, bs.stderr)
+
+	bs.exitErr = err
+	bs.completedAt.Store(time.Now().Unix())
 }
 
 // Get retrieves a background shell by ID.
@@ -185,6 +254,7 @@ func (m *BackgroundShellManager) Kill(id string) error {
 	}
 
 	shell.cancel()
+	shell.closePTY()
 	<-shell.done
 	return nil
 }
@@ -235,6 +305,7 @@ func (m *BackgroundShellManager) KillAll(ctx context.Context) {
 	for _, shell := range shells {
 		wg.Go(func() {
 			shell.cancel()
+			shell.closePTY()
 			select {
 			case <-shell.done:
 			case <-ctx.Done():
@@ -252,6 +323,66 @@ func (bs *BackgroundShell) GetOutput() (stdout string, stderr string, done bool,
 	default:
 		return bs.stdout.String(), bs.stderr.String(), false, nil
 	}
+}
+
+// SupportsInput reports whether the background shell accepts terminal input.
+func (bs *BackgroundShell) SupportsInput() bool {
+	return bs.supportsInput && bs.ptyMaster != nil
+}
+
+// HasOutput reports whether the shell has produced stdout or stderr.
+func (bs *BackgroundShell) HasOutput() bool {
+	return bs.stdout.Len() > 0 || bs.stderr.Len() > 0
+}
+
+// LastOutputTime returns the most recent time stdout or stderr received bytes.
+func (bs *BackgroundShell) LastOutputTime() time.Time {
+	stdoutAt := bs.stdout.LastWriteTime()
+	stderrAt := bs.stderr.LastWriteTime()
+	if stdoutAt.After(stderrAt) {
+		return stdoutAt
+	}
+	return stderrAt
+}
+
+// WriteInput writes terminal input to the running shell.
+func (bs *BackgroundShell) WriteInput(input string) error {
+	if bs.IsDone() {
+		return fmt.Errorf("background shell %s has completed", bs.ID)
+	}
+	if !bs.SupportsInput() {
+		return fmt.Errorf("background shell %s does not support input", bs.ID)
+	}
+
+	bs.ptyMu.Lock()
+	defer bs.ptyMu.Unlock()
+	_, err := io.WriteString(bs.ptyMaster, input)
+	if errors.Is(err, os.ErrClosed) {
+		return fmt.Errorf("background shell %s has completed", bs.ID)
+	}
+	return err
+}
+
+// Resize resizes the shell terminal when a PTY is available.
+func (bs *BackgroundShell) Resize(cols, rows int) error {
+	if !bs.SupportsInput() {
+		return fmt.Errorf("background shell %s does not support terminal resizing", bs.ID)
+	}
+	if cols <= 0 || rows <= 0 {
+		return fmt.Errorf("invalid terminal size %dx%d", cols, rows)
+	}
+	return pty.Setsize(bs.ptyMaster, &pty.Winsize{
+		Cols: uint16(cols),
+		Rows: uint16(rows),
+	})
+}
+
+func (bs *BackgroundShell) closePTY() {
+	bs.closePTYOnce.Do(func() {
+		if bs.ptyMaster != nil {
+			_ = bs.ptyMaster.Close()
+		}
+	})
 }
 
 // IsDone checks if the background shell has finished execution.

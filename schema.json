@@ -350,6 +350,52 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "MorphCompactOptions": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Morph Compact for manual session compaction",
+          "default": false
+        },
+        "api_key": {
+          "type": "string",
+          "description": "Morph API key or variable reference",
+          "examples": [
+            "$MORPH_API_KEY"
+          ]
+        },
+        "base_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Base URL for the Morph API",
+          "default": "https://api.morphllm.com/v1",
+          "examples": [
+            "https://api.morphllm.com/v1"
+          ]
+        },
+        "compression_ratio": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0.05,
+          "description": "Fraction of context to keep",
+          "default": 0.5,
+          "examples": [
+            0.5
+          ]
+        },
+        "preserve_recent": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of most recent messages to keep verbatim",
+          "default": 3,
+          "examples": [
+            3
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Options": {
       "properties": {
         "context_paths": {
@@ -377,6 +423,10 @@
         "tui": {
           "$ref": "#/$defs/TUIOptions",
           "description": "Terminal user interface options"
+        },
+        "morph_compact": {
+          "$ref": "#/$defs/MorphCompactOptions",
+          "description": "Morph Compact options for manual session compaction"
         },
         "debug": {
           "type": "boolean",

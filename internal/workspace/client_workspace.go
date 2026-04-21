@@ -227,12 +227,24 @@ func (w *ClientWorkspace) AgentSummarize(ctx context.Context, sessionID string) 
 	return w.client.AgentSummarizeSession(ctx, w.workspaceID(), sessionID)
 }
 
+func (w *ClientWorkspace) AgentCompact(ctx context.Context, sessionID string) error {
+	return w.client.AgentCompactSession(ctx, w.workspaceID(), sessionID)
+}
+
 func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.client.UpdateAgent(ctx, w.workspaceID())
 }
 
 func (w *ClientWorkspace) InitCoderAgent(ctx context.Context) error {
 	return w.client.InitiateAgentProcessing(ctx, w.workspaceID())
+}
+
+func (w *ClientWorkspace) JobInput(ctx context.Context, shellID, input string) error {
+	return w.client.JobInput(ctx, w.workspaceID(), shellID, input)
+}
+
+func (w *ClientWorkspace) JobResize(ctx context.Context, shellID string, cols, rows int) error {
+	return w.client.JobResize(ctx, w.workspaceID(), shellID, cols, rows)
 }
 
 func (w *ClientWorkspace) GetDefaultSmallModel(providerID string) config.SelectedModel {
@@ -664,6 +676,7 @@ func protoToCommandOutput(e proto.CommandOutputEvent) agenttools.CommandOutputEv
 		Output:           e.Output,
 		Background:       e.Background,
 		Done:             e.Done,
+		SupportsInput:    e.SupportsInput,
 		ExitCode:         e.ExitCode,
 		Error:            e.Error,
 		StartTime:        e.StartTime,

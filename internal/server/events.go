@@ -115,6 +115,7 @@ func commandOutputToProto(e agenttools.CommandOutputEvent) proto.CommandOutputEv
 		Output:           e.Output,
 		Background:       e.Background,
 		Done:             e.Done,
+		SupportsInput:    e.SupportsInput,
 		ExitCode:         e.ExitCode,
 		Error:            e.Error,
 		StartTime:        e.StartTime,

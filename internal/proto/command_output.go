@@ -13,6 +13,7 @@ type CommandOutputEvent struct {
 	Output           string `json:"output"`
 	Background       bool   `json:"background"`
 	Done             bool   `json:"done"`
+	SupportsInput    bool   `json:"supports_input"`
 	ExitCode         int    `json:"exit_code"`
 	Error            string `json:"error,omitempty"`
 	StartTime        int64  `json:"start_time"`

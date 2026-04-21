@@ -76,6 +76,7 @@ type Coordinator interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
+	Compact(context.Context, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
 }
@@ -494,6 +495,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewCrushInfoTool(c.cfg, c.lspManager, c.allSkills, c.activeSkills, c.skillTracker),
 		tools.NewCrushLogsTool(logFile),
 		tools.NewJobOutputTool(),
+		tools.NewJobInputTool(c.permissions),
 		tools.NewJobKillTool(),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
@@ -1018,6 +1020,31 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 		return errModelProviderNotConfigured
 	}
 	return c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg))
+}
+
+func (c *coordinator) Compact(ctx context.Context, sessionID string) error {
+	cfg := c.cfg.Config()
+	if cfg.Options == nil {
+		return ErrMorphCompactDisabled
+	}
+	opts := cfg.Options.MorphCompact
+	if opts == nil || !opts.Enabled {
+		return ErrMorphCompactDisabled
+	}
+	resolved := *opts
+	apiKey, err := c.cfg.Resolve(resolved.APIKey)
+	if err != nil {
+		return fmt.Errorf("failed to resolve Morph Compact API key: %w", err)
+	}
+	resolved.APIKey = apiKey
+	if resolved.BaseURL != "" {
+		baseURL, err := c.cfg.Resolve(resolved.BaseURL)
+		if err != nil {
+			return fmt.Errorf("failed to resolve Morph Compact base_url: %w", err)
+		}
+		resolved.BaseURL = baseURL
+	}
+	return c.currentAgent.Compact(ctx, sessionID, resolved)
 }
 
 func (c *coordinator) isUnauthorized(err error) bool {

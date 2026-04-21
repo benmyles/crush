@@ -58,6 +58,12 @@ type CommandOutputSettable interface {
 	SetCommandOutput(output *tools.CommandOutputEvent)
 }
 
+// CommandOutputReadable is implemented by tool items that expose live command
+// output state.
+type CommandOutputReadable interface {
+	CommandOutput() *tools.CommandOutputEvent
+}
+
 // Compactable is an interface for tool items that can render in a compacted mode.
 // When compact mode is enabled, tools render as a compact single-line header.
 type Compactable interface {
@@ -224,6 +230,8 @@ func NewToolMessageItem(
 		item = NewBashToolMessageItem(sty, toolCall, result, canceled)
 	case tools.JobOutputToolName:
 		item = NewJobOutputToolMessageItem(sty, toolCall, result, canceled)
+	case tools.JobInputToolName:
+		item = NewJobInputToolMessageItem(sty, toolCall, result, canceled)
 	case tools.JobKillToolName:
 		item = NewJobKillToolMessageItem(sty, toolCall, result, canceled)
 	case tools.ViewToolName:
@@ -384,6 +392,11 @@ func (t *baseToolMessageItem) SetStatus(status ToolStatus) {
 func (t *baseToolMessageItem) SetCommandOutput(output *tools.CommandOutputEvent) {
 	t.commandOutput = output
 	t.clearCache()
+}
+
+// CommandOutput returns the latest live command output for this tool.
+func (t *baseToolMessageItem) CommandOutput() *tools.CommandOutputEvent {
+	return t.commandOutput
 }
 
 // Status returns the current tool status.

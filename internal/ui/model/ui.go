@@ -97,6 +97,7 @@ const (
 	uiFocusNone uiFocusState = iota
 	uiFocusEditor
 	uiFocusMain
+	uiFocusTerminal
 )
 
 type uiState uint8
@@ -111,6 +112,11 @@ const (
 
 type openEditorMsg struct {
 	Text string
+}
+
+type attachedJobState struct {
+	ShellID     string
+	Description string
 }
 
 type (
@@ -213,6 +219,7 @@ type UI struct {
 	// Chat components
 	chat                  *Chat
 	pendingCommandOutputs map[string]agenttools.CommandOutputEvent
+	attachedJob           *attachedJobState
 
 	// onboarding state
 	onboarding struct {
@@ -510,6 +517,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.sessionFiles = msg.files
 		m.pendingCommandOutputs = make(map[string]agenttools.CommandOutputEvent)
+		m.attachedJob = nil
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		msgs, err := m.com.Workspace.ListMessages(context.Background(), m.session.ID)
 		if err != nil {
@@ -675,6 +683,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.updateLayoutAndSize()
+		if m.attachedJob != nil {
+			cmds = append(cmds, m.resizeAttachedJob())
+		}
 		if m.state == uiChat && m.chat.Follow() {
 			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -1035,20 +1046,28 @@ func (m *UI) handleCommandOutputMessage(event pubsub.Event[agenttools.CommandOut
 		}
 	}
 
+	var cmds []tea.Cmd
+	if m.attachedJob != nil && output.ShellID == m.attachedJob.ShellID && output.Done {
+		m.attachedJob = nil
+		m.focus = uiFocusMain
+		cmds = append(cmds, util.ReportInfo("Job finished; detached terminal input"))
+	}
+
 	if m.chat.SetCommandOutput(output) {
 		delete(m.pendingCommandOutputs, output.ToolCallID)
 		if m.chat.Follow() {
-			return m.chat.ScrollToBottomAndAnimate()
+			cmds = append(cmds, m.chat.ScrollToBottomAndAnimate())
 		}
-		return nil
+		return tea.Batch(cmds...)
 	}
 	if cmd := m.appendLiveCommandOutputTool(output); cmd != nil {
 		delete(m.pendingCommandOutputs, output.ToolCallID)
-		return cmd
+		cmds = append(cmds, cmd)
+		return tea.Batch(cmds...)
 	}
 
 	m.pendingCommandOutputs[output.ToolCallID] = output
-	return nil
+	return tea.Batch(cmds...)
 }
 
 func (m *UI) applyPendingCommandOutputs() tea.Cmd {
@@ -1472,6 +1491,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return nil
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionCompact:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before compacting session..."))
+			break
+		}
+		cmds = append(cmds, m.compactSession(msg.SessionID))
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleHelp:
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -1747,6 +1773,10 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 	var cmds []tea.Cmd
 
+	if m.attachedJob != nil {
+		return m.handleAttachedJobKey(msg)
+	}
+
 	handleGlobalKeys := func(msg tea.KeyPressMsg) bool {
 		switch {
 		case key.Matches(msg, m.keyMap.Help):
@@ -1904,6 +1934,17 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
 				}
+				if value == "/compact" {
+					if !m.hasSession() {
+						return util.ReportWarn("No active session to compact")
+					}
+					if m.isAgentBusy() {
+						return util.ReportWarn("Agent is busy, please wait before compacting session...")
+					}
+					m.randomizePlaceholders()
+					m.historyReset()
+					return m.compactSession(m.session.ID)
+				}
 
 				attachments := m.attachments.List()
 				m.attachments.Reset()
@@ -2044,6 +2085,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 				m.focus = uiFocusEditor
 				if cmd := m.newSession(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			case key.Matches(msg, m.keyMap.Chat.Attach):
+				if cmd := m.attachSelectedJob(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Chat.Expand):
@@ -2296,6 +2341,9 @@ func (m *UI) View() tea.View {
 func (m *UI) ShortHelp() []key.Binding {
 	var binds []key.Binding
 	k := &m.keyMap
+	if m.attachedJob != nil {
+		return []key.Binding{k.Chat.Detach}
+	}
 	tab := k.Tab
 	commands := k.Commands
 	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
@@ -2336,6 +2384,7 @@ func (m *UI) ShortHelp() []key.Binding {
 			)
 		case uiFocusMain:
 			binds = append(binds,
+				k.Chat.Attach,
 				k.Chat.UpDown,
 				k.Chat.UpDownOneItem,
 				k.Chat.PageUp,
@@ -2369,6 +2418,9 @@ func (m *UI) ShortHelp() []key.Binding {
 func (m *UI) FullHelp() [][]key.Binding {
 	var binds [][]key.Binding
 	k := &m.keyMap
+	if m.attachedJob != nil {
+		return [][]key.Binding{{k.Chat.Detach}}
+	}
 	help := k.Help
 	help.SetHelp("ctrl+g", "less")
 	hasAttachments := len(m.attachments.List()) > 0
@@ -2439,6 +2491,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 		case uiFocusMain:
 			binds = append(binds,
 				[]key.Binding{
+					k.Chat.Attach,
 					k.Chat.UpDown,
 					k.Chat.UpDownOneItem,
 					k.Chat.PageUp,
@@ -3177,6 +3230,147 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	return tea.Batch(cmds...)
 }
 
+func (m *UI) compactSession(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.com.Workspace.AgentCompact(context.Background(), sessionID); err != nil {
+			return util.ReportError(err)()
+		}
+		return util.NewInfoMsg("Session compacted with Morph")
+	}
+}
+
+func (m *UI) attachSelectedJob() tea.Cmd {
+	output := m.selectedCommandOutput()
+	if output == nil {
+		return util.ReportWarn("Select a running interactive job to attach")
+	}
+	if output.Done {
+		return util.ReportWarn("Cannot attach to a completed job")
+	}
+	if !output.SupportsInput {
+		return util.ReportWarn("Selected job does not accept terminal input")
+	}
+	m.attachedJob = &attachedJobState{
+		ShellID:     output.ShellID,
+		Description: cmp.Or(output.Description, output.Command),
+	}
+	m.focus = uiFocusTerminal
+	m.textarea.Blur()
+	m.chat.Focus()
+	return tea.Batch(
+		util.ReportInfo(fmt.Sprintf("Attached to job %s; press ctrl+] to detach", output.ShellID)),
+		m.resizeAttachedJob(),
+	)
+}
+
+func (m *UI) selectedCommandOutput() *agenttools.CommandOutputEvent {
+	item := m.chat.SelectedMessageItem()
+	if item == nil {
+		return nil
+	}
+	readable, ok := item.(chat.CommandOutputReadable)
+	if !ok {
+		return nil
+	}
+	output := readable.CommandOutput()
+	if output == nil || output.ShellID == "" {
+		return nil
+	}
+	return output
+}
+
+func (m *UI) handleAttachedJobKey(msg tea.KeyPressMsg) tea.Cmd {
+	if key.Matches(msg, m.keyMap.Chat.Detach) {
+		shellID := m.attachedJob.ShellID
+		m.attachedJob = nil
+		m.focus = uiFocusMain
+		m.chat.Focus()
+		return util.ReportInfo(fmt.Sprintf("Detached from job %s", shellID))
+	}
+
+	input, ok := terminalInputFromKey(msg)
+	if !ok || input == "" {
+		return nil
+	}
+	return m.sendAttachedJobInput(input)
+}
+
+func (m *UI) sendAttachedJobInput(input string) tea.Cmd {
+	if m.attachedJob == nil {
+		return nil
+	}
+	shellID := m.attachedJob.ShellID
+	return func() tea.Msg {
+		if err := m.com.Workspace.JobInput(context.Background(), shellID, input); err != nil {
+			return util.ReportError(err)()
+		}
+		return nil
+	}
+}
+
+func (m *UI) resizeAttachedJob() tea.Cmd {
+	if m.attachedJob == nil {
+		return nil
+	}
+	shellID := m.attachedJob.ShellID
+	cols := max(1, m.layout.main.Dx())
+	rows := max(1, m.layout.main.Dy())
+	return func() tea.Msg {
+		_ = m.com.Workspace.JobResize(context.Background(), shellID, cols, rows)
+		return nil
+	}
+}
+
+func terminalInputFromKey(msg tea.KeyPressMsg) (string, bool) {
+	keyEvent := msg.Key()
+	if keyEvent.Mod&tea.ModCtrl != 0 {
+		switch keyEvent.Code {
+		case ' ':
+			return "\x00", true
+		case '[':
+			return "\x1b", true
+		}
+		code := keyEvent.Code
+		if code >= 'a' && code <= 'z' {
+			return string(rune(code-'a') + 1), true
+		}
+		if code >= 'A' && code <= 'Z' {
+			return string(rune(code-'A') + 1), true
+		}
+	}
+
+	if keyEvent.Text != "" {
+		if keyEvent.Mod&tea.ModAlt != 0 {
+			return "\x1b" + keyEvent.Text, true
+		}
+		return keyEvent.Text, true
+	}
+
+	switch keyEvent.Code {
+	case tea.KeyEnter:
+		return "\r", true
+	case tea.KeyTab:
+		return "\t", true
+	case tea.KeyBackspace:
+		return "\x7f", true
+	case tea.KeyEscape:
+		return "\x1b", true
+	case tea.KeyUp:
+		return "\x1b[A", true
+	case tea.KeyDown:
+		return "\x1b[B", true
+	case tea.KeyRight:
+		return "\x1b[C", true
+	case tea.KeyLeft:
+		return "\x1b[D", true
+	case tea.KeyHome:
+		return "\x1b[H", true
+	case tea.KeyEnd:
+		return "\x1b[F", true
+	}
+	return "", false
+}
+
 const cancelTimerDuration = 2 * time.Second
 
 // cancelTimerCmd creates a command that expires the cancel timer.
@@ -3463,6 +3657,10 @@ func (m *UI) newSession() tea.Cmd {
 
 // handlePasteMsg handles a paste message.
 func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
+	if m.attachedJob != nil {
+		return m.sendAttachedJobInput(msg.Content)
+	}
+
 	if m.dialog.HasDialogs() {
 		return m.handleDialogMsg(msg)
 	}

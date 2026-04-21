@@ -2,9 +2,11 @@ package backend
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/proto"
+	"github.com/charmbracelet/crush/internal/shell"
 )
 
 // SendMessage sends a prompt to the agent coordinator for the given
@@ -89,6 +91,44 @@ func (b *Backend) SummarizeSession(ctx context.Context, workspaceID, sessionID s
 	}
 
 	return ws.AgentCoordinator.Summarize(ctx, sessionID)
+}
+
+// CompactSession triggers Morph-backed session compaction.
+func (b *Backend) CompactSession(ctx context.Context, workspaceID, sessionID string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	if ws.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+
+	return ws.AgentCoordinator.Compact(ctx, sessionID)
+}
+
+// JobInput sends input to a running background shell.
+func (b *Backend) JobInput(ctx context.Context, workspaceID, shellID, input string) error {
+	if _, err := b.GetWorkspace(workspaceID); err != nil {
+		return err
+	}
+	bgShell, ok := shell.GetBackgroundShellManager().Get(shellID)
+	if !ok {
+		return fmt.Errorf("background shell not found: %s", shellID)
+	}
+	return bgShell.WriteInput(input)
+}
+
+// JobResize resizes a running background shell terminal.
+func (b *Backend) JobResize(ctx context.Context, workspaceID, shellID string, cols, rows int) error {
+	if _, err := b.GetWorkspace(workspaceID); err != nil {
+		return err
+	}
+	bgShell, ok := shell.GetBackgroundShellManager().Get(shellID)
+	if !ok {
+		return fmt.Errorf("background shell not found: %s", shellID)
+	}
+	return bgShell.Resize(cols, rows)
 }
 
 // QueuedPrompts returns the number of queued prompts for the session.

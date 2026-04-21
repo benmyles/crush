@@ -814,6 +814,88 @@ func (c *controllerV1) handlePostWorkspaceAgentSessionSummarize(w http.ResponseW
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceAgentSessionCompact compacts a session with Morph.
+//
+//	@Summary		Compact session
+//	@Tags			agent
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Param			sid	path	string	true	"Session ID"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/compact [post]
+func (c *controllerV1) handlePostWorkspaceAgentSessionCompact(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	if err := c.backend.CompactSession(r.Context(), id, sid); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePostWorkspaceJobInput sends input to a running background shell.
+//
+//	@Summary		Send input to background shell
+//	@Tags			jobs
+//	@Accept			json
+//	@Param			id			path	string					true	"Workspace ID"
+//	@Param			shell_id	path	string					true	"Shell ID"
+//	@Param			request		body	proto.JobInputRequest	true	"Job input request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/jobs/{shell_id}/input [post]
+func (c *controllerV1) handlePostWorkspaceJobInput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	shellID := r.PathValue("shell_id")
+
+	var req proto.JobInputRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+
+	if err := c.backend.JobInput(r.Context(), id, shellID, req.Input); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePostWorkspaceJobResize resizes a running background shell terminal.
+//
+//	@Summary		Resize background shell
+//	@Tags			jobs
+//	@Accept			json
+//	@Param			id			path	string					true	"Workspace ID"
+//	@Param			shell_id	path	string					true	"Shell ID"
+//	@Param			request		body	proto.JobResizeRequest	true	"Job resize request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/jobs/{shell_id}/resize [post]
+func (c *controllerV1) handlePostWorkspaceJobResize(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	shellID := r.PathValue("shell_id")
+
+	var req proto.JobResizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+
+	if err := c.backend.JobResize(r.Context(), id, shellID, req.Cols, req.Rows); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleGetWorkspaceAgentSessionPromptList returns the list of queued prompts.
 //
 //	@Summary		List queued prompts

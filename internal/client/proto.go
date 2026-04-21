@@ -394,6 +394,50 @@ func (c *Client) AgentSummarizeSession(ctx context.Context, id string, sessionID
 	return nil
 }
 
+// AgentCompactSession requests Morph-backed session compaction.
+func (c *Client) AgentCompactSession(ctx context.Context, id string, sessionID string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/compact", id, sessionID), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to compact session: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to compact session: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// JobInput sends terminal input to a running background shell.
+func (c *Client) JobInput(ctx context.Context, id string, shellID string, input string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/jobs/%s/input", id, shellID), nil, jsonBody(proto.JobInputRequest{
+		Input: input,
+	}), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to send job input: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to send job input: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// JobResize resizes the terminal for a running background shell.
+func (c *Client) JobResize(ctx context.Context, id string, shellID string, cols, rows int) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/jobs/%s/resize", id, shellID), nil, jsonBody(proto.JobResizeRequest{
+		Cols: cols,
+		Rows: rows,
+	}), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to resize job: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to resize job: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
 // InitiateAgentProcessing triggers agent initialization on the server.
 func (c *Client) InitiateAgentProcessing(ctx context.Context, id string) error {
 	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/init", id), nil, nil, nil)

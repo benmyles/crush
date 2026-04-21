@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/shell"
@@ -12,6 +13,8 @@ import (
 
 const (
 	JobOutputToolName = "job_output"
+	jobOutputMaxWait  = 30 * time.Second
+	jobOutputPoll     = 100 * time.Millisecond
 )
 
 //go:embed job_output.md
@@ -19,7 +22,7 @@ var jobOutputDescription []byte
 
 type JobOutputParams struct {
 	ShellID string `json:"shell_id" description:"The ID of the background shell to retrieve output from"`
-	Wait    bool   `json:"wait" description:"If true, block until the background shell completes before returning output"`
+	Wait    bool   `json:"wait" description:"If true, wait for completion; returns early for interactive jobs that are waiting for input"`
 }
 
 type JobOutputResponseMetadata struct {
@@ -27,6 +30,7 @@ type JobOutputResponseMetadata struct {
 	Command          string `json:"command"`
 	Description      string `json:"description"`
 	Done             bool   `json:"done"`
+	SupportsInput    bool   `json:"supports_input"`
 	WorkingDirectory string `json:"working_directory"`
 }
 
@@ -46,7 +50,7 @@ func NewJobOutputTool() fantasy.AgentTool {
 			}
 
 			if params.Wait {
-				bgShell.WaitContext(ctx)
+				waitForJobOutput(ctx, bgShell)
 			}
 
 			stdout, stderr, done, err := bgShell.GetOutput()
@@ -69,6 +73,9 @@ func NewJobOutputTool() fantasy.AgentTool {
 					}
 				}
 			}
+			if !done && bgShell.SupportsInput() {
+				outputParts = append(outputParts, "Job is still running and accepts input. Use job_input if it is waiting for interaction.")
+			}
 
 			output := strings.Join(outputParts, "\n")
 
@@ -77,6 +84,7 @@ func NewJobOutputTool() fantasy.AgentTool {
 				Command:          bgShell.Command,
 				Description:      bgShell.Description,
 				Done:             done,
+				SupportsInput:    bgShell.SupportsInput(),
 				WorkingDirectory: bgShell.WorkingDir,
 			}
 
@@ -87,4 +95,31 @@ func NewJobOutputTool() fantasy.AgentTool {
 			result := fmt.Sprintf("Status: %s\n\n%s", status, output)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
 		})
+}
+
+func waitForJobOutput(ctx context.Context, bgShell *shell.BackgroundShell) {
+	if !bgShell.SupportsInput() {
+		bgShell.WaitContext(ctx)
+		return
+	}
+	if shouldReturnInteractiveJob(bgShell) {
+		return
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, jobOutputMaxWait)
+	defer cancel()
+
+	ticker := time.NewTicker(jobOutputPoll)
+	defer ticker.Stop()
+
+	for {
+		if bgShell.IsDone() || shouldReturnInteractiveJob(bgShell) {
+			return
+		}
+		select {
+		case <-waitCtx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

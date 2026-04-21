@@ -424,9 +424,12 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "switch_model", "Switch Model", "ctrl+l", ActionOpenDialog{ModelsID}),
 	}
 
-	// Only show compact command if there's an active session
+	// Only show session commands if there's an active session.
 	if c.hasSession {
 		commands = append(commands, NewCommandItem(c.com.Styles, "summarize", "Summarize Session", "", ActionSummarize{SessionID: c.sessionID}))
+		if cfg := c.com.Config(); cfg != nil && cfg.Options != nil && cfg.Options.MorphCompact != nil && cfg.Options.MorphCompact.Enabled {
+			commands = append(commands, NewCommandItem(c.com.Styles, "compact", "Compact Session", "", ActionCompact{SessionID: c.sessionID}))
+		}
 	}
 
 	// Add reasoning toggle for models that support it

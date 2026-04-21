@@ -521,6 +521,15 @@ func (m *Chat) MessageItem(id string) chat.MessageItem {
 	return item
 }
 
+// SelectedMessageItem returns the currently selected message item.
+func (m *Chat) SelectedMessageItem() chat.MessageItem {
+	item, ok := m.list.SelectedItem().(chat.MessageItem)
+	if !ok {
+		return nil
+	}
+	return item
+}
+
 // ToggleExpandedSelectedItem expands the selected message item if it is expandable.
 func (m *Chat) ToggleExpandedSelectedItem() {
 	if expandable, ok := m.list.SelectedItem().(chat.Expandable); ok {

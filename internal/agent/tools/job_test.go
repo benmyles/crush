@@ -2,16 +2,20 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"charm.land/fantasy"
+	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/shell"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBackgroundShell_Integration(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()
@@ -38,7 +42,6 @@ func TestBackgroundShell_Integration(t *testing.T) {
 }
 
 func TestBackgroundShell_Kill(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()
@@ -60,8 +63,76 @@ func TestBackgroundShell_Kill(t *testing.T) {
 	require.True(t, bgShell.IsDone())
 }
 
+func TestJobInputTool_SendsInput(t *testing.T) {
+	workingDir := t.TempDir()
+	ctx := context.Background()
+
+	bgManager := shell.GetBackgroundShellManager()
+	bgShell, err := bgManager.Start(ctx, workingDir, nil, "printf 'Name: '; read name; echo \"Hello $name\"", "")
+	require.NoError(t, err)
+	defer bgManager.Kill(bgShell.ID) //nolint:errcheck
+	if !bgShell.SupportsInput() {
+		t.Skip("PTY input is not supported on this platform")
+	}
+
+	require.Eventually(t, func() bool {
+		stdout, _, _, _ := bgShell.GetOutput()
+		return strings.Contains(stdout, "Name:")
+	}, 3*time.Second, 50*time.Millisecond)
+
+	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+	tool := NewJobInputTool(permissions)
+	toolCtx := context.WithValue(ctx, SessionIDContextKey, "test-session")
+	resp := runJobInputTool(t, tool, toolCtx, JobInputParams{
+		ShellID:    bgShell.ID,
+		Input:      "Ada",
+		PressEnter: true,
+	})
+	require.False(t, resp.IsError)
+
+	require.True(t, bgShell.WaitContext(ctx))
+	stdout, _, done, err := bgShell.GetOutput()
+	require.NoError(t, err)
+	require.True(t, done)
+	require.Contains(t, stdout, "Hello Ada")
+}
+
+func TestJobOutputTool_WaitReturnsForInteractiveJob(t *testing.T) {
+	workingDir := t.TempDir()
+	ctx := context.Background()
+
+	bgManager := shell.GetBackgroundShellManager()
+	bgShell, err := bgManager.Start(ctx, workingDir, nil, "printf 'Name: '; read name; echo \"Hello $name\"", "")
+	require.NoError(t, err)
+	defer bgManager.Kill(bgShell.ID) //nolint:errcheck
+	if !bgShell.SupportsInput() {
+		t.Skip("PTY input is not supported on this platform")
+	}
+
+	require.Eventually(t, func() bool {
+		stdout, _, _, _ := bgShell.GetOutput()
+		return strings.Contains(stdout, "Name:")
+	}, 3*time.Second, 50*time.Millisecond)
+
+	tool := NewJobOutputTool()
+	start := time.Now()
+	resp := runJobOutputTool(t, tool, ctx, JobOutputParams{
+		ShellID: bgShell.ID,
+		Wait:    true,
+	})
+	require.Less(t, time.Since(start), 5*time.Second)
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "Status: running")
+	require.Contains(t, resp.Content, "accepts input")
+
+	var meta JobOutputResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, bgShell.ID, meta.ShellID)
+	require.False(t, meta.Done)
+	require.True(t, meta.SupportsInput)
+}
+
 func TestBackgroundShell_MultipleOutputCalls(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()
@@ -96,8 +167,41 @@ func TestBackgroundShell_MultipleOutputCalls(t *testing.T) {
 	require.Equal(t, stdout1, stdout2, "Multiple GetOutput calls should return same result")
 }
 
+func runJobInputTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, params JobInputParams) fantasy.ToolResponse {
+	t.Helper()
+
+	input, err := json.Marshal(params)
+	require.NoError(t, err)
+
+	call := fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  JobInputToolName,
+		Input: string(input),
+	}
+
+	resp, err := tool.Run(ctx, call)
+	require.NoError(t, err)
+	return resp
+}
+
+func runJobOutputTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, params JobOutputParams) fantasy.ToolResponse {
+	t.Helper()
+
+	input, err := json.Marshal(params)
+	require.NoError(t, err)
+
+	call := fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  JobOutputToolName,
+		Input: string(input),
+	}
+
+	resp, err := tool.Run(ctx, call)
+	require.NoError(t, err)
+	return resp
+}
+
 func TestBackgroundShell_EmptyOutput(t *testing.T) {
-	t.Parallel()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("This test is flacky on Windows for some reason")
@@ -123,7 +227,6 @@ func TestBackgroundShell_EmptyOutput(t *testing.T) {
 }
 
 func TestBackgroundShell_ExitCode(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()
@@ -147,7 +250,6 @@ func TestBackgroundShell_ExitCode(t *testing.T) {
 }
 
 func TestBackgroundShell_WithBlockFuncs(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()
@@ -180,7 +282,6 @@ func TestBackgroundShell_WithBlockFuncs(t *testing.T) {
 }
 
 func TestBackgroundShell_StdoutAndStderr(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()
@@ -198,11 +299,15 @@ func TestBackgroundShell_StdoutAndStderr(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, done)
 	require.Contains(t, stdout, "stdout message")
-	require.Contains(t, stderr, "stderr message")
+	if bgShell.SupportsInput() {
+		require.Contains(t, stdout, "stderr message")
+		require.Empty(t, stderr)
+	} else {
+		require.Contains(t, stderr, "stderr message")
+	}
 }
 
 func TestBackgroundShell_ConcurrentAccess(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()
@@ -252,7 +357,6 @@ func TestBackgroundShell_ConcurrentAccess(t *testing.T) {
 }
 
 func TestBackgroundShell_List(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()
@@ -282,7 +386,6 @@ func TestBackgroundShell_List(t *testing.T) {
 }
 
 func TestBackgroundShell_AutoBackground(t *testing.T) {
-	t.Parallel()
 
 	workingDir := t.TempDir()
 	ctx := context.Background()

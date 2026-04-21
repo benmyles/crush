@@ -153,6 +153,57 @@ func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 }
 
 // -----------------------------------------------------------------------------
+// Job Input Tool
+// -----------------------------------------------------------------------------
+
+// JobInputToolMessageItem is a message item for job_input tool calls.
+type JobInputToolMessageItem struct {
+	*baseToolMessageItem
+}
+
+var _ ToolMessageItem = (*JobInputToolMessageItem)(nil)
+
+// NewJobInputToolMessageItem creates a new [JobInputToolMessageItem].
+func NewJobInputToolMessageItem(
+	sty *styles.Styles,
+	toolCall message.ToolCall,
+	result *message.ToolResult,
+	canceled bool,
+) ToolMessageItem {
+	return newBaseToolMessageItem(sty, toolCall, result, &JobInputToolRenderContext{}, canceled)
+}
+
+// JobInputToolRenderContext renders job_input tool messages.
+type JobInputToolRenderContext struct{}
+
+// RenderTool implements the [ToolRenderer] interface.
+func (j *JobInputToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
+	cappedWidth := cappedMessageWidth(width)
+	if opts.IsPending() {
+		return pendingTool(sty, "Job", opts.Anim, opts.Compact)
+	}
+
+	var params tools.JobInputParams
+	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
+		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, cappedWidth)
+	}
+
+	var description string
+	if opts.HasResult() && opts.Result.Metadata != "" {
+		var meta tools.JobInputResponseMetadata
+		if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err == nil {
+			description = cmp.Or(meta.Description, meta.Command)
+		}
+	}
+
+	content := ""
+	if opts.HasResult() {
+		content = opts.Result.Content
+	}
+	return renderJobTool(sty, opts, cappedWidth, "Input", params.ShellID, description, content)
+}
+
+// -----------------------------------------------------------------------------
 // Job Kill Tool
 // -----------------------------------------------------------------------------
 
@@ -265,6 +316,8 @@ func commandOutputStatus(output *tools.CommandOutputEvent) string {
 		return "Failed"
 	case output.Done:
 		return "Completed"
+	case output.SupportsInput:
+		return "Running, accepts input"
 	default:
 		return "Running"
 	}

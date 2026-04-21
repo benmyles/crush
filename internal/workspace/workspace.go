@@ -84,8 +84,11 @@ type Workspace interface {
 	AgentQueuedPromptsList(sessionID string) []string
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
+	AgentCompact(ctx context.Context, sessionID string) error
 	UpdateAgentModel(ctx context.Context) error
 	InitCoderAgent(ctx context.Context) error
+	JobInput(ctx context.Context, shellID, input string) error
+	JobResize(ctx context.Context, shellID string, cols, rows int) error
 	GetDefaultSmallModel(providerID string) config.SelectedModel
 
 	// Permissions

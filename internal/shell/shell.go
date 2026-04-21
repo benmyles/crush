@@ -119,6 +119,15 @@ func (s *Shell) ExecStream(ctx context.Context, command string, stdout, stderr i
 	return s.execStream(ctx, command, stdout, stderr)
 }
 
+// ExecPTY executes a command with stdin, stdout, and stderr connected to a
+// terminal device.
+func (s *Shell) ExecPTY(ctx context.Context, command string, tty *os.File) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.execPTY(ctx, command, tty)
+}
+
 // GetWorkingDir returns the current working directory
 func (s *Shell) GetWorkingDir() string {
 	s.mu.Lock()
@@ -263,11 +272,11 @@ func (s *Shell) builtinHandler() func(next interp.ExecHandlerFunc) interp.ExecHa
 	}
 }
 
-// newInterp creates a new interpreter with the current shell state
-func (s *Shell) newInterp(stdout, stderr io.Writer) (*interp.Runner, error) {
+// newInterp creates a new interpreter with the current shell state.
+func (s *Shell) newInterp(stdin io.Reader, stdout, stderr io.Writer, interactive bool) (*interp.Runner, error) {
 	return interp.New(
-		interp.StdIO(nil, stdout, stderr),
-		interp.Interactive(false),
+		interp.StdIO(stdin, stdout, stderr),
+		interp.Interactive(interactive),
 		interp.Env(expand.ListEnviron(s.env...)),
 		interp.Dir(s.cwd),
 		interp.ExecHandlers(s.execHandlers()...),
@@ -286,7 +295,7 @@ func (s *Shell) updateShellFromRunner(runner *interp.Runner) {
 }
 
 // execCommon is the shared implementation for executing commands
-func (s *Shell) execCommon(ctx context.Context, command string, stdout, stderr io.Writer) (err error) {
+func (s *Shell) execCommon(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer, interactive bool) (err error) {
 	var runner *interp.Runner
 	defer func() {
 		if r := recover(); r != nil {
@@ -303,7 +312,7 @@ func (s *Shell) execCommon(ctx context.Context, command string, stdout, stderr i
 		return fmt.Errorf("could not parse command: %w", err)
 	}
 
-	runner, err = s.newInterp(stdout, stderr)
+	runner, err = s.newInterp(stdin, stdout, stderr, interactive)
 	if err != nil {
 		return fmt.Errorf("could not run command: %w", err)
 	}
@@ -315,13 +324,18 @@ func (s *Shell) execCommon(ctx context.Context, command string, stdout, stderr i
 // exec executes commands using a cross-platform shell interpreter.
 func (s *Shell) exec(ctx context.Context, command string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
-	err := s.execCommon(ctx, command, &stdout, &stderr)
+	err := s.execCommon(ctx, command, nil, &stdout, &stderr, false)
 	return stdout.String(), stderr.String(), err
 }
 
 // execStream executes commands using POSIX shell emulation with streaming output
 func (s *Shell) execStream(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	return s.execCommon(ctx, command, stdout, stderr)
+	return s.execCommon(ctx, command, nil, stdout, stderr, false)
+}
+
+// execPTY executes commands using POSIX shell emulation with terminal stdio.
+func (s *Shell) execPTY(ctx context.Context, command string, tty *os.File) error {
+	return s.execCommon(ctx, command, tty, tty, tty, true)
 }
 
 func (s *Shell) execHandlers() []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
