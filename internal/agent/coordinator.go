@@ -672,10 +672,40 @@ func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map
 	return anthropic.New(opts...)
 }
 
-func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
+func openAICompletionsPathOption(baseURL, completionsPath string) (openaisdk.RequestOption, error) {
+	if _, err := config.CompletionsURL(baseURL, completionsPath); err != nil {
+		return nil, err
+	}
+	normalizedPath, err := config.NormalizeCompletionsPath(completionsPath)
+	if err != nil {
+		return nil, err
+	}
+	if normalizedPath == "/chat/completions" {
+		return nil, nil
+	}
+
+	return openaisdk.WithMiddleware(func(req *http.Request, next openaisdk.MiddlewareNext) (*http.Response, error) {
+		const defaultPath = "/chat/completions"
+		if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, defaultPath) {
+			rewritten := req.Clone(req.Context())
+			prefix := strings.TrimSuffix(rewritten.URL.Path, defaultPath)
+			rewritten.URL.Path = prefix + normalizedPath
+			rewritten.URL.RawPath = ""
+			req = rewritten
+		}
+		return next(req)
+	}), nil
+}
+
+func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[string]string, completionsPath string) (fantasy.Provider, error) {
 	opts := []openai.Option{
 		openai.WithAPIKey(apiKey),
 		openai.WithUseResponsesAPI(),
+	}
+	if pathOption, err := openAICompletionsPathOption(baseURL, completionsPath); err != nil {
+		return nil, fmt.Errorf("invalid completions_path: %w", err)
+	} else if pathOption != nil {
+		opts = append(opts, openai.WithSDKOptions(pathOption))
 	}
 	if c.cfg.Config().Options.Debug {
 		httpClient := log.NewHTTPClient()
@@ -718,7 +748,7 @@ func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]s
 	return vercel.New(opts...)
 }
 
-func (c *coordinator) buildOpenaiCompatProvider(ctx context.Context, baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerID string, authMode config.ProviderAuthMode, isSubAgent bool) (fantasy.Provider, error) {
+func (c *coordinator) buildOpenaiCompatProvider(ctx context.Context, baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerID string, authMode config.ProviderAuthMode, isSubAgent bool, completionsPath string) (fantasy.Provider, error) {
 	// Build openai-compat on top of the OpenAI provider so Crush can supply
 	// local reasoning hooks for both streaming and non-streaming chat
 	// completions.
@@ -728,6 +758,11 @@ func (c *coordinator) buildOpenaiCompatProvider(ctx context.Context, baseURL, ap
 		openai.WithLanguageModelOptions(openAICompatLanguageModelOptions()...),
 		openai.WithBaseURL(baseURL),
 		openai.WithAPIKey(apiKey),
+	}
+	if pathOption, err := openAICompletionsPathOption(baseURL, completionsPath); err != nil {
+		return nil, fmt.Errorf("invalid completions_path: %w", err)
+	} else if pathOption != nil {
+		opts = append(opts, openai.WithSDKOptions(pathOption))
 	}
 
 	// Set HTTP client based on provider and debug mode.
@@ -873,10 +908,11 @@ func (c *coordinator) buildProvider(ctx context.Context, providerCfg config.Prov
 
 	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
 	baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
+	completionsPath, _ := c.cfg.Resolve(providerCfg.CompletionsPath)
 
 	switch providerCfg.Type {
 	case openai.Name:
-		return c.buildOpenaiProvider(baseURL, apiKey, headers)
+		return c.buildOpenaiProvider(baseURL, apiKey, headers, completionsPath)
 	case anthropic.Name:
 		return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID)
 	case openrouter.Name:
@@ -903,7 +939,7 @@ func (c *coordinator) buildProvider(ctx context.Context, providerCfg config.Prov
 			}
 			extraBody["tool_stream"] = true
 		}
-		return c.buildOpenaiCompatProvider(ctx, baseURL, apiKey, headers, extraBody, providerCfg.ID, providerCfg.NormalizedAuthMode(), isSubAgent)
+		return c.buildOpenaiCompatProvider(ctx, baseURL, apiKey, headers, extraBody, providerCfg.ID, providerCfg.NormalizedAuthMode(), isSubAgent, completionsPath)
 	default:
 		return nil, fmt.Errorf("provider type not supported: %q", providerCfg.Type)
 	}

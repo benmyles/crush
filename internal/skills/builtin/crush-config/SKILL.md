@@ -81,6 +81,7 @@ The `$schema` property enables IDE autocomplete but is optional.
 - `type` (required): `openai`, `openai-compat`, or `anthropic`
 - `api_key` supports `$ENV_VAR` syntax.
 - `auth_mode: "google-adc"` is supported for `openai-compat` providers such as self-deployed Vertex AI OpenAPI endpoints.
+- `completions_path` overrides the OpenAI-compatible chat completions path; use values such as `/custom/completions` or `:rawPredict`.
 - `disable_streaming_models` sets provider-level non-stream defaults for listed model IDs.
 - Additional fields: `disable`, `system_prompt_prefix`, `extra_headers`, `extra_body`, `provider_options`.
 

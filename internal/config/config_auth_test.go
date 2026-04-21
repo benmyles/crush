@@ -109,3 +109,114 @@ func TestProviderConfigTestConnectionGoogleADC(t *testing.T) {
 	require.Equal(t, "user", messages[0].Role)
 	require.Equal(t, "ping", messages[0].Content)
 }
+
+func TestProviderConfigTestConnectionGoogleADCCompletionsPath(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(server.Close)
+
+	originalClientFactory := newGoogleADCHTTPClient
+	newGoogleADCHTTPClient = func(context.Context, *http.Client) (*http.Client, error) {
+		return googleadc.NewHTTPClientWithTokenProvider(nil, staticTokenProvider{
+			token: &auth.Token{Value: "adc-token"},
+		}), nil
+	}
+	t.Cleanup(func() {
+		newGoogleADCHTTPClient = originalClientFactory
+	})
+
+	cfg := ProviderConfig{
+		ID:              "vertex-raw-predict",
+		Type:            catwalk.TypeOpenAICompat,
+		AuthMode:        ProviderAuthModeGoogleADC,
+		BaseURL:         server.URL + "/v1/projects/test/locations/us-central1/endpoints/model-id",
+		CompletionsPath: ":rawPredict",
+		Models: []catwalk.Model{{
+			ID: "zai-org/glm-5-maas",
+		}},
+	}
+
+	resolver := NewEnvironmentVariableResolver(env.NewFromMap(map[string]string{}))
+	err := cfg.TestConnection(resolver)
+	require.NoError(t, err)
+	require.Equal(t, "/v1/projects/test/locations/us-central1/endpoints/model-id:rawPredict", gotPath)
+}
+
+func TestCompletionsURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		baseURL         string
+		completionsPath string
+		want            string
+		wantErr         bool
+	}{
+		{
+			name:            "default",
+			baseURL:         "https://api.example.com/v1",
+			completionsPath: "",
+			want:            "https://api.example.com/v1/chat/completions",
+		},
+		{
+			name:            "slash path",
+			baseURL:         "https://api.example.com/v1/",
+			completionsPath: "/custom/completions",
+			want:            "https://api.example.com/v1/custom/completions",
+		},
+		{
+			name:            "relative path",
+			baseURL:         "https://api.example.com/v1",
+			completionsPath: "custom/completions",
+			want:            "https://api.example.com/v1/custom/completions",
+		},
+		{
+			name:            "vertex suffix",
+			baseURL:         "https://vertex.example.com/v1/projects/p/locations/us/endpoints/e",
+			completionsPath: ":rawPredict",
+			want:            "https://vertex.example.com/v1/projects/p/locations/us/endpoints/e:rawPredict",
+		},
+		{
+			name:            "suffix without endpoint path rejected",
+			baseURL:         "https://vertex.example.com",
+			completionsPath: ":rawPredict",
+			wantErr:         true,
+		},
+		{
+			name:            "full url rejected",
+			baseURL:         "https://api.example.com/v1",
+			completionsPath: "https://other.example.com/chat/completions",
+			wantErr:         true,
+		},
+		{
+			name:            "query rejected",
+			baseURL:         "https://api.example.com/v1",
+			completionsPath: "/chat/completions?version=1",
+			wantErr:         true,
+		},
+		{
+			name:            "empty suffix rejected",
+			baseURL:         "https://api.example.com/v1",
+			completionsPath: ":",
+			wantErr:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := CompletionsURL(tt.baseURL, tt.completionsPath)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}

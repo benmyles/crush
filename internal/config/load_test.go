@@ -103,8 +103,9 @@ func TestConfig_configureProvidersWithOverride(t *testing.T) {
 		Providers: csync.NewMap[string, ProviderConfig](),
 	}
 	cfg.Providers.Set("openai", ProviderConfig{
-		APIKey:  "xyz",
-		BaseURL: "https://api.openai.com/v2",
+		APIKey:          "xyz",
+		BaseURL:         "https://api.openai.com/v2",
+		CompletionsPath: ":rawPredict",
 		Models: []catwalk.Model{
 			{
 				ID:   "test-model",
@@ -129,6 +130,7 @@ func TestConfig_configureProvidersWithOverride(t *testing.T) {
 	pc, _ := cfg.Providers.Get("openai")
 	require.Equal(t, "xyz", pc.APIKey)
 	require.Equal(t, "https://api.openai.com/v2", pc.BaseURL)
+	require.Equal(t, ":rawPredict", pc.CompletionsPath)
 	require.Len(t, pc.Models, 2)
 	require.Equal(t, "Updated", pc.Models[0].Name)
 }
@@ -148,8 +150,9 @@ func TestConfig_configureProvidersWithNewProvider(t *testing.T) {
 	cfg := &Config{
 		Providers: csync.NewMapFrom(map[string]ProviderConfig{
 			"custom": {
-				APIKey:  "xyz",
-				BaseURL: "https://api.someendpoint.com/v2",
+				APIKey:          "xyz",
+				BaseURL:         "https://api.someendpoint.com/v2",
+				CompletionsPath: "custom/completions",
 				Models: []catwalk.Model{
 					{
 						ID: "test-model",
@@ -174,6 +177,7 @@ func TestConfig_configureProvidersWithNewProvider(t *testing.T) {
 	// Make sure we set the ID correctly
 	require.Equal(t, "custom", pc.ID)
 	require.Equal(t, "https://api.someendpoint.com/v2", pc.BaseURL)
+	require.Equal(t, "custom/completions", pc.CompletionsPath)
 	require.Len(t, pc.Models, 1)
 
 	_, ok := cfg.Providers.Get("openai")
@@ -683,9 +687,10 @@ func TestConfig_configureProvidersCustomProviderValidation(t *testing.T) {
 		cfg := &Config{
 			Providers: csync.NewMapFrom(map[string]ProviderConfig{
 				"vertex-openapi": {
-					BaseURL:  "https://example.com/v1/projects/test/locations/us-central1/endpoints/openapi",
-					Type:     catwalk.TypeOpenAICompat,
-					AuthMode: ProviderAuthModeGoogleADC,
+					BaseURL:         "https://example.com/v1/projects/test/locations/us-central1/endpoints/openapi",
+					CompletionsPath: ":rawPredict",
+					Type:            catwalk.TypeOpenAICompat,
+					AuthMode:        ProviderAuthModeGoogleADC,
 					Models: []catwalk.Model{{
 						ID: "zai-org/glm-5-maas",
 					}},
@@ -705,6 +710,7 @@ func TestConfig_configureProvidersCustomProviderValidation(t *testing.T) {
 		require.Equal(t, ProviderAuthModeGoogleADC, customProvider.AuthMode)
 		require.Empty(t, customProvider.APIKey)
 		require.Empty(t, customProvider.APIKeyTemplate)
+		require.Equal(t, ":rawPredict", customProvider.CompletionsPath)
 	})
 
 	t.Run("custom provider with unsupported google adc auth combination is removed", func(t *testing.T) {

@@ -227,6 +227,7 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			ID:                     string(p.ID),
 			Name:                   p.Name,
 			BaseURL:                p.APIEndpoint,
+			CompletionsPath:        config.CompletionsPath,
 			APIKey:                 p.APIKey,
 			AuthMode:               config.AuthMode,
 			APIKeyTemplate:         p.APIKey, // Store original template for re-resolution
@@ -337,6 +338,13 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			}
 			continue
 		}
+		if err := validateProviderCompletionsPath(resolver, prepared); err != nil {
+			slog.Warn("Skipping provider due to invalid completions path", "provider", p.ID, "error", err)
+			if configExists {
+				c.Providers.Del(string(p.ID))
+			}
+			continue
+		}
 		c.Providers.Set(string(p.ID), prepared)
 	}
 
@@ -393,6 +401,11 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			c.Providers.Del(id)
 			continue
 		}
+		if err := validateProviderCompletionsPath(resolver, providerConfig); err != nil {
+			slog.Warn("Skipping custom provider due to invalid completions path", "provider", id, "error", err)
+			c.Providers.Del(id)
+			continue
+		}
 
 		for k, v := range providerConfig.ExtraHeaders {
 			resolved, err := resolver.ResolveValue(v)
@@ -411,6 +424,22 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 	}
 
 	return nil
+}
+
+func validateProviderCompletionsPath(resolver VariableResolver, providerConfig ProviderConfig) error {
+	if providerConfig.CompletionsPath == "" {
+		return nil
+	}
+	path, err := resolver.ResolveValue(providerConfig.CompletionsPath)
+	if err != nil {
+		return err
+	}
+	baseURL, err := resolver.ResolveValue(providerConfig.BaseURL)
+	if err != nil {
+		return err
+	}
+	_, err = CompletionsURL(baseURL, path)
+	return err
 }
 
 func (c *Config) setDefaults(workingDir, dataDir string) {

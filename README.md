@@ -577,6 +577,11 @@ Provider-level `disable_streaming_models` sets the default stream behavior for
 listed model IDs. You can override that per selected model with
 `models.large.disable_streaming` or `models.small.disable_streaming`.
 
+OpenAI-compatible providers default to `base_url` plus `/chat/completions`.
+If your provider exposes chat completions at a different path, set
+`completions_path`. Values that start with `:` are appended directly to the
+configured `base_url`, which is useful for Vertex AI `:rawPredict` endpoints.
+
 For OpenAI Responses models and OpenAI-compatible backends that accept the same
 request field, you can set a default reasoning summary level on the selected
 model:
@@ -711,6 +716,28 @@ When `auth_mode` is set to `google-adc`, Crush ignores any configured
 `Authorization` header and uses ADC bearer tokens automatically. Run
 `gcloud auth application-default login` or otherwise provide ADC credentials
 before starting Crush.
+
+For Vertex `rawPredict` endpoints, set `base_url` to the endpoint resource and
+set `completions_path` to `":rawPredict"`:
+
+```json
+{
+  "providers": {
+    "vertex-raw-predict": {
+      "type": "openai-compat",
+      "auth_mode": "google-adc",
+      "base_url": "https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/${ENDPOINT_ID}",
+      "completions_path": ":rawPredict",
+      "models": [
+        {
+          "id": "zai-org/glm-5-maas",
+          "name": "GLM 5"
+        }
+      ]
+    }
+  }
+}
+```
 
 ### Local Models
 

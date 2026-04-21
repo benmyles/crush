@@ -115,6 +115,8 @@ type ProviderConfig struct {
 	Name string `json:"name,omitempty" jsonschema:"description=Human-readable name for the provider,example=OpenAI"`
 	// The provider's API endpoint.
 	BaseURL string `json:"base_url,omitempty" jsonschema:"description=Base URL for the provider's API,format=uri,example=https://api.openai.com/v1"`
+	// The provider's chat completions endpoint path.
+	CompletionsPath string `json:"completions_path,omitempty" jsonschema:"description=Path or suffix for OpenAI-compatible chat completions requests,example=/chat/completions,example=:rawPredict"`
 	// The provider type, e.g. "openai", "anthropic", etc. if empty it defaults to openai.
 	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=openai-compat,enum=anthropic,enum=gemini,enum=azure,enum=vertexai,default=openai"`
 	// The provider's API key.
@@ -175,6 +177,51 @@ func (c *ProviderConfig) ToProvider() catwalk.Provider {
 	}
 
 	return provider
+}
+
+const defaultCompletionsPath = "/chat/completions"
+
+// NormalizeCompletionsPath normalizes a provider chat completions override.
+func NormalizeCompletionsPath(path string) (string, error) {
+	if path == "" {
+		return defaultCompletionsPath, nil
+	}
+
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("completions_path cannot be blank")
+	}
+	if strings.Contains(path, "://") || strings.HasPrefix(path, "//") {
+		return "", errors.New("completions_path must be a path or suffix, not a URL")
+	}
+	if strings.ContainsAny(path, "?#") {
+		return "", errors.New("completions_path must not contain query strings or fragments")
+	}
+	if strings.HasPrefix(path, ":") {
+		if path == ":" {
+			return "", errors.New("completions_path suffix cannot be empty")
+		}
+		return path, nil
+	}
+	if strings.HasPrefix(path, "/") {
+		return path, nil
+	}
+	return "/" + path, nil
+}
+
+// CompletionsURL joins a provider base URL with its completions path.
+func CompletionsURL(baseURL, completionsPath string) (string, error) {
+	path, err := NormalizeCompletionsPath(completionsPath)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(path, ":") {
+		u, err := url.Parse(baseURL)
+		if err == nil && (u.Path == "" || u.Path == "/") {
+			return "", errors.New("completions_path suffix requires base_url to include an endpoint path")
+		}
+	}
+	return strings.TrimRight(baseURL, "/") + path, nil
 }
 
 func (c *ProviderConfig) SetupGitHubCopilot() {
@@ -619,7 +666,14 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 			if len(c.Models) == 0 {
 				return fmt.Errorf("provider %s has no models configured", c.ID)
 			}
-			testURL = strings.TrimRight(baseURL, "/") + "/chat/completions"
+			completionsPath, err := resolver.ResolveValue(c.CompletionsPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve completions_path for provider %s: %w", c.ID, err)
+			}
+			testURL, err = CompletionsURL(baseURL, completionsPath)
+			if err != nil {
+				return fmt.Errorf("invalid completions_path for provider %s: %w", c.ID, err)
+			}
 		} else {
 			switch providerID {
 			case catwalk.InferenceProviderOpenRouter:

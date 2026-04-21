@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -162,6 +164,94 @@ func TestOpenAICompatExtraBody(t *testing.T) {
 		}, got)
 		require.Equal(t, "concise", providerCfg.ExtraBody["reasoning_summary"])
 	})
+}
+
+func TestOpenAICompatProviderCompletionsPath(t *testing.T) {
+	tests := []struct {
+		name            string
+		completionsPath string
+		wantPath        string
+	}{
+		{
+			name:     "default",
+			wantPath: "/v1/projects/p/locations/us/endpoints/e/chat/completions",
+		},
+		{
+			name:            "vertex suffix",
+			completionsPath: ":rawPredict",
+			wantPath:        "/v1/projects/p/locations/us/endpoints/e:rawPredict",
+		},
+		{
+			name:            "slash path",
+			completionsPath: "/custom/completions",
+			wantPath:        "/v1/projects/p/locations/us/endpoints/e/custom/completions",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodPost, r.Method)
+				gotPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{
+					"id": "chatcmpl-test",
+					"object": "chat.completion",
+					"created": 0,
+					"model": "test-model",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "ok"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 1,
+						"completion_tokens": 1,
+						"total_tokens": 2
+					}
+				}`))
+				require.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+
+			env := testEnv(t)
+			coord := newTestCoordinator(t, env, "test-provider", config.ProviderConfig{})
+			provider, err := coord.buildOpenaiCompatProvider(
+				t.Context(),
+				server.URL+"/v1/projects/p/locations/us/endpoints/e",
+				"test-key",
+				map[string]string{},
+				nil,
+				"test-provider",
+				config.ProviderAuthModeAPIKey,
+				false,
+				tt.completionsPath,
+			)
+			require.NoError(t, err)
+
+			lm, err := provider.LanguageModel(t.Context(), "test-model")
+			require.NoError(t, err)
+			resp, err := lm.Generate(t.Context(), fantasy.Call{
+				Prompt: fantasy.Prompt{{
+					Role: fantasy.MessageRoleUser,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "hello"},
+					},
+				}},
+			})
+			require.NoError(t, err)
+			text, ok := resp.Content[0].(fantasy.TextContent)
+			require.True(t, ok)
+			require.Equal(t, "ok", text.Text)
+			require.Equal(t, tt.wantPath, gotPath)
+		})
+	}
 }
 
 func TestOpenAICompatExtraContentFunc(t *testing.T) {

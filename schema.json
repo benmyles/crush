@@ -512,6 +512,14 @@
             "https://api.openai.com/v1"
           ]
         },
+        "completions_path": {
+          "type": "string",
+          "description": "Path or suffix for OpenAI-compatible chat completions requests",
+          "examples": [
+            "/chat/completions",
+            ":rawPredict"
+          ]
+        },
         "type": {
           "type": "string",
           "enum": [
@@ -611,6 +619,15 @@
             "high"
           ],
           "description": "Reasoning effort level for OpenAI models that support it"
+        },
+        "reasoning_summary": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "concise",
+            "detailed"
+          ],
+          "description": "Default reasoning summary level for OpenAI and OpenAI-compatible providers that support it"
         },
         "think": {
           "type": "boolean",
