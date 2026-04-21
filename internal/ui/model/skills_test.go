@@ -56,3 +56,26 @@ func TestSkillStatusItemsIncludesBuiltinSkills(t *testing.T) {
 	}
 	require.True(t, hasBuiltin)
 }
+
+func TestSkillStatusItemsDeduplicatesStatesByName(t *testing.T) {
+	t.Parallel()
+
+	st := uistyles.DefaultStyles()
+	ui := &UI{
+		com: &common.Common{Styles: &st},
+		skillStates: []*skills.SkillState{
+			{Name: "shared-skill", Path: "/tmp/.agents/skills/shared-skill/SKILL.md", State: skills.StateNormal},
+			{Name: "shared-skill", Path: "/tmp/.claude/skills/shared-skill/SKILL.md", State: skills.StateNormal},
+		},
+	}
+
+	items := ui.skillStatusItems()
+
+	var count int
+	for _, item := range items {
+		if item.name == "shared-skill" {
+			count++
+		}
+	}
+	require.Equal(t, 1, count)
+}

@@ -284,6 +284,40 @@ description: Name doesn't match directory.
 	require.True(t, names["skill-two"])
 }
 
+func TestDiscoverDeduplicatesSymlinkedPaths(t *testing.T) {
+	// Not parallel: shares global broker with other Discover tests.
+	tmpDir := t.TempDir()
+
+	skillsRoot := filepath.Join(tmpDir, ".agents", "skills")
+	skillDir := filepath.Join(skillsRoot, "shared-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, SkillFileName), []byte(`---
+name: shared-skill
+description: Shared test skill.
+---
+# Shared Skill
+`), 0o644))
+
+	linkedRoot := filepath.Join(tmpDir, ".claude", "skills")
+	require.NoError(t, os.MkdirAll(filepath.Dir(linkedRoot), 0o755))
+	if err := os.Symlink(skillsRoot, linkedRoot); err != nil {
+		t.Skipf("Skipping symlink test: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := SubscribeEvents(ctx)
+
+	discovered := Discover([]string{skillsRoot, linkedRoot})
+
+	evt := <-ch
+	require.Len(t, evt.Payload.States, 1)
+	require.Len(t, discovered, 1)
+	require.Equal(t, "shared-skill", discovered[0].Name)
+	require.Equal(t, "shared-skill", evt.Payload.States[0].Name)
+	require.Equal(t, StateNormal, evt.Payload.States[0].State)
+}
+
 func TestDiscoverEmptyDir(t *testing.T) {
 	// Not parallel: shares global broker with other Discover tests.
 

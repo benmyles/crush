@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -176,6 +177,20 @@ func Discover(paths []string) []*Skill {
 	return skills
 }
 
+func canonicalDiscoveryPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	path = filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		path = strings.ToLower(path)
+	}
+	return path
+}
+
 // DiscoverWithStates finds all valid skills in the given paths and also
 // returns a per-file state slice describing parse/validation outcomes. Useful
 // for diagnostics and UI reporting.
@@ -183,7 +198,8 @@ func DiscoverWithStates(paths []string) ([]*Skill, []*SkillState) {
 	var skills []*Skill
 	var states []*SkillState
 	var mu sync.Mutex
-	seen := make(map[string]bool)
+	seenBases := make(map[string]bool)
+	seenSkillFiles := make(map[string]bool)
 	addState := func(name, path string, state DiscoveryState, err error) {
 		mu.Lock()
 		states = append(states, &SkillState{
@@ -196,6 +212,12 @@ func DiscoverWithStates(paths []string) ([]*Skill, []*SkillState) {
 	}
 
 	for _, base := range paths {
+		baseKey := canonicalDiscoveryPath(base)
+		if seenBases[baseKey] {
+			continue
+		}
+		seenBases[baseKey] = true
+
 		// We use fastwalk with Follow: true instead of filepath.WalkDir because
 		// WalkDir doesn't follow symlinked directories at any depth—only entry
 		// points. This ensures skills in symlinked subdirectories are discovered.
@@ -213,12 +235,13 @@ func DiscoverWithStates(paths []string) ([]*Skill, []*SkillState) {
 			if d.IsDir() || d.Name() != SkillFileName {
 				return nil
 			}
+			key := canonicalDiscoveryPath(path)
 			mu.Lock()
-			if seen[path] {
+			if seenSkillFiles[key] {
 				mu.Unlock()
 				return nil
 			}
-			seen[path] = true
+			seenSkillFiles[key] = true
 			mu.Unlock()
 			skill, err := Parse(path)
 			if err != nil {

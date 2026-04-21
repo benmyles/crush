@@ -17,6 +17,7 @@ type skillStatusItem struct {
 	icon  string
 	name  string
 	title string
+	state skills.DiscoveryState
 	// description is reserved for future use (e.g. showing error details).
 	description string
 }
@@ -56,7 +57,7 @@ func (m *UI) skillsInfo(width, maxItems int, isSection bool) string {
 func (m *UI) skillStatusItems() []skillStatusItem {
 	t := m.com.Styles
 	var items []skillStatusItem
-	stateNames := make(map[string]struct{}, len(m.skillStates))
+	stateItems := make(map[string]skillStatusItem, len(m.skillStates))
 
 	states := slices.Clone(m.skillStates)
 	slices.SortStableFunc(states, func(a, b *skills.SkillState) int {
@@ -67,16 +68,24 @@ func (m *UI) skillStatusItems() []skillStatusItem {
 		if name == "" {
 			name = filepath.Base(filepath.Dir(state.Path))
 		}
-		stateNames[name] = struct{}{}
 		icon := t.ResourceOnlineIcon.String()
 		if state.State == skills.StateError {
 			icon = t.ResourceErrorIcon.String()
 		}
-		items = append(items, skillStatusItem{
+		item := skillStatusItem{
 			icon:  icon,
 			name:  name,
 			title: t.ResourceName.Render(name),
-		})
+			state: state.State,
+		}
+		existing, ok := stateItems[name]
+		if !ok || (existing.state != skills.StateError && state.State == skills.StateError) {
+			stateItems[name] = item
+		}
+	}
+
+	for _, item := range stateItems {
+		items = append(items, item)
 	}
 
 	builtin := cachedBuiltinSkills()
@@ -84,13 +93,14 @@ func (m *UI) skillStatusItems() []skillStatusItem {
 		return strings.Compare(a.Name, b.Name)
 	})
 	for _, skill := range builtin {
-		if _, ok := stateNames[skill.Name]; ok {
+		if _, ok := stateItems[skill.Name]; ok {
 			continue
 		}
 		items = append(items, skillStatusItem{
 			icon:  t.ResourceOnlineIcon.String(),
 			name:  skill.Name,
 			title: t.ResourceName.Render(skill.Name),
+			state: skills.StateNormal,
 		})
 	}
 
