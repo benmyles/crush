@@ -1,0 +1,107 @@
+internal/agent/tools/bash.tpl
+  0f7c32efd85ead3e 30
+internal/agent/tools/job_input.md
+  0f7c32efd85ead3e 1-19
+internal/swagger/swagger.json
+  0f7c32efd85ead3e 491-531,1279-1396,2957-2976,3022-3025,3218-3220,3512-3528
+internal/agent/tools/job_output.go
+  0f7c32efd85ead3e 8,16-17,25,33,53,76-78,87,99-124
+internal/ui/model/keys.go
+  0f7c32efd85ead3e 50-51,250-256
+internal/skills/builtin/crush-config/SKILL.md
+  0f7c32efd85ead3e 145-151,169-172
+internal/swagger/docs.go
+  0f7c32efd85ead3e 498-538,1286-1403,2964-2983,3029-3032,3225-3227,3519-3535
+internal/agent/morph_compact_test.go
+  0f7c32efd85ead3e 1-217
+internal/agent/tools/bash.go
+  0f7c32efd85ead3e 49,60,251,275-285,448,466,468,517-521,558,576,578,583-596
+internal/config/config.go
+  0f7c32efd85ead3e 301-332,371-388,597
+internal/server/proto.go
+  0f7c32efd85ead3e 817-898
+internal/shell/background_test.go
+  0f7c32efd85ead3e 176-200
+internal/ui/model/command_output_test.go
+  0f7c32efd85ead3e 4,8,16,20-31,69-113
+internal/workspace/app_workspace.go
+  0f7c32efd85ead3e 21,157-163,172-185
+internal/server/events.go
+  0f7c32efd85ead3e 118
+README.md
+  0f7c32efd85ead3e 500-529
+internal/workspace/client_workspace.go
+  0f7c32efd85ead3e 230-233,242-249,679
+internal/shell/background.go
+  0f7c32efd85ead3e 6,8-9,16,31,39-41,53-55,68-81,90-105,182-195,197-198,200-219,222-231,257,308,328-385
+internal/agent/agent.go
+  0f7c32efd85ead3e 100
+internal/agent/tools/job_test.go
+  0f7c32efd85ead3e 5,7,11-13,66-134,170-203,302-307
+internal/ui/chat/tools.go
+  0f7c32efd85ead3e 61-66,233-234,397-399
+internal/workspace/workspace.go
+  0f7c32efd85ead3e 87,90-91
+schema.json
+  0f7c32efd85ead3e 353-398,427-429
+internal/ui/dialog/actions.go
+  0f7c32efd85ead3e 60-62
+internal/proto/command_output.go
+  0f7c32efd85ead3e 16
+internal/ui/model/chat.go
+  0f7c32efd85ead3e 524-532
+internal/agent/tools/job_input.go
+  0f7c32efd85ead3e 1-122
+internal/agent/morph_compact.go
+  0f7c32efd85ead3e 1-312
+internal/backend/agent.go
+  0f7c32efd85ead3e 5,9,96-131
+internal/config/load_test.go
+  0f7c32efd85ead3e 39-70,529,552
+internal/proto/requests.go
+  0f7c32efd85ead3e 71-81
+internal/agent/tools/command_output.go
+  0f7c32efd85ead3e 18
+internal/shell/shell.go
+  0f7c32efd85ead3e 122-130,275-276,278-279,298,315,327,333-338
+internal/ui/model/ui.go
+  0f7c32efd85ead3e 100,117-121,222,520,686-688,1049-1055,1059,1061,1065-1066,1070,1494-1500,1776-1779,1937-1947,2090-2093,2344-2346,2387,2421-2423,2494,3233-3373,3660-3663
+go.mod
+  0f7c32efd85ead3e 40
+internal/agent/coordinator.go
+  0f7c32efd85ead3e 79,498,1025-1047
+internal/ui/dialog/commands_test.go
+  0f7c32efd85ead3e 1-75
+internal/server/server.go
+  0f7c32efd85ead3e 149-151
+internal/ui/dialog/commands.go
+  0f7c32efd85ead3e 427,430-432
+internal/ui/chat/bash.go
+  0f7c32efd85ead3e 156-205,319-320
+internal/client/proto.go
+  0f7c32efd85ead3e 397-440
+internal/agent/coordinator_test.go
+  0f7c32efd85ead3e 47-49
+internal/swagger/swagger.yaml
+  0f7c32efd85ead3e 145-157,196-200,330-331,526-537,1074-1100,1590-1667
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "af6ca1bd50acdfd752f541b496e2e758e3e937ed",
+  "prompts": {
+    "0f7c32efd85ead3e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dae50-3b3d-7490-b368-6810e67ea83a",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 2472,
+      "total_deletions": 69,
+      "accepted_lines": 2468,
+      "overriden_lines": 0
+    }
+  }
+}
