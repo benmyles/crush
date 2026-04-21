@@ -1,0 +1,27 @@
+internal/config/load.go
+  24335ffe51a380ce 230,341-347,404-408,429-442
+internal/config/load_test.go
+  24335ffe51a380ce 106-108,133,153-155,180,690-693,713
+internal/config/config.go
+  24335ffe51a380ce 118-119,182-226,669-675
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "55cce4fa07a13a9e8387d2585028c101a0ca3654",
+  "prompts": {
+    "24335ffe51a380ce": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da41c-2def-7333-afe8-4ab4cf0abd48",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 98,
+      "total_deletions": 9,
+      "accepted_lines": 97,
+      "overriden_lines": 0
+    }
+  }
+}
