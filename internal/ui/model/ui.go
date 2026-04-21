@@ -205,7 +205,9 @@ type UI struct {
 	completionsOpen          bool
 	completionsStartIndex    int
 	completionsQuery         string
-	completionsPositionStart image.Point // x,y where user typed '@'
+	completionsTrigger       string
+	completionsPositionStart image.Point // x,y where user typed the trigger
+	skillMentionNames        map[string]struct{}
 
 	// Chat components
 	chat *Chat
@@ -359,6 +361,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.progressBarEnabled = opts.Progress == nil || *opts.Progress
 	// enable transparent mode
 	ui.isTransparent = opts.TUI.Transparent != nil && *opts.TUI.Transparent
+	ui.refreshSkillMentionNames()
 
 	return ui
 }
@@ -625,6 +628,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lspStates = app.GetLSPStates()
 	case pubsub.Event[skills.Event]:
 		m.skillStates = msg.Payload.States
+		m.refreshSkillMentionNames()
 	case pubsub.Event[mcp.Event]:
 		switch msg.Payload.Type {
 		case mcp.EventStateChanged:
@@ -857,7 +861,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status.ClearInfoMsg()
 	case completions.CompletionItemsLoadedMsg:
 		if m.completionsOpen {
-			m.completions.SetItems(msg.Files, msg.Resources)
+			if m.completionsTrigger == skillCompletionTrigger {
+				m.rememberSkillCompletions(msg.Skills)
+			}
+			m.completions.SetItems(msg.Files, msg.Resources, msg.Skills)
 		}
 	case uv.KittyGraphicsEvent:
 		if !bytes.HasPrefix(msg.Payload, []byte("OK")) {
@@ -1720,8 +1727,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						if !msg.KeepOpen {
 							m.closeCompletions()
 						}
+					case completions.SelectionMsg[completions.SkillCompletionValue]:
+						cmds = append(cmds, m.insertSkillCompletion(msg.Value.Name))
+						if !msg.KeepOpen {
+							m.closeCompletions()
+						}
 					case completions.ClosedMsg:
-						m.completionsOpen = false
+						m.closeCompletions()
 					}
 					return tea.Batch(cmds...)
 				}
@@ -1833,20 +1845,26 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					break
 				}
 
-				// Check for @ trigger before passing to textarea.
+				// Check for completion triggers before passing to textarea.
 				curValue := m.textarea.Value()
 				curIdx := len(curValue)
 
-				// Trigger completions on @.
-				if msg.String() == "@" && !m.completionsOpen {
+				// Trigger completions on @ for files/resources and $ for skills.
+				trigger := msg.String()
+				if (trigger == fileCompletionTrigger || trigger == skillCompletionTrigger) && !m.completionsOpen {
 					// Only show if beginning of prompt or after whitespace.
 					if curIdx == 0 || (curIdx > 0 && isWhitespace(curValue[curIdx-1])) {
 						m.completionsOpen = true
 						m.completionsQuery = ""
+						m.completionsTrigger = trigger
 						m.completionsStartIndex = curIdx
 						m.completionsPositionStart = m.completionsPosition()
-						depth, limit := m.com.Config().Options.TUI.Completions.Limits()
-						cmds = append(cmds, m.completions.Open(depth, limit))
+						if trigger == skillCompletionTrigger {
+							cmds = append(cmds, m.loadSkillCompletions())
+						} else {
+							depth, limit := m.com.Config().Options.TUI.Completions.Limits()
+							cmds = append(cmds, m.completions.Open(depth, limit))
+						}
 					}
 				}
 
@@ -1863,8 +1881,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.updateHistoryDraft(curValue)
 
 				// After updating textarea, check if we need to filter completions.
-				// Skip filtering on the initial @ keystroke since items are loading async.
-				if m.completionsOpen && msg.String() != "@" {
+				// Skip filtering on the initial trigger keystroke since items are loading async.
+				if m.completionsOpen && msg.String() != m.completionsTrigger {
 					newValue := m.textarea.Value()
 					newIdx := len(newValue)
 
@@ -1877,7 +1895,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					} else {
 						// Extract current word and filter.
 						word := m.textareaWord()
-						if strings.HasPrefix(word, "@") {
+						if strings.HasPrefix(word, m.completionsTrigger) {
 							m.completionsQuery = word[1:]
 							m.completions.Filter(m.completionsQuery)
 						} else if m.completionsOpen {
@@ -2771,6 +2789,7 @@ func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
 func (m *UI) closeCompletions() {
 	m.completionsOpen = false
 	m.completionsQuery = ""
+	m.completionsTrigger = ""
 	m.completionsStartIndex = 0
 	m.completions.Close()
 }
@@ -2889,6 +2908,16 @@ func (m *UI) insertMCPResourceCompletion(item completions.ResourceCompletionValu
 	return tea.Batch(heightCmd, resourceCmd)
 }
 
+// insertSkillCompletion inserts the selected skill mention into the textarea,
+// replacing the $query.
+func (m *UI) insertSkillCompletion(name string) tea.Cmd {
+	prevHeight := m.textarea.Height()
+	if !m.insertCompletionText(skillCompletionTrigger + name) {
+		return nil
+	}
+	return m.handleTextareaHeightChange(prevHeight)
+}
+
 // completionsPosition returns the X and Y position for the completions popup.
 func (m *UI) completionsPosition() image.Point {
 	cur := m.textarea.Cursor()
@@ -2963,7 +2992,7 @@ func (m *UI) renderEditorView(width int) string {
 	}
 	return strings.Join([]string{
 		attachmentsView,
-		m.textarea.View(),
+		m.renderEditorSkillMentions(m.textarea.View()),
 		"", // margin at bottom of editor
 	}, "\n")
 }

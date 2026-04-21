@@ -14,7 +14,7 @@ func TestFilterPrefersExactBasenameStem(t *testing.T) {
 	c.SetItems([]FileCompletionValue{
 		{Path: "internal/ui/chat/search.go"},
 		{Path: "internal/ui/chat/user.go"},
-	}, nil)
+	}, nil, nil)
 
 	c.Filter("user")
 
@@ -33,7 +33,7 @@ func TestFilterPrefersBasenamePrefix(t *testing.T) {
 	c.SetItems([]FileCompletionValue{
 		{Path: "internal/ui/chat/mcp.go"},
 		{Path: "internal/ui/model/chat.go"},
-	}, nil)
+	}, nil, nil)
 
 	c.Filter("chat.g")
 
@@ -96,7 +96,7 @@ func TestFilterPrefersPathSegmentExact(t *testing.T) {
 	c.SetItems([]FileCompletionValue{
 		{Path: "internal/ui/model/xychat.go"},
 		{Path: "internal/ui/chat/mcp.go"},
-	}, nil)
+	}, nil, nil)
 
 	c.Filter("chat")
 
@@ -105,4 +105,19 @@ func TestFilterPrefersPathSegmentExact(t *testing.T) {
 	first, ok := filtered[0].(*CompletionItem)
 	require.True(t, ok)
 	require.Equal(t, "internal/ui/chat/mcp.go", first.Text())
+}
+
+func TestSkillCompletionSelection(t *testing.T) {
+	t.Parallel()
+
+	c := New(lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle())
+	c.SetItems(nil, nil, []SkillCompletionValue{
+		{Name: "my-skill", Description: "Test skill."},
+	})
+
+	msg := c.selectCurrent(false)
+	selection, ok := msg.(SelectionMsg[SkillCompletionValue])
+	require.True(t, ok)
+	require.Equal(t, "my-skill", selection.Value.Name)
+	require.False(t, selection.KeepOpen)
 }

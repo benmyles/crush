@@ -150,6 +150,7 @@ type Styles struct {
 	EditorPromptYoloIconBlurred lipgloss.Style
 	EditorPromptYoloDotsFocused lipgloss.Style
 	EditorPromptYoloDotsBlurred lipgloss.Style
+	EditorSkillMention          []lipgloss.Style
 
 	// Radio
 	RadioOn  lipgloss.Style
@@ -1204,6 +1205,15 @@ func DefaultStyles() Styles {
 	s.EditorPromptYoloIconBlurred = s.EditorPromptYoloIconFocused.Foreground(charmtone.Pepper).Background(charmtone.Squid)
 	s.EditorPromptYoloDotsFocused = lipgloss.NewStyle().MarginRight(1).Foreground(charmtone.Zest).SetString(":::")
 	s.EditorPromptYoloDotsBlurred = s.EditorPromptYoloDotsFocused.Foreground(charmtone.Squid)
+	s.EditorSkillMention = []lipgloss.Style{
+		base.Foreground(charmtone.Coral).Bold(true),
+		base.Foreground(charmtone.Zest).Bold(true),
+		base.Foreground(charmtone.Citron).Bold(true),
+		base.Foreground(charmtone.Guac).Bold(true),
+		base.Foreground(charmtone.Malibu).Bold(true),
+		base.Foreground(charmtone.Charple).Bold(true),
+		base.Foreground(charmtone.Violet).Bold(true),
+	}
 
 	s.RadioOn = s.HalfMuted.SetString(RadioOn)
 	s.RadioOff = s.HalfMuted.SetString(RadioOff)

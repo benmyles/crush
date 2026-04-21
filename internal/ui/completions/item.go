@@ -21,6 +21,12 @@ type ResourceCompletionValue struct {
 	MIMEType string
 }
 
+// SkillCompletionValue represents an agent skill completion value.
+type SkillCompletionValue struct {
+	Name        string
+	Description string
+}
+
 // CompletionItem represents an item in the completions list.
 type CompletionItem struct {
 	text    string

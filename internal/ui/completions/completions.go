@@ -38,10 +38,11 @@ type SelectionMsg[T any] struct {
 // ClosedMsg is sent when the completions are closed.
 type ClosedMsg struct{}
 
-// CompletionItemsLoadedMsg is sent when files have been loaded for completions.
+// CompletionItemsLoadedMsg is sent when items have been loaded for completions.
 type CompletionItemsLoadedMsg struct {
 	Files     []FileCompletionValue
 	Resources []ResourceCompletionValue
+	Skills    []SkillCompletionValue
 }
 
 // Completions represents the completions popup component.
@@ -147,9 +148,9 @@ func (c *Completions) Open(depth, limit int) tea.Cmd {
 	}
 }
 
-// SetItems sets the files and MCP resources and rebuilds the merged list.
-func (c *Completions) SetItems(files []FileCompletionValue, resources []ResourceCompletionValue) {
-	items := make([]list.FilterableItem, 0, len(files)+len(resources))
+// SetItems sets the completion values and rebuilds the merged list.
+func (c *Completions) SetItems(files []FileCompletionValue, resources []ResourceCompletionValue, skills []SkillCompletionValue) {
+	items := make([]list.FilterableItem, 0, len(files)+len(resources)+len(skills))
 
 	// Add files first.
 	for _, file := range files {
@@ -168,6 +169,18 @@ func (c *Completions) SetItems(files []FileCompletionValue, resources []Resource
 		item := NewCompletionItem(
 			resource.MCPName+"/"+cmp.Or(resource.Title, resource.URI),
 			resource,
+			c.normalStyle,
+			c.focusedStyle,
+			c.matchStyle,
+		)
+		items = append(items, item)
+	}
+
+	// Add skills.
+	for _, skill := range skills {
+		item := NewCompletionItem(
+			skill.Name,
+			skill,
 			c.normalStyle,
 			c.focusedStyle,
 			c.matchStyle,
@@ -368,6 +381,11 @@ func (c *Completions) selectCurrent(keepOpen bool) tea.Msg {
 	switch item := item.Value().(type) {
 	case ResourceCompletionValue:
 		return SelectionMsg[ResourceCompletionValue]{
+			Value:    item,
+			KeepOpen: keepOpen,
+		}
+	case SkillCompletionValue:
+		return SelectionMsg[SkillCompletionValue]{
 			Value:    item,
 			KeepOpen: keepOpen,
 		}
