@@ -150,6 +150,10 @@ type Styles struct {
 	EditorPromptYoloIconBlurred lipgloss.Style
 	EditorPromptYoloDotsFocused lipgloss.Style
 	EditorPromptYoloDotsBlurred lipgloss.Style
+	EditorPromptPlanIconFocused lipgloss.Style
+	EditorPromptPlanIconBlurred lipgloss.Style
+	EditorPromptPlanDotsFocused lipgloss.Style
+	EditorPromptPlanDotsBlurred lipgloss.Style
 	EditorSkillMention          []lipgloss.Style
 
 	// Radio
@@ -1205,6 +1209,10 @@ func DefaultStyles() Styles {
 	s.EditorPromptYoloIconBlurred = s.EditorPromptYoloIconFocused.Foreground(charmtone.Pepper).Background(charmtone.Squid)
 	s.EditorPromptYoloDotsFocused = lipgloss.NewStyle().MarginRight(1).Foreground(charmtone.Zest).SetString(":::")
 	s.EditorPromptYoloDotsBlurred = s.EditorPromptYoloDotsFocused.Foreground(charmtone.Squid)
+	s.EditorPromptPlanIconFocused = lipgloss.NewStyle().MarginRight(1).Foreground(charmtone.Oyster).Background(charmtone.Malibu).Bold(true).SetString(" ✎ ")
+	s.EditorPromptPlanIconBlurred = s.EditorPromptPlanIconFocused.Foreground(charmtone.Pepper).Background(charmtone.Squid)
+	s.EditorPromptPlanDotsFocused = lipgloss.NewStyle().MarginRight(1).Foreground(charmtone.Malibu).SetString(":::")
+	s.EditorPromptPlanDotsBlurred = s.EditorPromptPlanDotsFocused.Foreground(charmtone.Squid)
 	s.EditorSkillMention = []lipgloss.Style{
 		base.Foreground(charmtone.Coral).Bold(true),
 		base.Foreground(charmtone.Zest).Bold(true),

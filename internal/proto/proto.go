@@ -46,6 +46,7 @@ type AgentMessage struct {
 	SessionID   string       `json:"session_id"`
 	Prompt      string       `json:"prompt"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	PlanMode    bool         `json:"plan_mode,omitempty"`
 }
 
 // AgentSession represents a session with its busy status.
@@ -56,7 +57,7 @@ type AgentSession struct {
 
 // IsZero checks if the AgentSession is zero-valued.
 func (a AgentSession) IsZero() bool {
-	return a == AgentSession{}
+	return !a.IsBusy && a.Session.ID == ""
 }
 
 // PermissionAction represents an action taken on a permission request.

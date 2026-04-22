@@ -101,3 +101,9 @@ type MCPGetPromptRequest struct {
 type MCPGetPromptResponse struct {
 	Prompt string `json:"prompt"`
 }
+
+// CompactForPlanRequest represents a request to compact session history
+// before plan implementation, using a specified strategy.
+type CompactForPlanRequest struct {
+	Strategy string `json:"strategy"`
+}

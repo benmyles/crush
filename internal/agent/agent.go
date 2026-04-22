@@ -64,6 +64,9 @@ var titlePrompt []byte
 //go:embed templates/summary.md
 var summaryPrompt []byte
 
+//go:embed templates/plan_mode.md
+var planModePrompt []byte
+
 // Used to remove <think> tags from generated titles.
 var (
 	thinkTagRegex       = regexp.MustCompile(`(?s)<think>.*?</think>`)
@@ -82,6 +85,7 @@ type SessionAgentCall struct {
 	FrequencyPenalty *float64
 	PresencePenalty  *float64
 	NonInteractive   bool
+	PlanMode         bool
 }
 
 type SessionAgent interface {
@@ -172,6 +176,26 @@ func latestStepTokens(steps []fantasy.StepResult) int64 {
 	return usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens
 }
 
+func filterAgentTools(agentTools []fantasy.AgentTool, names ...string) []fantasy.AgentTool {
+	if len(names) == 0 {
+		return agentTools
+	}
+	filtered := make([]fantasy.AgentTool, 0, len(agentTools))
+	for _, tool := range agentTools {
+		var skip bool
+		for _, name := range names {
+			if tool.Info().Name == name {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
 func finishReasonFromFantasy(reason fantasy.FinishReason) message.FinishReason {
 	switch reason {
 	case fantasy.FinishReasonLength:
@@ -224,6 +248,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if s := instructions.String(); s != "" {
 		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
 	}
+	if call.PlanMode {
+		systemPrompt += "\n\n<plan_mode>\n" + string(planModePrompt) + "\n</plan_mode>"
+	} else {
+		agentTools = filterAgentTools(agentTools, tools.SubmitPlanToolName)
+	}
 
 	if len(agentTools) > 0 {
 		// Add Anthropic caching to the last tool.
@@ -266,6 +295,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	// Add the session to the context.
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
+	ctx = context.WithValue(ctx, tools.PlanModeContextKey, call.PlanMode)
 
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(call.SessionID, cancel)
@@ -285,8 +315,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if call.MaxOutputTokens > 0 {
 		maxOutputTokens = &call.MaxOutputTokens
 	}
+	streamPrompt := call.Prompt
+	if call.PlanMode {
+		streamPrompt = planModeUserPrompt(call.Prompt)
+	}
 	streamCall := fantasy.AgentStreamCall{
-		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
+		Prompt:           message.PromptWithTextAttachments(streamPrompt, call.Attachments),
 		Files:            files,
 		Messages:         history,
 		ProviderOptions:  call.ProviderOptions,
@@ -304,6 +338,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			// Use latest tools (updated by SetTools when MCP tools change).
 			prepared.Tools = a.tools.Copy()
+			if !call.PlanMode {
+				prepared.Tools = filterAgentTools(prepared.Tools, tools.SubmitPlanToolName)
+			}
 
 			queuedCalls, _ := a.messageQueue.Get(call.SessionID)
 			a.messageQueue.Del(call.SessionID)
@@ -831,6 +868,22 @@ If not, please feel free to ignore. Again do not mention this message to the use
 	}
 
 	return history, files
+}
+
+func planModeUserPrompt(prompt string) string {
+	return strings.TrimSpace(`
+You are in Crush plan mode for this request.
+
+Gather detailed context before proposing work. Do not edit files, create files,
+delete files, rename files, or run commands whose purpose is to mutate the
+workspace. Ask the user questions when there are ambiguous requirements or
+multiple reasonable options only the user can choose between by calling the
+ask_user tool; do not write questions as a plain text list. Finish by calling
+submit_plan with approval-ready Markdown and structured todos. Do not implement
+until the user approves the plan.
+
+User request:
+`) + "\n" + prompt
 }
 
 // filterOrphanedToolResults converts a tool message to a fantasy.Message,

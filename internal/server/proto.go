@@ -834,6 +834,34 @@ func (c *controllerV1) handlePostWorkspaceAgentSessionCompact(w http.ResponseWri
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceAgentSessionCompactForPlan compacts session history
+// before plan implementation using the specified strategy.
+//
+//	@Summary		Compact session for plan
+//	@Tags			agent
+//	@Accept			json
+//	@Param			id		path		string							true	"Workspace ID"
+//	@Param			sid		path		string							true	"Session ID"
+//	@Param			request	body		proto.CompactForPlanRequest		true	"Compact for plan request"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/compact-for-plan [post]
+func (c *controllerV1) handlePostWorkspaceAgentSessionCompactForPlan(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	var req proto.CompactForPlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.handleError(w, r, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	if err := c.backend.CompactForPlan(r.Context(), id, sid, req.Strategy); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // handlePostWorkspaceJobInput sends input to a running background shell.
 //
 //	@Summary		Send input to background shell
@@ -963,6 +991,36 @@ func (c *controllerV1) handlePostWorkspacePermissionsGrant(w http.ResponseWriter
 	}
 
 	if err := c.backend.GrantPermission(id, req); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePostWorkspaceUserQuestionResponse responds to an interactive agent
+// question.
+//
+//	@Summary		Respond to user question
+//	@Tags			agent
+//	@Accept			json
+//	@Param			id		path	string						true	"Workspace ID"
+//	@Param			request	body	proto.UserQuestionResponse	true	"User question response"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/user_questions/respond [post]
+func (c *controllerV1) handlePostWorkspaceUserQuestionResponse(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req proto.UserQuestionResponse
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+
+	if err := c.backend.RespondUserQuestion(id, req); err != nil {
 		c.handleError(w, r, err)
 		return
 	}

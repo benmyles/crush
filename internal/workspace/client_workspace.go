@@ -20,9 +20,11 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/userquestion"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
@@ -161,7 +163,11 @@ func (w *ClientWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Me
 // -- Agent --
 
 func (w *ClientWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {
-	return w.client.SendMessage(ctx, w.workspaceID(), sessionID, prompt, attachments...)
+	return w.AgentRunWithOptions(ctx, sessionID, prompt, AgentRunOptions{}, attachments...)
+}
+
+func (w *ClientWorkspace) AgentRunWithOptions(ctx context.Context, sessionID, prompt string, options AgentRunOptions, attachments ...message.Attachment) error {
+	return w.client.SendMessageWithOptions(ctx, w.workspaceID(), sessionID, prompt, options.PlanMode, attachments...)
 }
 
 func (w *ClientWorkspace) AgentCancel(sessionID string) {
@@ -229,6 +235,10 @@ func (w *ClientWorkspace) AgentSummarize(ctx context.Context, sessionID string) 
 
 func (w *ClientWorkspace) AgentCompact(ctx context.Context, sessionID string) error {
 	return w.client.AgentCompactSession(ctx, w.workspaceID(), sessionID)
+}
+
+func (w *ClientWorkspace) AgentCompactForPlan(ctx context.Context, sessionID, strategy string) error {
+	return w.client.AgentCompactForPlan(ctx, w.workspaceID(), sessionID, strategy)
 }
 
 func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {
@@ -315,6 +325,16 @@ func (w *ClientWorkspace) PermissionSkipRequests() bool {
 
 func (w *ClientWorkspace) PermissionSetSkipRequests(skip bool) {
 	_ = w.client.SetPermissionsSkipRequests(context.Background(), w.workspaceID(), skip)
+}
+
+func (w *ClientWorkspace) UserQuestionRespond(resp userquestion.Response) {
+	_ = w.client.RespondUserQuestion(context.Background(), w.workspaceID(), proto.UserQuestionResponse{
+		RequestID:   resp.RequestID,
+		ChoiceID:    resp.ChoiceID,
+		ChoiceLabel: resp.ChoiceLabel,
+		Comment:     resp.Comment,
+		Dismissed:   resp.Dismissed,
+	})
 }
 
 // -- FileTracker --
@@ -658,9 +678,48 @@ func translateEvent(ev any) tea.Msg {
 			Type:    e.Type,
 			Payload: protoToCommandOutput(e.Payload),
 		}
+	case pubsub.Event[proto.PlanSubmission]:
+		return pubsub.Event[planning.Submission]{
+			Type:    e.Type,
+			Payload: protoToPlanSubmission(e.Payload),
+		}
+	case pubsub.Event[proto.UserQuestionRequest]:
+		return pubsub.Event[userquestion.Request]{
+			Type:    e.Type,
+			Payload: protoToUserQuestion(e.Payload),
+		}
 	default:
 		slog.Warn("Unknown event type in translateEvent", "type", fmt.Sprintf("%T", ev))
 		return nil
+	}
+}
+
+func protoToPlanSubmission(p proto.PlanSubmission) planning.Submission {
+	return planning.Submission{
+		ID:         p.ID,
+		SessionID:  p.SessionID,
+		ToolCallID: p.ToolCallID,
+		Markdown:   p.Markdown,
+		Todos:      protoToTodos(p.Todos),
+	}
+}
+
+func protoToUserQuestion(q proto.UserQuestionRequest) userquestion.Request {
+	choices := make([]userquestion.Choice, len(q.Choices))
+	for i, choice := range q.Choices {
+		choices[i] = userquestion.Choice{
+			ID:          choice.ID,
+			Label:       choice.Label,
+			Description: choice.Description,
+		}
+	}
+	return userquestion.Request{
+		ID:          q.ID,
+		SessionID:   q.SessionID,
+		ToolCallID:  q.ToolCallID,
+		Question:    q.Question,
+		Description: q.Description,
+		Choices:     choices,
 	}
 }
 
@@ -710,9 +769,22 @@ func protoToSession(s proto.Session) session.Session {
 		PromptTokens:     s.PromptTokens,
 		CompletionTokens: s.CompletionTokens,
 		Cost:             s.Cost,
+		Todos:            protoToTodos(s.Todos),
 		CreatedAt:        s.CreatedAt,
 		UpdatedAt:        s.UpdatedAt,
 	}
+}
+
+func protoToTodos(todos []proto.Todo) []session.Todo {
+	result := make([]session.Todo, len(todos))
+	for i, todo := range todos {
+		result[i] = session.Todo{
+			Content:    todo.Content,
+			Status:     session.TodoStatus(todo.Status),
+			ActiveForm: todo.ActiveForm,
+		}
+	}
+	return result
 }
 
 func protoToFile(f proto.File) history.File {
@@ -806,7 +878,20 @@ func sessionToProto(s session.Session) proto.Session {
 		PromptTokens:     s.PromptTokens,
 		CompletionTokens: s.CompletionTokens,
 		Cost:             s.Cost,
+		Todos:            todosToProto(s.Todos),
 		CreatedAt:        s.CreatedAt,
 		UpdatedAt:        s.UpdatedAt,
 	}
+}
+
+func todosToProto(todos []session.Todo) []proto.Todo {
+	result := make([]proto.Todo, len(todos))
+	for i, todo := range todos {
+		result[i] = proto.Todo{
+			Content:    todo.Content,
+			Status:     string(todo.Status),
+			ActiveForm: todo.ActiveForm,
+		}
+	}
+	return result
 }

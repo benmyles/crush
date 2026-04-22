@@ -32,6 +32,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
@@ -39,6 +40,7 @@ import (
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/update"
+	"github.com/charmbracelet/crush/internal/userquestion"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
@@ -53,11 +55,13 @@ type UpdateAvailableMsg struct {
 }
 
 type App struct {
-	Sessions    session.Service
-	Messages    message.Service
-	History     history.Service
-	Permissions permission.Service
-	FileTracker filetracker.Service
+	Sessions     session.Service
+	Messages     message.Service
+	History      history.Service
+	Permissions  permission.Service
+	Planning     planning.Service
+	UserQuestion userquestion.Service
+	FileTracker  filetracker.Service
 
 	AgentCoordinator agent.Coordinator
 
@@ -91,12 +95,14 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	}
 
 	app := &App{
-		Sessions:    sessions,
-		Messages:    messages,
-		History:     files,
-		Permissions: permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools),
-		FileTracker: filetracker.NewService(q),
-		LSPManager:  lsp.NewManager(store),
+		Sessions:     sessions,
+		Messages:     messages,
+		History:      files,
+		Permissions:  permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools),
+		Planning:     planning.NewService(),
+		UserQuestion: userquestion.NewService(),
+		FileTracker:  filetracker.NewService(q),
+		LSPManager:   lsp.NewManager(store),
 
 		globalCtx: ctx,
 
@@ -486,6 +492,8 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events)
+	setupSubscriber(ctx, app.serviceEventsWG, "plans", app.Planning.Subscribe, app.events)
+	setupSubscriber(ctx, app.serviceEventsWG, "user-questions", app.UserQuestion.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "agent-notifications", app.agentNotifications.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "command-output", app.commandOutput.Subscribe, app.events)
@@ -559,6 +567,8 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.Sessions,
 		app.Messages,
 		app.Permissions,
+		app.Planning,
+		app.UserQuestion,
 		app.History,
 		app.FileTracker,
 		app.LSPManager,

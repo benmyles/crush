@@ -75,6 +75,9 @@ func NewMultiEditTool(
 			if len(params.Edits) == 0 {
 				return fantasy.NewTextErrorResponse("at least one edit operation is required"), nil
 			}
+			if GetPlanModeFromContext(ctx) {
+				return fantasy.NewTextErrorResponse("file edits are blocked in plan mode; gather context and submit a plan instead"), nil
+			}
 
 			params.FilePath = filepathext.SmartJoin(workingDir, params.FilePath)
 

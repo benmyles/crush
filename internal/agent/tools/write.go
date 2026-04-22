@@ -61,6 +61,9 @@ func NewWriteTool(
 			if params.Content == "" {
 				return fantasy.NewTextErrorResponse("content is required"), nil
 			}
+			if GetPlanModeFromContext(ctx) {
+				return fantasy.NewTextErrorResponse("file writes are blocked in plan mode; gather context and submit a plan instead"), nil
+			}
 
 			sessionID := GetSessionFromContext(ctx)
 			if sessionID == "" {

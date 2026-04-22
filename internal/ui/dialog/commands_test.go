@@ -44,6 +44,26 @@ func TestCommandsHidesCompactSessionWhenMorphDisabled(t *testing.T) {
 	assert.NotContains(t, commandIDs(cmds.defaultCommands()), "compact")
 }
 
+func TestCommandsShowsPlanCommand(t *testing.T) {
+	t.Parallel()
+
+	cmds := newCommandsForMorphCompactTest(t, false)
+	items := cmds.defaultCommands()
+
+	require.Contains(t, commandIDs(items), "plan")
+	for _, item := range items {
+		if item.ID() == "plan" {
+			action, ok := item.Action().(ActionRunPlan)
+			require.True(t, ok)
+			require.Equal(t, "Toggle Plan Mode", item.title)
+			require.Equal(t, "ctrl+k", item.Shortcut())
+			require.Empty(t, action.Arguments)
+			return
+		}
+	}
+	require.Fail(t, "plan command not found")
+}
+
 func newCommandsForMorphCompactTest(t *testing.T, enabled bool) *Commands {
 	t.Helper()
 

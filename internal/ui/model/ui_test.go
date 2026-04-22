@@ -3,11 +3,14 @@ package model
 import (
 	"testing"
 
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/ui/common"
+	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/workspace"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,6 +77,94 @@ func TestCurrentModelSupportsImages(t *testing.T) {
 	})
 }
 
+func TestPlanModeUsesDistinctEditorVisuals(t *testing.T) {
+	t.Parallel()
+
+	ws := &testWorkspace{}
+	sty := styles.DefaultStyles()
+	ta := textarea.New()
+	ta.SetStyles(sty.TextArea)
+	ta.SetWidth(40)
+	ta.SetHeight(3)
+	ta.Focus()
+	ta.SetValue("x")
+
+	ui := &UI{
+		com: &common.Common{
+			Workspace: ws,
+			Styles:    &sty,
+		},
+		textarea:           ta,
+		focus:              uiFocusEditor,
+		readyPlaceholder:   "Ready",
+		workingPlaceholder: "Working",
+	}
+	ui.setEditorPrompt(false, false)
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ! ")
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ✎ ")
+
+	ui.setPlanModeActive(true)
+	ui.refreshEditorPlaceholder()
+
+	require.Equal(t, "Plan mode!", ui.textarea.Placeholder)
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ! ")
+	require.Contains(t, xansi.Strip(ui.textarea.View()), " ✎ ")
+
+	ws.skipRequests = true
+	ui.refreshEditorPrompt()
+	ui.refreshEditorPlaceholder()
+
+	require.Equal(t, "Plan mode!", ui.textarea.Placeholder)
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ! ")
+	require.Contains(t, xansi.Strip(ui.textarea.View()), " ✎ ")
+
+	ui.setPlanModeActive(false)
+	ui.refreshEditorPlaceholder()
+
+	require.Equal(t, "Yolo mode!", ui.textarea.Placeholder)
+	require.Contains(t, xansi.Strip(ui.textarea.View()), " ! ")
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ✎ ")
+}
+
+func TestPlanModeToggleActionTogglesVisualState(t *testing.T) {
+	t.Parallel()
+
+	ws := &testWorkspace{}
+	sty := styles.DefaultStyles()
+	ta := textarea.New()
+	ta.SetStyles(sty.TextArea)
+	ta.SetWidth(40)
+	ta.SetHeight(3)
+	ta.Focus()
+	ta.SetValue("x")
+
+	ui := &UI{
+		com: &common.Common{
+			Workspace: ws,
+			Styles:    &sty,
+		},
+		textarea:           ta,
+		focus:              uiFocusEditor,
+		readyPlaceholder:   "Ready",
+		workingPlaceholder: "Working",
+	}
+	ui.setEditorPrompt(false, false)
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ! ")
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ✎ ")
+
+	ui.togglePlanMode()
+	require.True(t, ui.planModeActive)
+	require.Equal(t, "Plan mode!", ui.textarea.Placeholder)
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ! ")
+	require.Contains(t, xansi.Strip(ui.textarea.View()), " ✎ ")
+
+	ui.togglePlanMode()
+	require.False(t, ui.planModeActive)
+	require.Equal(t, "Ready", ui.textarea.Placeholder)
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ! ")
+	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ✎ ")
+}
+
 func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 	t.Helper()
 
@@ -87,9 +178,22 @@ func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 // testWorkspace is a minimal [workspace.Workspace] stub for unit tests.
 type testWorkspace struct {
 	workspace.Workspace
-	cfg *config.Config
+	cfg          *config.Config
+	skipRequests bool
 }
 
 func (w *testWorkspace) Config() *config.Config {
 	return w.cfg
+}
+
+func (w *testWorkspace) PermissionSkipRequests() bool {
+	return w.skipRequests
+}
+
+func (w *testWorkspace) AgentIsReady() bool {
+	return false
+}
+
+func (w *testWorkspace) AgentIsBusy() bool {
+	return false
 }

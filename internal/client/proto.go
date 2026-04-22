@@ -172,6 +172,14 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 				var e pubsub.Event[proto.CommandOutputEvent]
 				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
+			case pubsub.PayloadTypePlanSubmission:
+				var e pubsub.Event[proto.PlanSubmission]
+				_ = json.Unmarshal(p.Payload, &e)
+				sendEvent(ctx, events, e)
+			case pubsub.PayloadTypeUserQuestion:
+				var e pubsub.Event[proto.UserQuestionRequest]
+				_ = json.Unmarshal(p.Payload, &e)
+				sendEvent(ctx, events, e)
 			default:
 				slog.Warn("Unknown event type", "type", p.Type)
 				continue
@@ -340,6 +348,10 @@ func (c *Client) UpdateAgent(ctx context.Context, id string) error {
 
 // SendMessage sends a message to the agent for a workspace.
 func (c *Client) SendMessage(ctx context.Context, id string, sessionID, prompt string, attachments ...message.Attachment) error {
+	return c.SendMessageWithOptions(ctx, id, sessionID, prompt, false, attachments...)
+}
+
+func (c *Client) SendMessageWithOptions(ctx context.Context, id string, sessionID, prompt string, planMode bool, attachments ...message.Attachment) error {
 	protoAttachments := make([]proto.Attachment, len(attachments))
 	for i, a := range attachments {
 		protoAttachments[i] = proto.Attachment{
@@ -353,6 +365,7 @@ func (c *Client) SendMessage(ctx context.Context, id string, sessionID, prompt s
 		SessionID:   sessionID,
 		Prompt:      prompt,
 		Attachments: protoAttachments,
+		PlanMode:    planMode,
 	}), http.Header{"Content-Type": []string{"application/json"}})
 	if err != nil {
 		return fmt.Errorf("failed to send message to agent: %w", err)
@@ -360,6 +373,18 @@ func (c *Client) SendMessage(ctx context.Context, id string, sessionID, prompt s
 	defer rsp.Body.Close()
 	if rsp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to send message to agent: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+func (c *Client) RespondUserQuestion(ctx context.Context, id string, response proto.UserQuestionResponse) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/user_questions/respond", id), nil, jsonBody(response), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to respond to user question: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to respond to user question: status code %d", rsp.StatusCode)
 	}
 	return nil
 }
@@ -403,6 +428,22 @@ func (c *Client) AgentCompactSession(ctx context.Context, id string, sessionID s
 	defer rsp.Body.Close()
 	if rsp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to compact session: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// AgentCompactForPlan requests session compaction with a specific strategy
+// before plan implementation begins.
+func (c *Client) AgentCompactForPlan(ctx context.Context, id, sessionID, strategy string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/compact-for-plan", id, sessionID), nil, jsonBody(proto.CompactForPlanRequest{
+		Strategy: strategy,
+	}), nil)
+	if err != nil {
+		return fmt.Errorf("failed to compact session for plan: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to compact session for plan: status code %d", rsp.StatusCode)
 	}
 	return nil
 }

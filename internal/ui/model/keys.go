@@ -66,6 +66,7 @@ type KeyMap struct {
 	Suspend  key.Binding
 	Sessions key.Binding
 	Tab      key.Binding
+	Plan     key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -192,7 +193,7 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("↓", "down"),
 	)
 	km.Chat.Up = key.NewBinding(
-		key.WithKeys("up", "ctrl+k", "k"),
+		key.WithKeys("up", "k"),
 		key.WithHelp("↑", "up"),
 	)
 	km.Chat.UpDown = key.NewBinding(
@@ -270,6 +271,11 @@ func DefaultKeyMap() KeyMap {
 	km.Initialize.Enter = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "select"),
+	)
+
+	km.Plan = key.NewBinding(
+		key.WithKeys("ctrl+k"),
+		key.WithHelp("ctrl+k", "plan mode"),
 	)
 
 	return km

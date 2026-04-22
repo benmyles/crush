@@ -13,9 +13,11 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/util"
+	"github.com/charmbracelet/crush/internal/userquestion"
 )
 
 // ActionClose is a message to close the current dialog.
@@ -68,6 +70,19 @@ type (
 	ActionPermissionResponse struct {
 		Permission permission.PermissionRequest
 		Action     PermissionAction
+	}
+	ActionPlanApprovalResponse struct {
+		Submission     planning.Submission
+		Approved       bool
+		Comment        string
+		CompactHistory bool
+	}
+	ActionUserQuestionResponse struct {
+		Response userquestion.Response
+	}
+	ActionRunPlan struct {
+		Arguments []commands.Argument
+		Args      map[string]string
 	}
 	// ActionRunCustomCommand is a message to run a custom command.
 	ActionRunCustomCommand struct {

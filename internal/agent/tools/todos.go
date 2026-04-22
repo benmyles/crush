@@ -38,6 +38,10 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 		TodosToolName,
 		FirstLineDescription(todosDescription),
 		func(ctx context.Context, params TodosParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			if GetPlanModeFromContext(ctx) {
+				return fantasy.NewTextErrorResponse("todos are blocked in plan mode; use submit_plan with structured todos instead"), nil
+			}
+
 			sessionID := GetSessionFromContext(ctx)
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for managing todos")

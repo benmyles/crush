@@ -330,6 +330,25 @@ func (o MorphCompactOptions) EffectivePreserveRecent() int {
 	return *o.PreserveRecent
 }
 
+const (
+	PlanCompactStrategyMorph     = "morph"
+	PlanCompactStrategySummarize = "summarize"
+	PlanCompactStrategyDisabled  = "disabled"
+)
+
+// EffectivePlanCompactStrategy returns the effective compact strategy for plan
+// approval. If explicitly set, the user's choice is used. Otherwise, it
+// defaults to morph if Morph Compact is enabled, or summarize otherwise.
+func (o *Options) EffectivePlanCompactStrategy() string {
+	if o != nil && o.PlanCompactStrategy != nil {
+		return *o.PlanCompactStrategy
+	}
+	if o != nil && o.MorphCompact != nil && o.MorphCompact.Enabled {
+		return PlanCompactStrategyMorph
+	}
+	return PlanCompactStrategySummarize
+}
+
 // Completions defines options for the completions UI.
 type Completions struct {
 	MaxDepth *int `json:"max_depth,omitempty" jsonschema:"description=Maximum depth for the ls tool,default=0,example=10"`
@@ -371,6 +390,7 @@ type Options struct {
 	ContextPaths              []string             `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
 	SkillsPaths               []string             `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/crush/skills,example=./skills"`
 	TUI                       *TUIOptions          `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
+	PlanCompactStrategy       *string              `json:"plan_compact_strategy,omitempty" jsonschema:"description=Strategy for compacting history before plan implementation,enum=morph,enum=summarize,enum=disabled,example=morph,example=summarize,example=disabled"`
 	MorphCompact              *MorphCompactOptions `json:"morph_compact,omitempty" jsonschema:"description=Morph Compact options for manual session compaction"`
 	Debug                     bool                 `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP                  bool                 `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
@@ -591,11 +611,13 @@ func allToolNames() []string {
 	return []string{
 		"agent",
 		"bash",
+		"ask_user",
 		"crush_info",
 		"crush_logs",
 		"job_output",
 		"job_input",
 		"job_kill",
+		"wait",
 		"download",
 		"edit",
 		"multiedit",
@@ -608,6 +630,7 @@ func allToolNames() []string {
 		"grep",
 		"ls",
 		"sourcegraph",
+		"submit_plan",
 		"todos",
 		"view",
 		"write",
@@ -625,7 +648,7 @@ func resolveAllowedTools(allTools []string, disabledTools []string) []string {
 }
 
 func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view"}
+	readOnlyTools := []string{"ask_user", "glob", "grep", "ls", "sourcegraph", "view"}
 	// filter to only include tools that are in allowedtools (include mode)
 	return filterSlice(tools, readOnlyTools, true)
 }

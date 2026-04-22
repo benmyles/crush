@@ -33,9 +33,11 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/userquestion"
 	"golang.org/x/sync/errgroup"
 
 	"charm.land/fantasy/providers/anthropic"
@@ -64,10 +66,16 @@ var (
 
 var newGoogleADCHTTPClient = googleadc.NewHTTPClient
 
+// RunOptions configures a single coordinator run.
+type RunOptions struct {
+	PlanMode bool
+}
+
 type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	RunWithOptions(ctx context.Context, sessionID, prompt string, options RunOptions, attachments ...message.Attachment) (*fantasy.AgentResult, error)
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -77,20 +85,23 @@ type Coordinator interface {
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
 	Compact(context.Context, string) error
+	CompactForPlan(context.Context, string, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
 }
 
 type coordinator struct {
-	cfg         *config.ConfigStore
-	sessions    session.Service
-	messages    message.Service
-	permissions permission.Service
-	history     history.Service
-	filetracker filetracker.Service
-	lspManager  *lsp.Manager
-	notify      pubsub.Publisher[notify.Notification]
-	output      pubsub.Publisher[tools.CommandOutputEvent]
+	cfg          *config.ConfigStore
+	sessions     session.Service
+	messages     message.Service
+	permissions  permission.Service
+	planning     planning.Service
+	userQuestion userquestion.Service
+	history      history.Service
+	filetracker  filetracker.Service
+	lspManager   *lsp.Manager
+	notify       pubsub.Publisher[notify.Notification]
+	output       pubsub.Publisher[tools.CommandOutputEvent]
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -109,6 +120,8 @@ func NewCoordinator(
 	sessions session.Service,
 	messages message.Service,
 	permissions permission.Service,
+	planning planning.Service,
+	userQuestion userquestion.Service,
 	history history.Service,
 	filetracker filetracker.Service,
 	lspManager *lsp.Manager,
@@ -124,6 +137,8 @@ func NewCoordinator(
 		sessions:     sessions,
 		messages:     messages,
 		permissions:  permissions,
+		planning:     planning,
+		userQuestion: userQuestion,
 		history:      history,
 		filetracker:  filetracker,
 		lspManager:   lspManager,
@@ -157,6 +172,10 @@ func NewCoordinator(
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	return c.RunWithOptions(ctx, sessionID, prompt, RunOptions{}, attachments...)
+}
+
+func (c *coordinator) RunWithOptions(ctx context.Context, sessionID string, prompt string, options RunOptions, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	if err := c.readyWg.Wait(); err != nil {
 		return nil, err
 	}
@@ -209,6 +228,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 			TopK:             topK,
 			FrequencyPenalty: freqPenalty,
 			PresencePenalty:  presPenalty,
+			PlanMode:         options.PlanMode,
 		})
 	}
 	beforeLoaded := c.skillTracker.LoadedNames()
@@ -492,11 +512,13 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 
 	allTools = append(allTools,
 		tools.NewBashTool(c.permissions, c.output, c.cfg.WorkingDir(), c.cfg.Config().Options.Attribution, modelName),
+		tools.NewAskUserTool(c.userQuestion),
 		tools.NewCrushInfoTool(c.cfg, c.lspManager, c.allSkills, c.activeSkills, c.skillTracker),
 		tools.NewCrushLogsTool(logFile),
 		tools.NewJobOutputTool(),
 		tools.NewJobInputTool(c.permissions),
 		tools.NewJobKillTool(),
+		tools.NewWaitTool(),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
@@ -505,6 +527,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Grep),
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
+		tools.NewSubmitPlanTool(c.planning),
 		tools.NewTodosTool(c.sessions),
 		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, c.skillTracker, c.cfg.WorkingDir(), c.cfg.Config().Options.SkillsPaths...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
@@ -1045,6 +1068,17 @@ func (c *coordinator) Compact(ctx context.Context, sessionID string) error {
 		resolved.BaseURL = baseURL
 	}
 	return c.currentAgent.Compact(ctx, sessionID, resolved)
+}
+
+func (c *coordinator) CompactForPlan(ctx context.Context, sessionID, strategy string) error {
+	switch strategy {
+	case config.PlanCompactStrategyMorph:
+		return c.Compact(ctx, sessionID)
+	case config.PlanCompactStrategySummarize:
+		return c.Summarize(ctx, sessionID)
+	default:
+		return nil
+	}
 }
 
 func (c *coordinator) isUnauthorized(err error) bool {

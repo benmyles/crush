@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/shell"
+	"github.com/charmbracelet/crush/internal/userquestion"
 )
 
 // SendMessage sends a prompt to the agent coordinator for the given
@@ -21,8 +24,36 @@ func (b *Backend) SendMessage(ctx context.Context, workspaceID string, msg proto
 		return ErrAgentNotInitialized
 	}
 
-	_, err = ws.AgentCoordinator.Run(ctx, msg.SessionID, msg.Prompt)
+	attachments := make([]message.Attachment, len(msg.Attachments))
+	for i, attachment := range msg.Attachments {
+		attachments[i] = message.Attachment{
+			FilePath: attachment.FilePath,
+			FileName: attachment.FileName,
+			MimeType: attachment.MimeType,
+			Content:  attachment.Content,
+		}
+	}
+
+	_, err = ws.AgentCoordinator.RunWithOptions(ctx, msg.SessionID, msg.Prompt, agent.RunOptions{
+		PlanMode: msg.PlanMode,
+	}, attachments...)
 	return err
+}
+
+func (b *Backend) RespondUserQuestion(workspaceID string, resp proto.UserQuestionResponse) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	ws.UserQuestion.Respond(userquestion.Response{
+		RequestID:   resp.RequestID,
+		ChoiceID:    resp.ChoiceID,
+		ChoiceLabel: resp.ChoiceLabel,
+		Comment:     resp.Comment,
+		Dismissed:   resp.Dismissed,
+	})
+	return nil
 }
 
 // GetAgentInfo returns the agent's model and busy status.
@@ -105,6 +136,21 @@ func (b *Backend) CompactSession(ctx context.Context, workspaceID, sessionID str
 	}
 
 	return ws.AgentCoordinator.Compact(ctx, sessionID)
+}
+
+// CompactForPlan compacts session history before plan implementation using
+// the specified strategy.
+func (b *Backend) CompactForPlan(ctx context.Context, workspaceID, sessionID, strategy string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	if ws.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+
+	return ws.AgentCoordinator.CompactForPlan(ctx, sessionID, strategy)
 }
 
 // JobInput sends input to a running background shell.

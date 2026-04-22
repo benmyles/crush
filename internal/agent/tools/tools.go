@@ -13,6 +13,7 @@ type (
 	messageIDContextKey string
 	supportsImagesKey   string
 	modelNameKey        string
+	planModeKey         string
 )
 
 const (
@@ -24,6 +25,8 @@ const (
 	SupportsImagesContextKey supportsImagesKey = "supports_images"
 	// ModelNameContextKey is the key for the model name in the context.
 	ModelNameContextKey modelNameKey = "model_name"
+	// PlanModeContextKey is the key for plan mode in the context.
+	PlanModeContextKey planModeKey = "plan_mode"
 )
 
 // getContextValue is a generic helper that retrieves a typed value from context.
@@ -57,6 +60,12 @@ func GetSupportsImagesFromContext(ctx context.Context) bool {
 // GetModelNameFromContext retrieves the model name from the context.
 func GetModelNameFromContext(ctx context.Context) string {
 	return getContextValue(ctx, ModelNameContextKey, "")
+}
+
+// GetPlanModeFromContext retrieves whether the current agent run is in plan
+// mode.
+func GetPlanModeFromContext(ctx context.Context) bool {
+	return getContextValue(ctx, PlanModeContextKey, false)
 }
 
 // FirstLineDescription returns just the first non-empty line from the embedded

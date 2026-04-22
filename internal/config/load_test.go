@@ -508,7 +508,7 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"ask_user", "glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
@@ -526,11 +526,11 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "bash", "crush_info", "crush_logs", "job_output", "job_input", "job_kill", "multiedit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "sourcegraph", "todos", "view", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "ask_user", "crush_info", "crush_logs", "job_output", "job_input", "job_kill", "wait", "multiedit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "sourcegraph", "submit_plan", "todos", "view", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"glob", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"ask_user", "glob", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -542,6 +542,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 				"ls",
 				"sourcegraph",
 				"view",
+				"ask_user",
 			},
 		},
 	}
@@ -549,7 +550,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	cfg.SetupAgents()
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "bash", "crush_info", "crush_logs", "job_output", "job_input", "job_kill", "download", "edit", "multiedit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "todos", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "crush_info", "crush_logs", "job_output", "job_input", "job_kill", "wait", "download", "edit", "multiedit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "submit_plan", "todos", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
@@ -1720,4 +1721,49 @@ func TestConfig_configureProviders_HyperAPIKeyFromConfigOverrides(t *testing.T) 
 	pc, ok := cfg.Providers.Get("hyper")
 	require.True(t, ok, "Hyper provider should be configured")
 	require.Equal(t, "env-api-key", pc.APIKey)
+}
+
+func TestEffectivePlanCompactStrategy(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults to summarize when no options set", func(t *testing.T) {
+		var opts *Options
+		require.Equal(t, PlanCompactStrategySummarize, opts.EffectivePlanCompactStrategy())
+	})
+
+	t.Run("defaults to summarize when morph compact is nil", func(t *testing.T) {
+		opts := &Options{}
+		require.Equal(t, PlanCompactStrategySummarize, opts.EffectivePlanCompactStrategy())
+	})
+
+	t.Run("defaults to summarize when morph compact is disabled", func(t *testing.T) {
+		opts := &Options{MorphCompact: &MorphCompactOptions{Enabled: false}}
+		require.Equal(t, PlanCompactStrategySummarize, opts.EffectivePlanCompactStrategy())
+	})
+
+	t.Run("defaults to morph when morph compact is enabled", func(t *testing.T) {
+		opts := &Options{MorphCompact: &MorphCompactOptions{Enabled: true}}
+		require.Equal(t, PlanCompactStrategyMorph, opts.EffectivePlanCompactStrategy())
+	})
+
+	t.Run("explicit setting overrides morph default", func(t *testing.T) {
+		strategy := "summarize"
+		opts := &Options{MorphCompact: &MorphCompactOptions{Enabled: true}, PlanCompactStrategy: &strategy}
+		require.Equal(t, PlanCompactStrategySummarize, opts.EffectivePlanCompactStrategy())
+	})
+
+	t.Run("explicit disabled overrides everything", func(t *testing.T) {
+		strategy := PlanCompactStrategyDisabled
+		opts := &Options{MorphCompact: &MorphCompactOptions{Enabled: true}, PlanCompactStrategy: &strategy}
+		require.Equal(t, PlanCompactStrategyDisabled, opts.EffectivePlanCompactStrategy())
+	})
+
+	t.Run("loads from json", func(t *testing.T) {
+		data := []byte(`{"options":{"plan_compact_strategy":"morph"}}`)
+		loadedConfig, err := loadFromBytes([][]byte{data})
+		require.NoError(t, err)
+		require.NotNil(t, loadedConfig.Options)
+		require.NotNil(t, loadedConfig.Options.PlanCompactStrategy)
+		require.Equal(t, PlanCompactStrategyMorph, *loadedConfig.Options.PlanCompactStrategy)
+	})
 }

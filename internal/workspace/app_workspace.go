@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
+	"github.com/charmbracelet/crush/internal/userquestion"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -85,10 +86,16 @@ func (w *AppWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Messa
 // -- Agent --
 
 func (w *AppWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {
+	return w.AgentRunWithOptions(ctx, sessionID, prompt, AgentRunOptions{}, attachments...)
+}
+
+func (w *AppWorkspace) AgentRunWithOptions(ctx context.Context, sessionID, prompt string, options AgentRunOptions, attachments ...message.Attachment) error {
 	if w.app.AgentCoordinator == nil {
 		return errors.New("agent coordinator not initialized")
 	}
-	_, err := w.app.AgentCoordinator.Run(ctx, sessionID, prompt, attachments...)
+	_, err := w.app.AgentCoordinator.RunWithOptions(ctx, sessionID, prompt, agent.RunOptions{
+		PlanMode: options.PlanMode,
+	}, attachments...)
 	return err
 }
 
@@ -161,6 +168,13 @@ func (w *AppWorkspace) AgentCompact(ctx context.Context, sessionID string) error
 	return w.app.AgentCoordinator.Compact(ctx, sessionID)
 }
 
+func (w *AppWorkspace) AgentCompactForPlan(ctx context.Context, sessionID, strategy string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.CompactForPlan(ctx, sessionID, strategy)
+}
+
 func (w *AppWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.app.UpdateAgentModel(ctx)
 }
@@ -209,6 +223,10 @@ func (w *AppWorkspace) PermissionSkipRequests() bool {
 
 func (w *AppWorkspace) PermissionSetSkipRequests(skip bool) {
 	w.app.Permissions.SetSkipRequests(skip)
+}
+
+func (w *AppWorkspace) UserQuestionRespond(resp userquestion.Response) {
+	w.app.UserQuestion.Respond(resp)
 }
 
 // -- FileTracker --

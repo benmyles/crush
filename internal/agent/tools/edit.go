@@ -73,6 +73,9 @@ func NewEditTool(
 			if params.FilePath == "" {
 				return fantasy.NewTextErrorResponse("file_path is required"), nil
 			}
+			if GetPlanModeFromContext(ctx) {
+				return fantasy.NewTextErrorResponse("file edits are blocked in plan mode; gather context and submit a plan instead"), nil
+			}
 
 			params.FilePath = filepathext.SmartJoin(workingDir, params.FilePath)
 

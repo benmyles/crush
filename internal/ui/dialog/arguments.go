@@ -212,6 +212,9 @@ func (a *Arguments) HandleMsg(msg tea.Msg) Action {
 				}
 
 				switch action := a.resultAction.(type) {
+				case ActionRunPlan:
+					action.Args = args
+					return action
 				case ActionRunCustomCommand:
 					action.Args = args
 					return action

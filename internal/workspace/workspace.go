@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/userquestion"
 )
 
 // LSPClientInfo holds information about an LSP client's state. This is
@@ -54,6 +55,11 @@ type AgentModel struct {
 	ModelCfg   config.SelectedModel
 }
 
+// AgentRunOptions configures a single agent run.
+type AgentRunOptions struct {
+	PlanMode bool
+}
+
 // Workspace is the main abstraction consumed by the TUI and CLI. It
 // groups every operation a frontend needs to perform against a running
 // workspace, regardless of whether the workspace is in-process or
@@ -75,6 +81,7 @@ type Workspace interface {
 
 	// Agent
 	AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error
+	AgentRunWithOptions(ctx context.Context, sessionID, prompt string, options AgentRunOptions, attachments ...message.Attachment) error
 	AgentCancel(sessionID string)
 	AgentIsBusy() bool
 	AgentIsSessionBusy(sessionID string) bool
@@ -85,6 +92,7 @@ type Workspace interface {
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
 	AgentCompact(ctx context.Context, sessionID string) error
+	AgentCompactForPlan(ctx context.Context, sessionID, strategy string) error
 	UpdateAgentModel(ctx context.Context) error
 	InitCoderAgent(ctx context.Context) error
 	JobInput(ctx context.Context, shellID, input string) error
@@ -97,6 +105,7 @@ type Workspace interface {
 	PermissionDeny(perm permission.PermissionRequest)
 	PermissionSkipRequests() bool
 	PermissionSetSkipRequests(skip bool)
+	UserQuestionRespond(resp userquestion.Response)
 
 	// FileTracker
 	FileTrackerRecordRead(ctx context.Context, sessionID, path string)

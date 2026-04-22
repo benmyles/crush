@@ -37,6 +37,7 @@ import (
 	"github.com/charmbracelet/crush/internal/home"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
@@ -51,6 +52,7 @@ import (
 	"github.com/charmbracelet/crush/internal/ui/notification"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/ui/util"
+	"github.com/charmbracelet/crush/internal/userquestion"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/crush/internal/workspace"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -139,6 +141,7 @@ type (
 	sendMessageMsg struct {
 		Content     string
 		Attachments []message.Attachment
+		PlanMode    bool
 	}
 
 	// closeDialogMsg is sent to close the current dialog.
@@ -206,6 +209,7 @@ type UI struct {
 
 	readyPlaceholder   string
 	workingPlaceholder string
+	planModeActive     bool
 
 	// Completions state
 	completions              *completions.Completions
@@ -343,7 +347,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 
 	status := NewStatus(com, ui)
 
-	ui.setEditorPrompt(false)
+	ui.setEditorPrompt(false, false)
 	ui.randomizePlaceholders()
 	ui.textarea.Placeholder = ui.readyPlaceholder
 	ui.status = status
@@ -549,7 +553,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.startLSPs(paths))
 
 	case sendMessageMsg:
-		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
+		cmds = append(cmds, m.sendMessageWithOptions(msg.Content, workspace.AgentRunOptions{PlanMode: msg.PlanMode}, msg.Attachments...))
 
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
@@ -606,6 +610,21 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pubsub.Event[agenttools.CommandOutputEvent]:
 		if cmd := m.handleCommandOutputMessage(msg); cmd != nil {
 			cmds = append(cmds, cmd)
+		}
+	case pubsub.Event[planning.Submission]:
+		if msg.Payload.SessionID == "" || (m.session != nil && msg.Payload.SessionID == m.session.ID) {
+			m.setPlanModeActive(false)
+			m.openPlanApprovalDialog(msg.Payload)
+		}
+	case pubsub.Event[userquestion.Request]:
+		if msg.Payload.SessionID == "" || (m.session != nil && msg.Payload.SessionID == m.session.ID) {
+			m.openUserQuestionDialog(msg.Payload)
+			if cmd := m.sendNotification(notification.Notification{
+				Title:   "Crush is waiting...",
+				Message: "Question needs your answer",
+			}); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	case pubsub.Event[message.Message]:
 		// Check if this is a child session message for an agent tool.
@@ -903,15 +922,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case uiFocusMain:
 	case uiFocusEditor:
-		// Textarea placeholder logic
-		if m.isAgentBusy() {
-			m.textarea.Placeholder = m.workingPlaceholder
-		} else {
-			m.textarea.Placeholder = m.readyPlaceholder
-		}
-		if m.com.Workspace.PermissionSkipRequests() {
-			m.textarea.Placeholder = "Yolo mode!"
-		}
+		m.refreshEditorPlaceholder()
 	}
 
 	// at this point this can only handle [message.Attachment] message, and we
@@ -1451,7 +1462,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionToggleYoloMode:
 		yolo := !m.com.Workspace.PermissionSkipRequests()
 		m.com.Workspace.PermissionSetSkipRequests(yolo)
-		m.setEditorPrompt(yolo)
+		m.refreshEditorPrompt()
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleNotifications:
 		cfg := m.com.Config()
@@ -1680,6 +1691,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		case dialog.PermissionDeny:
 			m.com.Workspace.PermissionDeny(msg.Permission)
 		}
+	case dialog.ActionUserQuestionResponse:
+		m.dialog.CloseDialog(dialog.UserQuestionID)
+		m.com.Workspace.UserQuestionRespond(msg.Response)
+	case dialog.ActionPlanApprovalResponse:
+		m.dialog.CloseDialog(dialog.PlanApprovalID)
+		cmds = append(cmds, m.handlePlanApprovalResponse(msg))
 
 	case dialog.ActionFilePickerSelected:
 		cmds = append(cmds, tea.Sequence(
@@ -1712,6 +1729,31 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			content = substituteArgs(content, msg.Args)
 		}
 		cmds = append(cmds, m.sendMessage(content))
+		m.dialog.CloseFrontDialog()
+	case dialog.ActionRunPlan:
+		if len(msg.Arguments) > 0 && msg.Args == nil {
+			m.dialog.CloseFrontDialog()
+			argsDialog := dialog.NewArguments(
+				m.com,
+				"Plan Task",
+				"",
+				msg.Arguments,
+				msg,
+			)
+			m.dialog.OpenDialog(argsDialog)
+			break
+		}
+		if len(msg.Arguments) > 0 {
+			task := strings.TrimSpace(msg.Args["TASK"])
+			if task == "" {
+				cmds = append(cmds, util.ReportWarn("Plan task is required"))
+				m.dialog.CloseFrontDialog()
+				break
+			}
+			cmds = append(cmds, m.sendMessageWithOptions(task, workspace.AgentRunOptions{PlanMode: true}))
+		} else {
+			cmds = append(cmds, m.togglePlanMode())
+		}
 		m.dialog.CloseFrontDialog()
 	case dialog.ActionRunMCPPrompt:
 		if len(msg.Arguments) > 0 && msg.Args == nil {
@@ -1830,6 +1872,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			cmds = append(cmds, tea.Suspend)
 			return true
+		case key.Matches(msg, m.keyMap.Plan):
+			cmds = append(cmds, m.togglePlanMode())
+			return true
 		}
 		return false
 	}
@@ -1945,6 +1990,18 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.historyReset()
 					return m.compactSession(m.session.ID)
 				}
+				planMode := m.planModeActive
+				if value == "/plan" {
+					return m.togglePlanMode()
+				}
+				if strings.HasPrefix(value, "/plan ") {
+					planPrompt := strings.TrimSpace(strings.TrimPrefix(value, "/plan"))
+					if planPrompt == "" {
+						return util.ReportWarn("Usage: /plan <task>")
+					}
+					value = planPrompt
+					planMode = true
+				}
 
 				attachments := m.attachments.List()
 				m.attachments.Reset()
@@ -1955,7 +2012,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.randomizePlaceholders()
 				m.historyReset()
 
-				return tea.Batch(m.sendMessage(value, attachments...), m.loadPromptHistory())
+				return tea.Batch(m.sendMessageWithOptions(value, workspace.AgentRunOptions{PlanMode: planMode}, attachments...), m.loadPromptHistory())
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -2920,13 +2977,50 @@ func (m *UI) openEditor(value string) tea.Cmd {
 }
 
 // setEditorPrompt configures the textarea prompt function based on whether
-// yolo mode is enabled.
-func (m *UI) setEditorPrompt(yolo bool) {
+// yolo or plan mode is enabled. Plan mode takes priority over yolo mode.
+func (m *UI) setEditorPrompt(plan, yolo bool) {
+	if plan {
+		m.textarea.SetPromptFunc(4, m.planPromptFunc)
+		return
+	}
 	if yolo {
 		m.textarea.SetPromptFunc(4, m.yoloPromptFunc)
 		return
 	}
 	m.textarea.SetPromptFunc(4, m.normalPromptFunc)
+}
+
+func (m *UI) refreshEditorPrompt() {
+	m.setEditorPrompt(m.planModeActive, m.com.Workspace.PermissionSkipRequests())
+}
+
+func (m *UI) setPlanModeActive(active bool) {
+	m.planModeActive = active
+	m.refreshEditorPrompt()
+	m.refreshEditorPlaceholder()
+}
+
+func (m *UI) refreshEditorPlaceholder() {
+	if m.isAgentBusy() {
+		m.textarea.Placeholder = m.workingPlaceholder
+	} else {
+		m.textarea.Placeholder = m.readyPlaceholder
+	}
+	if m.planModeActive {
+		m.textarea.Placeholder = "Plan mode!"
+	} else if m.com.Workspace.PermissionSkipRequests() {
+		m.textarea.Placeholder = "Yolo mode!"
+	}
+}
+
+func (m *UI) togglePlanMode() tea.Cmd {
+	enabled := !m.planModeActive
+	m.setPlanModeActive(enabled)
+	status := "disabled"
+	if enabled {
+		status = "enabled"
+	}
+	return util.CmdHandler(util.NewInfoMsg("Plan mode " + status))
 }
 
 // normalPromptFunc returns the normal editor prompt style ("  > " on first
@@ -2960,6 +3054,23 @@ func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
 		return t.EditorPromptYoloDotsFocused.Render()
 	}
 	return t.EditorPromptYoloDotsBlurred.Render()
+}
+
+// planPromptFunc returns the plan mode editor prompt style with pencil icon
+// and colored dots.
+func (m *UI) planPromptFunc(info textarea.PromptInfo) string {
+	t := m.com.Styles
+	if info.LineNumber == 0 {
+		if info.Focused {
+			return t.EditorPromptPlanIconFocused.Render()
+		} else {
+			return t.EditorPromptPlanIconBlurred.Render()
+		}
+	}
+	if info.Focused {
+		return t.EditorPromptPlanDotsFocused.Render()
+	}
+	return t.EditorPromptPlanDotsBlurred.Render()
 }
 
 // closeCompletions closes the completions popup and resets state.
@@ -3181,6 +3292,10 @@ func (m *UI) cacheSidebarLogo(width int) {
 
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
+	return m.sendMessageWithOptions(content, workspace.AgentRunOptions{}, attachments...)
+}
+
+func (m *UI) sendMessageWithOptions(content string, options workspace.AgentRunOptions, attachments ...message.Attachment) tea.Cmd {
 	if !m.com.Workspace.AgentIsReady() {
 		return util.ReportError(fmt.Errorf("coder agent is not initialized"))
 	}
@@ -3200,6 +3315,12 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		}
 		m.setState(uiChat, m.focus)
 	}
+	if m.planModeActive {
+		options.PlanMode = true
+	}
+	if options.PlanMode {
+		m.setPlanModeActive(true)
+	}
 
 	ctx := context.Background()
 	cmds = append(cmds, func() tea.Msg {
@@ -3213,7 +3334,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
 	cmds = append(cmds, func() tea.Msg {
-		err := m.com.Workspace.AgentRun(context.Background(), sessionID, content, attachments...)
+		err := m.com.Workspace.AgentRunWithOptions(context.Background(), sessionID, content, options, attachments...)
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
@@ -3575,6 +3696,145 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 	permDialog := dialog.NewPermissions(m.com, perm, opts...)
 	m.dialog.OpenDialog(permDialog)
 	return nil
+}
+
+func (m *UI) openPlanApprovalDialog(submission planning.Submission) {
+	m.dialog.CloseDialog(dialog.PlanApprovalID)
+	m.dialog.OpenDialog(dialog.NewPlanApproval(m.com, submission))
+}
+
+func (m *UI) openUserQuestionDialog(request userquestion.Request) {
+	m.dialog.CloseDialog(dialog.UserQuestionID)
+	m.dialog.OpenDialog(dialog.NewUserQuestion(m.com, request))
+}
+
+func (m *UI) handlePlanApprovalResponse(response dialog.ActionPlanApprovalResponse) tea.Cmd {
+	if response.Approved {
+		m.setPlanModeActive(false)
+		return m.approvePlan(response.Submission, response.Comment, response.CompactHistory)
+	}
+	m.setPlanModeActive(true)
+	return m.revisePlan(response.Submission, response.Comment)
+}
+
+func (m *UI) approvePlan(submission planning.Submission, comment string, compactHistory bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		current, err := m.com.Workspace.GetSession(ctx, submission.SessionID)
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		current.Todos = submission.Todos
+		saved, err := m.com.Workspace.SaveSession(ctx, current)
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		if m.session != nil && m.session.ID == saved.ID {
+			m.session = &saved
+		}
+
+		if err := m.waitForSessionIdle(ctx, submission.SessionID); err != nil {
+			return util.ReportError(err)()
+		}
+
+		if compactHistory {
+			strategy := config.PlanCompactStrategySummarize
+			if cfg := m.com.Config(); cfg != nil && cfg.Options != nil {
+				strategy = cfg.Options.EffectivePlanCompactStrategy()
+			}
+			if strategy != config.PlanCompactStrategyDisabled {
+				if err := m.com.Workspace.AgentCompactForPlan(ctx, submission.SessionID, strategy); err != nil {
+					slog.Warn("Failed to compact session before plan implementation", "error", err, "strategy", strategy)
+				}
+			}
+		}
+
+		prompt := approvedPlanPrompt(submission, comment)
+		if err := m.com.Workspace.AgentRunWithOptions(ctx, submission.SessionID, prompt, workspace.AgentRunOptions{}); err != nil {
+			return util.ReportError(err)()
+		}
+		return util.NewInfoMsg("Plan approved")
+	}
+}
+
+func (m *UI) revisePlan(submission planning.Submission, comment string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		if err := m.waitForSessionIdle(ctx, submission.SessionID); err != nil {
+			return util.ReportError(err)()
+		}
+		prompt := revisePlanPrompt(submission, comment)
+		if err := m.com.Workspace.AgentRunWithOptions(ctx, submission.SessionID, prompt, workspace.AgentRunOptions{PlanMode: true}); err != nil {
+			return util.ReportError(err)()
+		}
+		return util.NewInfoMsg("Plan returned for revision")
+	}
+}
+
+func (m *UI) waitForSessionIdle(ctx context.Context, sessionID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for m.com.Workspace.AgentIsSessionBusy(sessionID) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+	return nil
+}
+
+func approvedPlanPrompt(submission planning.Submission, comment string) string {
+	var b strings.Builder
+	b.WriteString("The plan is approved. Start implementing it now.\n\n")
+	b.WriteString("Approved plan:\n")
+	b.WriteString(submission.Markdown)
+	b.WriteString("\n\nApproved tasks:\n")
+	b.WriteString(markdownTodos(submission.Todos))
+	if strings.TrimSpace(comment) != "" {
+		b.WriteString("\n\nUser approval comments:\n")
+		b.WriteString(strings.TrimSpace(comment))
+	}
+	return b.String()
+}
+
+func revisePlanPrompt(submission planning.Submission, comment string) string {
+	var b strings.Builder
+	b.WriteString("The plan was not approved. Revise the plan and call submit_plan again.\n\n")
+	b.WriteString("Previous plan:\n")
+	b.WriteString(submission.Markdown)
+	b.WriteString("\n\nUser feedback:\n")
+	if strings.TrimSpace(comment) == "" {
+		b.WriteString("No additional comments were provided.")
+	} else {
+		b.WriteString(strings.TrimSpace(comment))
+	}
+	return b.String()
+}
+
+func markdownTodos(todos []session.Todo) string {
+	var b strings.Builder
+	for _, todo := range todos {
+		marker := " "
+		if todo.Status == session.TodoStatusCompleted {
+			marker = "x"
+		}
+		b.WriteString("- [")
+		b.WriteString(marker)
+		b.WriteString("] ")
+		b.WriteString(todo.Content)
+		if todo.Status == session.TodoStatusInProgress && todo.ActiveForm != "" {
+			b.WriteString(" (")
+			b.WriteString(todo.ActiveForm)
+			b.WriteString(")")
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // handlePermissionNotification updates tool items when permission state changes.

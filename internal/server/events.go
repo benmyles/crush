@@ -12,9 +12,11 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/userquestion"
 )
 
 // wrapEvent converts a raw tea.Msg (a pubsub.Event[T] from the app
@@ -97,6 +99,16 @@ func wrapEvent(ev any) *pubsub.Payload {
 			Type:    e.Type,
 			Payload: commandOutputToProto(e.Payload),
 		})
+	case pubsub.Event[planning.Submission]:
+		return envelope(pubsub.PayloadTypePlanSubmission, pubsub.Event[proto.PlanSubmission]{
+			Type:    e.Type,
+			Payload: planSubmissionToProto(e.Payload),
+		})
+	case pubsub.Event[userquestion.Request]:
+		return envelope(pubsub.PayloadTypeUserQuestion, pubsub.Event[proto.UserQuestionRequest]{
+			Type:    e.Type,
+			Payload: userQuestionToProto(e.Payload),
+		})
 	default:
 		slog.Warn("Unrecognized event type for SSE wrapping", "type", fmt.Sprintf("%T", ev))
 		return nil
@@ -121,6 +133,35 @@ func commandOutputToProto(e agenttools.CommandOutputEvent) proto.CommandOutputEv
 		StartTime:        e.StartTime,
 		EndTime:          e.EndTime,
 		UpdatedAt:        e.UpdatedAt,
+	}
+}
+
+func planSubmissionToProto(p planning.Submission) proto.PlanSubmission {
+	return proto.PlanSubmission{
+		ID:         p.ID,
+		SessionID:  p.SessionID,
+		ToolCallID: p.ToolCallID,
+		Markdown:   p.Markdown,
+		Todos:      todosToProto(p.Todos),
+	}
+}
+
+func userQuestionToProto(q userquestion.Request) proto.UserQuestionRequest {
+	choices := make([]proto.UserQuestionChoice, len(q.Choices))
+	for i, choice := range q.Choices {
+		choices[i] = proto.UserQuestionChoice{
+			ID:          choice.ID,
+			Label:       choice.Label,
+			Description: choice.Description,
+		}
+	}
+	return proto.UserQuestionRequest{
+		ID:          q.ID,
+		SessionID:   q.SessionID,
+		ToolCallID:  q.ToolCallID,
+		Question:    q.Question,
+		Description: q.Description,
+		Choices:     choices,
 	}
 }
 
@@ -162,9 +203,22 @@ func sessionToProto(s session.Session) proto.Session {
 		PromptTokens:     s.PromptTokens,
 		CompletionTokens: s.CompletionTokens,
 		Cost:             s.Cost,
+		Todos:            todosToProto(s.Todos),
 		CreatedAt:        s.CreatedAt,
 		UpdatedAt:        s.UpdatedAt,
 	}
+}
+
+func todosToProto(todos []session.Todo) []proto.Todo {
+	result := make([]proto.Todo, len(todos))
+	for i, todo := range todos {
+		result[i] = proto.Todo{
+			Content:    todo.Content,
+			Status:     string(todo.Status),
+			ActiveForm: todo.ActiveForm,
+		}
+	}
+	return result
 }
 
 func fileToProto(f history.File) proto.File {
