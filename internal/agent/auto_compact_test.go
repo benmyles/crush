@@ -167,7 +167,7 @@ func TestSessionAgentAutoCompactsAfterToolResultBeforeNextModelCall(t *testing.T
 	require.NotEmpty(t, currentSession.SummaryMessageID)
 }
 
-func TestSessionAgentAutoCompactMorphFallsBackToSummarize(t *testing.T) {
+func TestSessionAgentAutoCompactMorphRequiresMorphOptions(t *testing.T) {
 	t.Parallel()
 
 	env := testEnv(t)
@@ -186,19 +186,6 @@ func TestSessionAgentAutoCompactMorphFallsBackToSummarize(t *testing.T) {
 				Usage: fantasy.Usage{
 					InputTokens:  10,
 					OutputTokens: 5,
-				},
-			}, nil
-		},
-		func(_ context.Context, call fantasy.Call) (*fantasy.Response, error) {
-			require.True(t, promptTextContains(call.Prompt, "You are summarizing a conversation"))
-			return &fantasy.Response{
-				Content: fantasy.ResponseContent{
-					fantasy.TextContent{Text: "Fallback summary"},
-				},
-				FinishReason: fantasy.FinishReasonStop,
-				Usage: fantasy.Usage{
-					InputTokens:  8,
-					OutputTokens: 4,
 				},
 			}, nil
 		},
@@ -237,25 +224,13 @@ func TestSessionAgentAutoCompactMorphFallsBackToSummarize(t *testing.T) {
 			TokenThreshold: &threshold,
 		},
 	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, "Initial answer", result.Response.Content.Text())
-	assert.Equal(t, 2, large.GenerateCallCount())
+	require.ErrorIs(t, err, ErrMorphCompactDisabled)
+	require.Nil(t, result)
+	assert.Equal(t, 1, large.GenerateCallCount())
 
 	currentSession, err = env.sessions.Get(t.Context(), currentSession.ID)
 	require.NoError(t, err)
-	require.NotEmpty(t, currentSession.SummaryMessageID)
-
-	msgs, err := env.messages.List(t.Context(), currentSession.ID)
-	require.NoError(t, err)
-	var foundSummary bool
-	for _, msg := range msgs {
-		if msg.ID == currentSession.SummaryMessageID {
-			foundSummary = true
-			assert.Equal(t, "Fallback summary", msg.Content().Text)
-		}
-	}
-	require.True(t, foundSummary)
+	assert.Empty(t, currentSession.SummaryMessageID)
 }
 
 func TestSessionAgentDisableAutoSummarizePreventsCompaction(t *testing.T) {

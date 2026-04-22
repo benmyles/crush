@@ -4,12 +4,17 @@ import (
 	"cmp"
 	"fmt"
 	"image"
+	"path/filepath"
+	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/home"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/logo"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // modelInfo renders the current model information including reasoning
@@ -54,6 +59,34 @@ func (m *UI) modelInfo(width int) string {
 		modelName = model.CatwalkCfg.Name
 	}
 	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width)
+}
+
+func (m *UI) instructionsInfo(width int) string {
+	t := m.com.Styles
+	label := t.Subtle.Render("Instructions")
+	availableWidth := width - lipgloss.Width(label) - 1
+	if availableWidth <= 0 {
+		return ansi.Truncate(label, width, "")
+	}
+
+	value := "none"
+	cfg := m.com.Config()
+	if cfg != nil && cfg.Options != nil {
+		workingDir := m.com.Workspace.WorkingDir()
+		if path, ok := config.SelectedAgentInstructionsPath(workingDir, cfg.Options.ContextPaths); ok {
+			value = instructionsDisplayPath(workingDir, path)
+		}
+	}
+	value = ansi.Truncate(value, availableWidth, "...")
+	return label + " " + t.Muted.Render(value)
+}
+
+func instructionsDisplayPath(workingDir, path string) string {
+	if rel, err := filepath.Rel(workingDir, path); err == nil && rel != "." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+		return rel
+	}
+	return home.Short(path)
 }
 
 // getDynamicHeightLimits will give us the num of items to show in each section based on the height
@@ -149,6 +182,7 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 		title,
 		"",
 		cwd,
+		m.instructionsInfo(width),
 		"",
 		m.modelInfo(width),
 		"",

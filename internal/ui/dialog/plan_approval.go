@@ -165,6 +165,8 @@ func NewPlanApproval(com *common.Common, submission planning.Submission) *PlanAp
 				compactLabel = "Compact before starting (Morph)"
 			case config.PlanCompactStrategySummarize:
 				compactLabel = "Compact before starting (Summarize)"
+			case config.PlanCompactStrategySummarizeThenMorph:
+				compactLabel = "Compact before starting (Summarize + Morph)"
 			}
 		}
 	}

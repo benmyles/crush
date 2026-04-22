@@ -1494,6 +1494,32 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			}
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionToggleSubAgents:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before changing sub-agents..."))
+			break
+		}
+		cmds = append(cmds, func() tea.Msg {
+			cfg := m.com.Config()
+			if cfg == nil || cfg.Options == nil {
+				return util.ReportError(errors.New("configuration not found"))()
+			}
+
+			disabled := !cfg.Options.DisableSubAgents
+			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.disable_subagents", disabled); err != nil {
+				return util.ReportError(err)()
+			}
+			if err := m.com.Workspace.UpdateAgentModel(context.Background()); err != nil {
+				return util.ReportError(err)()
+			}
+
+			status := "enabled"
+			if disabled {
+				status = "disabled"
+			}
+			return util.NewInfoMsg("Sub-agents " + status)
+		})
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))

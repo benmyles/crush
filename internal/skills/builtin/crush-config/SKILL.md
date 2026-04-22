@@ -136,6 +136,7 @@ The `$schema` property enables IDE autocomplete but is optional.
   "options": {
     "skills_paths": ["./skills"],
     "disabled_tools": ["bash", "sourcegraph"],
+    "disable_subagents": false,
     "disabled_skills": ["crush-config"],
     "tui": {
       "compact_mode": false,
@@ -150,7 +151,7 @@ The `$schema` property enables IDE autocomplete but is optional.
       "preserve_recent": 3
     },
     "auto_compact": {
-      "strategy": "morph",
+      "strategy": "summarize",
       "token_threshold": 160000
     },
     "auto_lsp": true,
@@ -170,13 +171,22 @@ The `$schema` property enables IDE autocomplete but is optional.
 
 Other options: `context_paths`, `progress`, `disable_notifications`, `disable_auto_summarize`, `disable_metrics`, `disable_provider_auto_update`, `disable_default_providers`, `data_directory`, `initialize_as`.
 
+`disable_subagents` disables tools that launch nested agents, including
+`agent` and `agentic_fetch`. It can also be toggled from the command palette.
+
+Crush automatically selects one agent instructions file when present. The
+priority starts with `AGENTS.md`, then `AGENT.md`, `CLAUDE.md`, `GEMINI.md`,
+`CRUSH.md`, and other common variants. Additional non-default `context_paths`
+are still loaded as extra context.
+
 `morph_compact` enables the manual `Compact Session` command and exact
 `/compact` prompt input. It is disabled unless `enabled` is true and requires a
 Morph API key in `api_key`. `base_url`, `compression_ratio`, and
 `preserve_recent` are optional.
 
 `auto_compact` controls automatic conversation compaction. `strategy` can be
-`summarize`, `morph`, or `disabled`, and defaults to `summarize`.
+`summarize`, `morph`, `summarize_then_morph`, or `disabled`, and defaults to
+`summarize`.
 `token_threshold` is an optional used-token count at which Crush should compact
 the conversation. When omitted, Crush uses its model-context defaults.
 

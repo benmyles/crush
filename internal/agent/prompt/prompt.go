@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/home"
 	"github.com/charmbracelet/crush/internal/shell"
 	"github.com/charmbracelet/crush/internal/skills"
 )
@@ -138,32 +137,41 @@ func processContextPath(p string, store *config.ConfigStore) []ContextFile {
 
 // expandPath expands ~ and environment variables in file paths
 func expandPath(path string, store *config.ConfigStore) string {
-	path = home.Long(path)
-	// Handle environment variable expansion using the same pattern as config
-	if strings.HasPrefix(path, "$") {
-		if expanded, err := store.Resolver().ResolveValue(path); err == nil {
-			path = expanded
-		}
-	}
-
-	return path
+	return store.ResolvePath(path)
 }
 
 func (p *Prompt) promptData(ctx context.Context, provider, model string, store *config.ConfigStore) (PromptDat, error) {
 	workingDir := cmp.Or(p.workingDir, store.WorkingDir())
 	platform := cmp.Or(p.platform, runtime.GOOS)
 
-	files := map[string][]ContextFile{}
+	var contextFiles []ContextFile
+	seenContextPaths := map[string]bool{}
 
 	cfg := store.Config()
-	for _, pth := range cfg.Options.ContextPaths {
+	addContextPath := func(pth string) {
 		expanded := expandPath(pth, store)
-		pathKey := strings.ToLower(expanded)
-		if _, ok := files[pathKey]; ok {
+		fullPath := expanded
+		if !filepath.IsAbs(fullPath) {
+			fullPath = filepath.Join(store.WorkingDir(), fullPath)
+		}
+		pathKey := strings.ToLower(filepath.Clean(fullPath))
+		if seenContextPaths[pathKey] {
+			return
+		}
+		seenContextPaths[pathKey] = true
+		content := processContextPath(expanded, store)
+		contextFiles = append(contextFiles, content...)
+	}
+
+	if path, ok := config.SelectedAgentInstructionsPath(store.WorkingDir(), cfg.Options.ContextPaths); ok {
+		addContextPath(path)
+	}
+
+	for _, pth := range cfg.Options.ContextPaths {
+		if config.IsDefaultContextPath(pth) {
 			continue
 		}
-		content := processContextPath(expanded, store)
-		files[pathKey] = content
+		addContextPath(pth)
 	}
 
 	// Discover and load skills metadata.
@@ -219,9 +227,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		}
 	}
 
-	for _, contextFiles := range files {
-		data.ContextFiles = append(data.ContextFiles, contextFiles...)
-	}
+	data.ContextFiles = contextFiles
 	return data, nil
 }
 

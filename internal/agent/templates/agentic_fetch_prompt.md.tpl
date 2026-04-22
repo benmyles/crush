@@ -74,3 +74,13 @@ You have access to a web_fetch tool that allows you to fetch web pages:
 - You can fetch multiple pages in sequence to gather all needed information
 - Remember to include any fetched URLs in your Sources section if they were helpful
 </web_fetch_tool>
+
+{{if .ContextFiles}}
+<memory>
+{{range .ContextFiles}}
+<file path="{{.Path}}">
+{{.Content}}
+</file>
+{{end}}
+</memory>
+{{end}}

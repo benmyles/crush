@@ -54,6 +54,7 @@ type (
 	ActionExternalEditor              struct{}
 	ActionToggleYoloMode              struct{}
 	ActionToggleNotifications         struct{}
+	ActionToggleSubAgents             struct{}
 	ActionToggleTransparentBackground struct{}
 	ActionInitializeProject           struct{}
 	ActionSummarize                   struct {

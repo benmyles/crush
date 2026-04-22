@@ -322,6 +322,8 @@ func TestSessionAgentSummarizeNonStreaming(t *testing.T) {
 	}
 	require.True(t, foundSummary)
 	assert.Equal(t, currentSession.SummaryMessageID, summaryMsg.ID)
-	assert.Equal(t, "Summary output", summaryMsg.Content().Text)
+	assert.Contains(t, summaryMsg.Content().Text, `<compacted_context strategy="summarize" source="summary">`)
+	assert.Contains(t, summaryMsg.Content().Text, "Crush summarized the earlier conversation")
+	assert.Contains(t, summaryMsg.Content().Text, "Summary output")
 	assert.Equal(t, message.FinishReasonEndTurn, summaryMsg.FinishReason())
 }

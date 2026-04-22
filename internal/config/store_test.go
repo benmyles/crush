@@ -23,6 +23,16 @@ func TestConfigStore_ConfigPath_GlobalAlwaysWorks(t *testing.T) {
 	require.Equal(t, "/some/global/crush.json", path)
 }
 
+func TestConfigStore_ResolvePathUsesWorkingDir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewTestStoreWithWorkingDir(&Config{}, dir)
+
+	require.Equal(t, filepath.Join(dir, "skills"), store.ResolvePath("skills"))
+	require.Equal(t, filepath.Join(dir, ".agents", "skills"), store.ResolvePath("./.agents/skills"))
+}
+
 func TestConfigStore_ConfigPath_WorkspaceReturnsPath(t *testing.T) {
 	t.Parallel()
 

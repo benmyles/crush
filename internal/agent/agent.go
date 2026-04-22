@@ -110,6 +110,7 @@ type SessionAgent interface {
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string, fantasy.ProviderOptions) error
 	Compact(context.Context, string, config.MorphCompactOptions, fantasy.ProviderOptions) error
+	SummarizeThenCompact(context.Context, string, config.MorphCompactOptions, fantasy.ProviderOptions) error
 	Model() Model
 }
 
@@ -282,7 +283,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if len(msgs) == 0 {
 		titleCtx := ctx // Copy to avoid race with ctx reassignment below.
 		wg.Go(func() {
-			a.generateTitle(titleCtx, call.SessionID, call.Prompt)
+			a.generateTitle(titleCtx, call.SessionID, call.Prompt, &sessionLock)
 		})
 	}
 	defer wg.Wait()
@@ -604,6 +605,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		return nil, err
 	}
 
+	wg.Wait()
+	if refreshedSession, getSessionErr := a.sessions.Get(ctx, call.SessionID); getSessionErr == nil {
+		currentSession = refreshedSession
+	}
+
 	// Send notification that agent has finished its turn (skip for
 	// nested/non-interactive sessions).
 	if !call.NonInteractive && a.notify != nil {
@@ -672,6 +678,9 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	defer a.activeRequests.Del(sessionID)
 	defer cancel()
 
+	a.publishCompactionNotification(pubsub.CreatedEvent, notify.TypeCompactionStarted, currentSession)
+	defer a.publishCompactionNotification(pubsub.CreatedEvent, notify.TypeCompactionFinished, currentSession)
+
 	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:             message.Assistant,
 		Model:            largeModel.Model.Model(),
@@ -695,6 +704,13 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return err
 	}
 	summaryMessage = generated.message
+	setMessageTextContent(
+		&summaryMessage,
+		compactedContextContent(config.PlanCompactStrategySummarize, compactedContextSourceSummary, summaryMessage.Content().Text),
+	)
+	if err := a.messages.Update(genCtx, summaryMessage); err != nil {
+		return err
+	}
 	a.updateSessionUsage(generated.model, &currentSession, generated.totalUsage, generated.openrouterCost)
 
 	// Just in case, get just the last usage info.
@@ -1005,9 +1021,19 @@ func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.S
 }
 
 // generateTitle generates a session titled based on the initial prompt.
-func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, userPrompt string) {
+func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, userPrompt string, sessionLock *sync.Mutex) {
 	if userPrompt == "" {
 		return
+	}
+
+	withSessionLock := func(fn func()) {
+		if sessionLock == nil {
+			fn()
+			return
+		}
+		sessionLock.Lock()
+		defer sessionLock.Unlock()
+		fn()
 	}
 
 	smallModel := a.smallModel.Get()
@@ -1060,10 +1086,12 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 			// Welp, the large model didn't work either. Use the default
 			// session name and return.
 			slog.Error("Error generating title with large model", "err", err)
-			saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName)
-			if saveErr != nil {
-				slog.Error("Failed to save session title", "error", saveErr)
-			}
+			withSessionLock(func() {
+				saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName)
+				if saveErr != nil {
+					slog.Error("Failed to save session title", "error", saveErr)
+				}
+			})
 			return
 		}
 	}
@@ -1072,10 +1100,12 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 		// Actually, we didn't get a response so we can't. Use the default
 		// session name and return.
 		slog.Error("Response is nil; can't generate title")
-		saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName)
-		if saveErr != nil {
-			slog.Error("Failed to save session title", "error", saveErr)
-		}
+		withSessionLock(func() {
+			saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName)
+			if saveErr != nil {
+				slog.Error("Failed to save session title", "error", saveErr)
+			}
+		})
 		return
 	}
 
@@ -1119,11 +1149,13 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 
 	// Atomically update only title and usage fields to avoid overriding other
 	// concurrent session updates.
-	saveErr := a.sessions.UpdateTitleAndUsage(ctx, sessionID, title, promptTokens, completionTokens, cost)
-	if saveErr != nil {
-		slog.Error("Failed to save session title and usage", "error", saveErr)
-		return
-	}
+	withSessionLock(func() {
+		saveErr := a.sessions.UpdateTitleAndUsage(ctx, sessionID, title, promptTokens, completionTokens, cost)
+		if saveErr != nil {
+			slog.Error("Failed to save session title and usage", "error", saveErr)
+			return
+		}
+	})
 }
 
 func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float64 {

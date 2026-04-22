@@ -27,7 +27,6 @@ import (
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/googleadc"
 	"github.com/charmbracelet/crush/internal/history"
-	"github.com/charmbracelet/crush/internal/home"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
@@ -201,6 +200,8 @@ func (c *coordinator) RunWithOptions(ctx context.Context, sessionID string, prom
 		}
 		attachments = filteredAttachments
 	}
+	beforeLoaded := c.skillTracker.LoadedNames()
+	attachments = c.attachExplicitSkillContents(prompt, attachments)
 
 	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
 	if !ok {
@@ -232,7 +233,6 @@ func (c *coordinator) RunWithOptions(ctx context.Context, sessionID string, prom
 			PlanMode:         options.PlanMode,
 		})
 	}
-	beforeLoaded := c.skillTracker.LoadedNames()
 	result, originalErr := run()
 	logTurnSkillUsage(sessionID, prompt, c.activeSkills, c.skillTracker, beforeLoaded)
 
@@ -530,7 +530,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewSourcegraphTool(nil),
 		tools.NewSubmitPlanTool(c.planning),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, c.skillTracker, c.cfg.WorkingDir(), c.cfg.Config().Options.SkillsPaths...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, c.skillTracker, c.cfg.WorkingDir(), c.resolvedSkillsPaths()...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 	)
 
@@ -581,6 +581,18 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
 	return filteredTools, nil
+}
+
+func (c *coordinator) resolvedSkillsPaths() []string {
+	cfg := c.cfg.Config()
+	if cfg == nil || cfg.Options == nil || len(cfg.Options.SkillsPaths) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(cfg.Options.SkillsPaths))
+	for _, path := range cfg.Options.SkillsPaths {
+		paths = append(paths, c.cfg.ResolvePath(path))
+	}
+	return paths
 }
 
 // TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
@@ -1096,10 +1108,10 @@ func (c *coordinator) autoCompactOptions() AutoCompactOptions {
 	if cfg.Options.AutoCompact != nil {
 		opts.TokenThreshold = cfg.Options.AutoCompact.TokenThreshold
 	}
-	if opts.Strategy == config.PlanCompactStrategyMorph {
+	if compactStrategyUsesMorph(opts.Strategy) {
 		morphOpts, err := c.resolveMorphCompactOptions()
 		if err != nil {
-			slog.Warn("Failed to prepare Morph auto-compaction, will fall back to summarization", "error", err)
+			slog.Warn("Failed to prepare Morph auto-compaction", "error", err)
 		} else {
 			opts.MorphCompact = morphOpts
 		}
@@ -1111,11 +1123,26 @@ func (c *coordinator) CompactForPlan(ctx context.Context, sessionID, strategy st
 	switch strategy {
 	case config.PlanCompactStrategyMorph:
 		return c.Compact(ctx, sessionID)
+	case config.PlanCompactStrategySummarizeThenMorph:
+		resolved, err := c.resolveMorphCompactOptions()
+		if err != nil {
+			return err
+		}
+		providerCfg, ok := c.cfg.Config().Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
+		if !ok {
+			return errModelProviderNotConfigured
+		}
+		return c.currentAgent.SummarizeThenCompact(ctx, sessionID, *resolved, getProviderOptions(c.currentAgent.Model(), providerCfg))
 	case config.PlanCompactStrategySummarize:
 		return c.Summarize(ctx, sessionID)
 	default:
 		return nil
 	}
+}
+
+func compactStrategyUsesMorph(strategy string) bool {
+	return strategy == config.PlanCompactStrategyMorph ||
+		strategy == config.PlanCompactStrategySummarizeThenMorph
 }
 
 func (c *coordinator) isUnauthorized(err error) bool {
@@ -1253,13 +1280,7 @@ func discoverSkills(cfg *config.ConfigStore) (allSkills, activeSkills []*skills.
 	if opts != nil && len(opts.SkillsPaths) > 0 {
 		userPaths = make([]string, 0, len(opts.SkillsPaths))
 		for _, pth := range opts.SkillsPaths {
-			expanded := home.Long(pth)
-			if strings.HasPrefix(expanded, "$") {
-				if resolved, err := cfg.Resolver().ResolveValue(expanded); err == nil {
-					expanded = resolved
-				}
-			}
-			userPaths = append(userPaths, expanded)
+			userPaths = append(userPaths, cfg.ResolvePath(pth))
 		}
 		var userSkills []*skills.Skill
 		userSkills, userStates = skills.DiscoverWithStates(userPaths)

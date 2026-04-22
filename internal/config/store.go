@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"charm.land/catwalk/pkg/catwalk"
 	hyperp "github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/env"
+	"github.com/charmbracelet/crush/internal/home"
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/oauth/hyper"
@@ -73,6 +75,21 @@ func (s *ConfigStore) Resolve(key string) (string, error) {
 		return "", fmt.Errorf("no variable resolver configured")
 	}
 	return s.resolver.ResolveValue(key)
+}
+
+// ResolvePath expands home and variable references, then resolves relative
+// paths against the workspace working directory when available.
+func (s *ConfigStore) ResolvePath(path string) string {
+	path = home.Long(path)
+	if strings.HasPrefix(path, "$") && s.resolver != nil {
+		if resolved, err := s.resolver.ResolveValue(path); err == nil {
+			path = resolved
+		}
+	}
+	if s.workingDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(s.workingDir, path)
+	}
+	return path
 }
 
 // KnownProviders returns the list of known providers.
@@ -381,6 +398,14 @@ func NewTestStore(cfg *Config, loadedPaths ...string) *ConfigStore {
 		config:      cfg,
 		loadedPaths: loadedPaths,
 	}
+}
+
+// NewTestStoreWithWorkingDir creates a ConfigStore with a working directory
+// for tests that need path resolution.
+func NewTestStoreWithWorkingDir(cfg *Config, workingDir string, loadedPaths ...string) *ConfigStore {
+	store := NewTestStore(cfg, loadedPaths...)
+	store.workingDir = workingDir
+	return store
 }
 
 // ImportCopilot attempts to import a GitHub Copilot token from disk.

@@ -86,14 +86,14 @@ func (a *sessionAgent) autoCompact(ctx context.Context, sessionID string, opts f
 		return nil
 	case config.PlanCompactStrategyMorph:
 		if compactOpts.MorphCompact == nil {
-			slog.Warn("Morph auto-compaction is not configured, falling back to summarization")
-			return a.Summarize(ctx, sessionID, opts)
+			return ErrMorphCompactDisabled
 		}
-		if err := a.Compact(ctx, sessionID, *compactOpts.MorphCompact, opts); err != nil {
-			slog.Warn("Morph auto-compaction failed, falling back to summarization", "error", err)
-			return a.Summarize(ctx, sessionID, opts)
+		return a.Compact(ctx, sessionID, *compactOpts.MorphCompact, opts)
+	case config.PlanCompactStrategySummarizeThenMorph:
+		if compactOpts.MorphCompact == nil {
+			return ErrMorphCompactDisabled
 		}
-		return nil
+		return a.SummarizeThenCompact(ctx, sessionID, *compactOpts.MorphCompact, opts)
 	case config.PlanCompactStrategySummarize, "":
 		return a.Summarize(ctx, sessionID, opts)
 	default:

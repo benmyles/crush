@@ -477,10 +477,9 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	// Apply defaults to LSP configurations
 	c.applyLSPDefaults()
 
-	// Add the default context paths if they are not already present
-	c.Options.ContextPaths = append(defaultContextPaths, c.Options.ContextPaths...)
-	slices.Sort(c.Options.ContextPaths)
-	c.Options.ContextPaths = slices.Compact(c.Options.ContextPaths)
+	// Add the default context paths in priority order if they are not
+	// already present.
+	c.Options.ContextPaths = appendContextPaths(defaultContextPaths, c.Options.ContextPaths)
 
 	// Add the default skills directories if not already present.
 	for _, dir := range GlobalSkillsDirs() {

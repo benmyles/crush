@@ -61,7 +61,7 @@ func TestConfig_LoadMorphCompactOptions(t *testing.T) {
 func TestConfig_LoadAutoCompactOptions(t *testing.T) {
 	t.Parallel()
 
-	data := []byte(`{"options":{"auto_compact":{"strategy":"morph","token_threshold":160000}}}`)
+	data := []byte(`{"options":{"auto_compact":{"strategy":"summarize_then_morph","token_threshold":160000}}}`)
 
 	loadedConfig, err := loadFromBytes([][]byte{data})
 
@@ -70,10 +70,10 @@ func TestConfig_LoadAutoCompactOptions(t *testing.T) {
 	require.NotNil(t, loadedConfig.Options.AutoCompact)
 	opts := loadedConfig.Options.AutoCompact
 	require.NotNil(t, opts.Strategy)
-	require.Equal(t, PlanCompactStrategyMorph, *opts.Strategy)
+	require.Equal(t, PlanCompactStrategySummarizeThenMorph, *opts.Strategy)
 	require.NotNil(t, opts.TokenThreshold)
 	require.Equal(t, int64(160000), *opts.TokenThreshold)
-	require.Equal(t, PlanCompactStrategyMorph, loadedConfig.Options.EffectiveAutoCompactStrategy())
+	require.Equal(t, PlanCompactStrategySummarizeThenMorph, loadedConfig.Options.EffectiveAutoCompactStrategy())
 }
 
 func TestMorphCompactOptionsDefaults(t *testing.T) {
@@ -125,9 +125,72 @@ func TestConfig_setDefaults(t *testing.T) {
 	require.NotNil(t, cfg.MCP)
 	require.Equal(t, filepath.Join("/tmp", ".crush"), cfg.Options.DataDirectory)
 	require.Equal(t, "AGENTS.md", cfg.Options.InitializeAs)
+	require.Equal(t, defaultContextPaths, cfg.Options.ContextPaths[:len(defaultContextPaths)])
 	for _, path := range defaultContextPaths {
 		require.Contains(t, cfg.Options.ContextPaths, path)
 	}
+}
+
+func TestConfig_setDefaultsPreservesContextPathPriority(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{Options: &Options{ContextPaths: []string{"docs/context.md", "AGENTS.md"}}}
+
+	cfg.setDefaults("/tmp", "")
+
+	require.Equal(t, defaultContextPaths, cfg.Options.ContextPaths[:len(defaultContextPaths)])
+	require.Equal(t, "docs/context.md", cfg.Options.ContextPaths[len(cfg.Options.ContextPaths)-1])
+	require.Len(t, cfg.Options.ContextPaths, len(defaultContextPaths)+1)
+}
+
+func TestSelectedAgentInstructionsPath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("claude"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("agents"), 0o644))
+
+	path, ok := SelectedAgentInstructionsPath(dir, defaultContextPaths)
+
+	require.True(t, ok)
+	require.Equal(t, filepath.Join(dir, "AGENTS.md"), path)
+}
+
+func TestSelectedAgentInstructionsPathFallsBackInPriorityOrder(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "GEMINI.md"), []byte("gemini"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte("agent"), 0o644))
+
+	path, ok := SelectedAgentInstructionsPath(dir, defaultContextPaths)
+
+	require.True(t, ok)
+	require.Equal(t, filepath.Join(dir, "AGENT.md"), path)
+}
+
+func TestSelectedAgentInstructionsPathPrefersPrimaryNamesBeforeVariants(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "agents.md"), []byte("lowercase agents"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte("agent"), 0o644))
+
+	path, ok := SelectedAgentInstructionsPath(dir, defaultContextPaths)
+
+	require.True(t, ok)
+	require.Equal(t, filepath.Join(dir, "AGENT.md"), path)
+}
+
+func TestSelectedAgentInstructionsPathSkipsDirectories(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".cursor", "rules"), 0o755))
+
+	_, ok := SelectedAgentInstructionsPath(dir, defaultContextPaths)
+
+	require.False(t, ok)
 }
 
 func TestConfig_configureProviders(t *testing.T) {
@@ -569,6 +632,25 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
 	assert.Equal(t, []string{"ask_user", "glob", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+}
+
+func TestConfig_setupAgentsWithSubAgentsDisabled(t *testing.T) {
+	cfg := &Config{
+		Options: &Options{
+			DisabledTools:    []string{},
+			DisableSubAgents: true,
+		},
+	}
+
+	cfg.SetupAgents()
+	coderAgent, ok := cfg.Agents[AgentCoder]
+	require.True(t, ok)
+	assert.NotContains(t, coderAgent.AllowedTools, "agent")
+	assert.NotContains(t, coderAgent.AllowedTools, "agentic_fetch")
+
+	taskAgent, ok := cfg.Agents[AgentTask]
+	require.True(t, ok)
+	assert.Equal(t, []string{"ask_user", "glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -1779,15 +1861,21 @@ func TestEffectivePlanCompactStrategy(t *testing.T) {
 		require.Equal(t, PlanCompactStrategySummarize, opts.EffectivePlanCompactStrategy())
 	})
 
-	t.Run("defaults to morph when morph compact is enabled", func(t *testing.T) {
+	t.Run("defaults to summarize when morph compact is enabled", func(t *testing.T) {
 		opts := &Options{MorphCompact: &MorphCompactOptions{Enabled: true}}
-		require.Equal(t, PlanCompactStrategyMorph, opts.EffectivePlanCompactStrategy())
+		require.Equal(t, PlanCompactStrategySummarize, opts.EffectivePlanCompactStrategy())
 	})
 
-	t.Run("explicit setting overrides morph default", func(t *testing.T) {
+	t.Run("explicit setting overrides default", func(t *testing.T) {
 		strategy := "summarize"
 		opts := &Options{MorphCompact: &MorphCompactOptions{Enabled: true}, PlanCompactStrategy: &strategy}
 		require.Equal(t, PlanCompactStrategySummarize, opts.EffectivePlanCompactStrategy())
+	})
+
+	t.Run("explicit summarize then morph is preserved", func(t *testing.T) {
+		strategy := PlanCompactStrategySummarizeThenMorph
+		opts := &Options{MorphCompact: &MorphCompactOptions{Enabled: true}, PlanCompactStrategy: &strategy}
+		require.Equal(t, PlanCompactStrategySummarizeThenMorph, opts.EffectivePlanCompactStrategy())
 	})
 
 	t.Run("explicit disabled overrides everything", func(t *testing.T) {
@@ -1797,11 +1885,11 @@ func TestEffectivePlanCompactStrategy(t *testing.T) {
 	})
 
 	t.Run("loads from json", func(t *testing.T) {
-		data := []byte(`{"options":{"plan_compact_strategy":"morph"}}`)
+		data := []byte(`{"options":{"plan_compact_strategy":"summarize_then_morph"}}`)
 		loadedConfig, err := loadFromBytes([][]byte{data})
 		require.NoError(t, err)
 		require.NotNil(t, loadedConfig.Options)
 		require.NotNil(t, loadedConfig.Options.PlanCompactStrategy)
-		require.Equal(t, PlanCompactStrategyMorph, *loadedConfig.Options.PlanCompactStrategy)
+		require.Equal(t, PlanCompactStrategySummarizeThenMorph, *loadedConfig.Options.PlanCompactStrategy)
 	})
 }

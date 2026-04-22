@@ -514,6 +514,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_notifications", notificationLabel, "", ActionToggleNotifications{}))
 
+	subAgentsDisabled := cfg != nil && cfg.Options != nil && cfg.Options.DisableSubAgents
+	subAgentsLabel := "Disable Sub-Agents"
+	if subAgentsDisabled {
+		subAgentsLabel = "Enable Sub-Agents"
+	}
+	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_subagents", subAgentsLabel, "", ActionToggleSubAgents{}))
+
 	commands = append(commands,
 		NewCommandItem(c.com.Styles, "toggle_yolo", "Toggle Yolo Mode", "", ActionToggleYoloMode{}),
 		NewCommandItem(c.com.Styles, "toggle_help", "Toggle Help", "ctrl+g", ActionToggleHelp{}),

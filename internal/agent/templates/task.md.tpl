@@ -13,3 +13,12 @@ Platform: {{.Platform}}
 Today's date: {{.Date}}
 </env>
 
+{{if .ContextFiles}}
+<memory>
+{{range .ContextFiles}}
+<file path="{{.Path}}">
+{{.Content}}
+</file>
+{{end}}
+</memory>
+{{end}}

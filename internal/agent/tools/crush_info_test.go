@@ -216,6 +216,7 @@ func TestCrushInfo_Options(t *testing.T) {
 	require.Contains(t, output, "auto_summarize = false")
 	require.Contains(t, output, "data_directory = /Users/user/project/.crush")
 	require.Contains(t, output, "debug = true")
+	require.Contains(t, output, "sub_agents = true")
 }
 
 func TestCrushInfo_AutoSummarizeInversion(t *testing.T) {

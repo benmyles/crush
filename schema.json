@@ -29,6 +29,37 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "AutoCompactOptions": {
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "morph",
+            "summarize",
+            "summarize_then_morph",
+            "disabled"
+          ],
+          "description": "Strategy for automatic conversation compaction",
+          "default": "summarize",
+          "examples": [
+            "morph",
+            "summarize",
+            "summarize_then_morph",
+            "disabled"
+          ]
+        },
+        "token_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Used-token count at which Crush should automatically compact the conversation",
+          "examples": [
+            160000
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Completions": {
       "properties": {
         "max_depth": {
@@ -424,9 +455,29 @@
           "$ref": "#/$defs/TUIOptions",
           "description": "Terminal user interface options"
         },
+        "plan_compact_strategy": {
+          "type": "string",
+          "enum": [
+            "morph",
+            "summarize",
+            "summarize_then_morph",
+            "disabled"
+          ],
+          "description": "Strategy for compacting history before plan implementation",
+          "examples": [
+            "morph",
+            "summarize",
+            "summarize_then_morph",
+            "disabled"
+          ]
+        },
         "morph_compact": {
           "$ref": "#/$defs/MorphCompactOptions",
           "description": "Morph Compact options for manual session compaction"
+        },
+        "auto_compact": {
+          "$ref": "#/$defs/AutoCompactOptions",
+          "description": "Automatic conversation compaction options"
         },
         "debug": {
           "type": "boolean",
@@ -461,6 +512,11 @@
           },
           "type": "array",
           "description": "List of built-in tools to disable and hide from the agent"
+        },
+        "disable_subagents": {
+          "type": "boolean",
+          "description": "Disable tools that spawn sub-agents",
+          "default": false
         },
         "disable_provider_auto_update": {
           "type": "boolean",

@@ -115,6 +115,14 @@ func (c *morphCompactClient) compact(ctx context.Context, req morphCompactReques
 }
 
 func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts config.MorphCompactOptions, providerOpts fantasy.ProviderOptions) error {
+	return a.compact(ctx, sessionID, opts, providerOpts, false)
+}
+
+func (a *sessionAgent) SummarizeThenCompact(ctx context.Context, sessionID string, opts config.MorphCompactOptions, providerOpts fantasy.ProviderOptions) error {
+	return a.compact(ctx, sessionID, opts, providerOpts, true)
+}
+
+func (a *sessionAgent) compact(ctx context.Context, sessionID string, opts config.MorphCompactOptions, providerOpts fantasy.ProviderOptions, summarizeFirst bool) error {
 	if a.IsSessionBusy(sessionID) {
 		return ErrSessionBusy
 	}
@@ -147,16 +155,6 @@ func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts confi
 		return nil
 	}
 
-	largeModel := a.largeModel.Get()
-	systemPromptPrefix := a.systemPromptPrefix.Get()
-	summaryMessage := message.Message{
-		Role:             message.Assistant,
-		SessionID:        sessionID,
-		Model:            largeModel.Model.Model(),
-		Provider:         largeModel.Model.Provider(),
-		IsSummaryMessage: true,
-	}
-
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(sessionID, cancel)
 	defer a.activeRequests.Del(sessionID)
@@ -165,9 +163,22 @@ func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts confi
 	a.publishCompactionNotification(pubsub.CreatedEvent, notify.TypeCompactionStarted, currentSession)
 	defer a.publishCompactionNotification(pubsub.CreatedEvent, notify.TypeCompactionFinished, currentSession)
 
-	generated, err := a.generateSummary(genCtx, currentSession, msgs, providerOpts, largeModel, systemPromptPrefix, summaryMessage, nil)
-	if err != nil {
-		return err
+	var generated generatedSummary
+	if summarizeFirst {
+		largeModel := a.largeModel.Get()
+		systemPromptPrefix := a.systemPromptPrefix.Get()
+		summaryMessage := message.Message{
+			Role:             message.Assistant,
+			SessionID:        sessionID,
+			Model:            largeModel.Model.Model(),
+			Provider:         largeModel.Model.Provider(),
+			IsSummaryMessage: true,
+		}
+		var err error
+		generated, err = a.generateSummary(genCtx, currentSession, msgs, providerOpts, largeModel, systemPromptPrefix, summaryMessage, nil)
+		if err != nil {
+			return err
+		}
 	}
 
 	resp, err := client.compact(genCtx, morphCompactRequest{
@@ -187,9 +198,13 @@ func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts confi
 	if model == "" {
 		model = morphCompactModel
 	}
+	strategy := config.PlanCompactStrategyMorph
+	if summarizeFirst {
+		strategy = config.PlanCompactStrategySummarizeThenMorph
+	}
 	compactMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:             message.Assistant,
-		Parts:            []message.ContentPart{message.TextContent{Text: resp.Output}},
+		Parts:            []message.ContentPart{message.TextContent{Text: compactedContextContent(strategy, compactedContextSourceMorph, resp.Output)}},
 		Provider:         "morph",
 		Model:            model,
 		IsSummaryMessage: true,
@@ -202,23 +217,30 @@ func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts confi
 		return err
 	}
 
-	generatedMessage := generated.message.Clone()
-	_, err = a.messages.Create(ctx, sessionID, message.CreateMessageParams{
-		Role:             generatedMessage.Role,
-		Parts:            generatedMessage.Parts,
-		Provider:         generatedMessage.Provider,
-		Model:            generatedMessage.Model,
-		IsSummaryMessage: true,
-	})
-	if err != nil {
-		return err
-	}
+	var summaryTokens int64
+	if summarizeFirst {
+		generatedMessage := generated.message.Clone()
+		setMessageTextContent(
+			&generatedMessage,
+			compactedContextContent(config.PlanCompactStrategySummarizeThenMorph, compactedContextSourceModelSummary, generatedMessage.Content().Text),
+		)
+		_, err = a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+			Role:             generatedMessage.Role,
+			Parts:            generatedMessage.Parts,
+			Provider:         generatedMessage.Provider,
+			Model:            generatedMessage.Model,
+			IsSummaryMessage: true,
+		})
+		if err != nil {
+			return err
+		}
 
-	a.updateSessionUsage(generated.model, &currentSession, generated.totalUsage, generated.openrouterCost)
+		a.updateSessionUsage(generated.model, &currentSession, generated.totalUsage, generated.openrouterCost)
 
-	summaryTokens := generated.responseUsage.OutputTokens
-	if summaryTokens == 0 {
-		summaryTokens = approximateTokenCount(generated.message.Content().Text)
+		summaryTokens = generated.responseUsage.OutputTokens
+		if summaryTokens == 0 {
+			summaryTokens = approximateTokenCount(generated.message.Content().Text)
+		}
 	}
 	compactTokens := resp.Usage.OutputTokens
 	if compactTokens == 0 {

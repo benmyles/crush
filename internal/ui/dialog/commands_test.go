@@ -64,6 +64,40 @@ func TestCommandsShowsPlanCommand(t *testing.T) {
 	require.Fail(t, "plan command not found")
 }
 
+func TestCommandsShowsSubAgentsToggle(t *testing.T) {
+	t.Parallel()
+
+	cmds := newCommandsForMorphCompactTest(t, false)
+	items := cmds.defaultCommands()
+
+	require.Contains(t, commandIDs(items), "toggle_subagents")
+	for _, item := range items {
+		if item.ID() == "toggle_subagents" {
+			_, ok := item.Action().(ActionToggleSubAgents)
+			require.True(t, ok)
+			require.Equal(t, "Disable Sub-Agents", item.title)
+			return
+		}
+	}
+	require.Fail(t, "sub-agents toggle command not found")
+}
+
+func TestCommandsShowsEnableSubAgentsWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	cmds := newCommandsForMorphCompactTest(t, false)
+	cmds.com.Config().Options.DisableSubAgents = true
+	items := cmds.defaultCommands()
+
+	for _, item := range items {
+		if item.ID() == "toggle_subagents" {
+			require.Equal(t, "Enable Sub-Agents", item.title)
+			return
+		}
+	}
+	require.Fail(t, "sub-agents toggle command not found")
+}
+
 func newCommandsForMorphCompactTest(t *testing.T, enabled bool) *Commands {
 	t.Helper()
 

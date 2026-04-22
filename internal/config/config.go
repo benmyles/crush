@@ -31,22 +31,31 @@ const (
 )
 
 var defaultContextPaths = []string{
-	".github/copilot-instructions.md",
-	".cursorrules",
-	".cursor/rules/",
+	"AGENTS.md",
+	"AGENT.md",
 	"CLAUDE.md",
-	"CLAUDE.local.md",
 	"GEMINI.md",
+	"CRUSH.md",
+	"AGENTS.local.md",
+	"AGENT.local.md",
+	"CLAUDE.local.md",
+	"GEMINI.local.md",
+	"CRUSH.local.md",
+	"agents.md",
+	"Agents.md",
+	"agent.md",
+	"Agent.md",
+	"claude.md",
+	"Claude.md",
 	"gemini.md",
+	"Gemini.md",
 	"crush.md",
 	"crush.local.md",
 	"Crush.md",
 	"Crush.local.md",
-	"CRUSH.md",
-	"CRUSH.local.md",
-	"AGENTS.md",
-	"agents.md",
-	"Agents.md",
+	".cursorrules",
+	".github/copilot-instructions.md",
+	".cursor/rules/",
 }
 
 var newGoogleADCHTTPClient = googleadc.NewHTTPClient
@@ -308,7 +317,7 @@ type MorphCompactOptions struct {
 
 // AutoCompactOptions controls automatic conversation compaction.
 type AutoCompactOptions struct {
-	Strategy       *string `json:"strategy,omitempty" jsonschema:"description=Strategy for automatic conversation compaction,enum=morph,enum=summarize,enum=disabled,default=summarize,example=morph,example=summarize,example=disabled"`
+	Strategy       *string `json:"strategy,omitempty" jsonschema:"description=Strategy for automatic conversation compaction,enum=morph,enum=summarize,enum=summarize_then_morph,enum=disabled,default=summarize,example=morph,example=summarize,example=summarize_then_morph,example=disabled"`
 	TokenThreshold *int64  `json:"token_threshold,omitempty" jsonschema:"description=Used-token count at which Crush should automatically compact the conversation,minimum=1,example=160000"`
 }
 
@@ -337,20 +346,18 @@ func (o MorphCompactOptions) EffectivePreserveRecent() int {
 }
 
 const (
-	PlanCompactStrategyMorph     = "morph"
-	PlanCompactStrategySummarize = "summarize"
-	PlanCompactStrategyDisabled  = "disabled"
+	PlanCompactStrategyMorph              = "morph"
+	PlanCompactStrategySummarize          = "summarize"
+	PlanCompactStrategySummarizeThenMorph = "summarize_then_morph"
+	PlanCompactStrategyDisabled           = "disabled"
 )
 
 // EffectivePlanCompactStrategy returns the effective compact strategy for plan
 // approval. If explicitly set, the user's choice is used. Otherwise, it
-// defaults to morph if Morph Compact is enabled, or summarize otherwise.
+// defaults to summarization.
 func (o *Options) EffectivePlanCompactStrategy() string {
 	if o != nil && o.PlanCompactStrategy != nil {
 		return *o.PlanCompactStrategy
-	}
-	if o != nil && o.MorphCompact != nil && o.MorphCompact.Enabled {
-		return PlanCompactStrategyMorph
 	}
 	return PlanCompactStrategySummarize
 }
@@ -406,7 +413,7 @@ type Options struct {
 	ContextPaths              []string             `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
 	SkillsPaths               []string             `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/crush/skills,example=./skills"`
 	TUI                       *TUIOptions          `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
-	PlanCompactStrategy       *string              `json:"plan_compact_strategy,omitempty" jsonschema:"description=Strategy for compacting history before plan implementation,enum=morph,enum=summarize,enum=disabled,example=morph,example=summarize,example=disabled"`
+	PlanCompactStrategy       *string              `json:"plan_compact_strategy,omitempty" jsonschema:"description=Strategy for compacting history before plan implementation,enum=morph,enum=summarize,enum=summarize_then_morph,enum=disabled,example=morph,example=summarize,example=summarize_then_morph,example=disabled"`
 	MorphCompact              *MorphCompactOptions `json:"morph_compact,omitempty" jsonschema:"description=Morph Compact options for manual session compaction"`
 	AutoCompact               *AutoCompactOptions  `json:"auto_compact,omitempty" jsonschema:"description=Automatic conversation compaction options"`
 	Debug                     bool                 `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
@@ -414,6 +421,7 @@ type Options struct {
 	DisableAutoSummarize      bool                 `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
 	DataDirectory             string               `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
 	DisabledTools             []string             `json:"disabled_tools,omitempty" jsonschema:"description=List of built-in tools to disable and hide from the agent,example=bash,example=sourcegraph"`
+	DisableSubAgents          bool                 `json:"disable_subagents,omitempty" jsonschema:"description=Disable tools that spawn sub-agents, including agent and agentic_fetch,default=false"`
 	DisableProviderAutoUpdate bool                 `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
 	DisableDefaultProviders   bool                 `json:"disable_default_providers,omitempty" jsonschema:"description=Ignore all default/embedded providers. When enabled, providers must be fully specified in the config file with base_url, models, and api_key - no merging with defaults occurs,default=false"`
 	Attribution               *Attribution         `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
@@ -624,6 +632,8 @@ func (c *Config) SmallModel() *catwalk.Model {
 
 const maxRecentModelsPerType = 5
 
+var subAgentToolNames = []string{"agent", "agentic_fetch"}
+
 func allToolNames() []string {
 	return []string{
 		"agent",
@@ -656,12 +666,18 @@ func allToolNames() []string {
 	}
 }
 
-func resolveAllowedTools(allTools []string, disabledTools []string) []string {
+func resolveAllowedTools(allTools []string, disabledTools []string, disableSubAgents bool) []string {
+	result := allTools
 	if disabledTools == nil {
-		return allTools
+		result = slices.Clone(allTools)
+	} else {
+		// Filter out disabled tools (exclude mode).
+		result = filterSlice(allTools, disabledTools, false)
 	}
-	// filter out disabled tools (exclude mode)
-	return filterSlice(allTools, disabledTools, false)
+	if disableSubAgents {
+		result = filterSlice(result, subAgentToolNames, false)
+	}
+	return result
 }
 
 func resolveReadOnlyTools(tools []string) []string {
@@ -683,7 +699,7 @@ func filterSlice(data []string, mask []string, include bool) []string {
 }
 
 func (c *Config) SetupAgents() {
-	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
+	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools, c.Options.DisableSubAgents)
 
 	agents := map[string]Agent{
 		AgentCoder: {
