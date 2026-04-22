@@ -118,6 +118,17 @@ func (w *ClientWorkspace) SaveSession(ctx context.Context, sess session.Session)
 	return protoToSession(*saved), nil
 }
 
+func (w *ClientWorkspace) ForkSession(ctx context.Context, sessionID, messageID string) (session.ForkResult, error) {
+	result, err := w.client.ForkSession(ctx, w.workspaceID(), sessionID, messageID)
+	if err != nil {
+		return session.ForkResult{}, err
+	}
+	return session.ForkResult{
+		Session: protoToSession(result.Session),
+		Prefill: result.Prefill,
+	}, nil
+}
+
 func (w *ClientWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
 	return w.client.DeleteSession(ctx, w.workspaceID(), sessionID)
 }
@@ -327,6 +338,15 @@ func (w *ClientWorkspace) PermissionSetSkipRequests(skip bool) {
 	_ = w.client.SetPermissionsSkipRequests(context.Background(), w.workspaceID(), skip)
 }
 
+func (w *ClientWorkspace) PlanRespond(resp planning.Response) {
+	_ = w.client.RespondPlan(context.Background(), w.workspaceID(), proto.PlanResponse{
+		SubmissionID:   resp.SubmissionID,
+		Approved:       resp.Approved,
+		Comment:        resp.Comment,
+		CompactHistory: resp.CompactHistory,
+	})
+}
+
 func (w *ClientWorkspace) UserQuestionRespond(resp userquestion.Response) {
 	_ = w.client.RespondUserQuestion(context.Background(), w.workspaceID(), proto.UserQuestionResponse{
 		RequestID:   resp.RequestID,
@@ -431,6 +451,14 @@ func (w *ClientWorkspace) Resolver() config.VariableResolver {
 }
 
 // -- Config mutations --
+
+func (w *ClientWorkspace) CriticalInstructions(scope config.Scope) (string, error) {
+	return w.client.GetCriticalInstructions(context.Background(), w.workspaceID(), scope)
+}
+
+func (w *ClientWorkspace) Snippets(scope config.Scope) ([]config.Snippet, error) {
+	return w.client.GetSnippets(context.Background(), w.workspaceID(), scope)
+}
 
 func (w *ClientWorkspace) UpdatePreferredModel(scope config.Scope, modelType config.SelectedModelType, model config.SelectedModel) error {
 	err := w.client.UpdatePreferredModel(context.Background(), w.workspaceID(), scope, modelType, model)
@@ -683,6 +711,11 @@ func translateEvent(ev any) tea.Msg {
 			Type:    e.Type,
 			Payload: protoToPlanSubmission(e.Payload),
 		}
+	case pubsub.Event[proto.PlanModeChangeRequest]:
+		return pubsub.Event[planning.ModeChangeRequest]{
+			Type:    e.Type,
+			Payload: protoToPlanModeChangeRequest(e.Payload),
+		}
 	case pubsub.Event[proto.UserQuestionRequest]:
 		return pubsub.Event[userquestion.Request]{
 			Type:    e.Type,
@@ -701,6 +734,17 @@ func protoToPlanSubmission(p proto.PlanSubmission) planning.Submission {
 		ToolCallID: p.ToolCallID,
 		Markdown:   p.Markdown,
 		Todos:      protoToTodos(p.Todos),
+	}
+}
+
+func protoToPlanModeChangeRequest(p proto.PlanModeChangeRequest) planning.ModeChangeRequest {
+	return planning.ModeChangeRequest{
+		ID:         p.ID,
+		SessionID:  p.SessionID,
+		ToolCallID: p.ToolCallID,
+		Mode:       planning.Mode(p.Mode),
+		Prompt:     p.Prompt,
+		Reason:     p.Reason,
 	}
 }
 

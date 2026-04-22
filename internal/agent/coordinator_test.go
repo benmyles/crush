@@ -28,10 +28,11 @@ func (m *mockSessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fan
 	return m.runFunc(ctx, call)
 }
 
-func (m *mockSessionAgent) Model() Model                        { return m.model }
-func (m *mockSessionAgent) SetModels(large, small Model)        {}
-func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)  {}
-func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string) {}
+func (m *mockSessionAgent) Model() Model                                { return m.model }
+func (m *mockSessionAgent) SetModels(large, small Model)                {}
+func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)          {}
+func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string)         {}
+func (m *mockSessionAgent) SetCriticalInstructions(instructions string) {}
 func (m *mockSessionAgent) Cancel(sessionID string) {
 	m.cancelled = append(m.cancelled, sessionID)
 }
@@ -44,9 +45,11 @@ func (m *mockSessionAgent) ClearQueue(sessionID string)                 {}
 func (m *mockSessionAgent) Summarize(context.Context, string, fantasy.ProviderOptions) error {
 	return nil
 }
+
 func (m *mockSessionAgent) Compact(context.Context, string, config.MorphCompactOptions, fantasy.ProviderOptions) error {
 	return nil
 }
+
 func (m *mockSessionAgent) SummarizeThenCompact(context.Context, string, config.MorphCompactOptions, fantasy.ProviderOptions) error {
 	return nil
 }
@@ -85,6 +88,98 @@ func agentResultWithText(text string) *fantasy.AgentResult {
 				fantasy.TextContent{Text: text},
 			},
 		},
+	}
+}
+
+func TestMCPToolAllowed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		agent    config.Agent
+		mcpName  string
+		toolName string
+		want     bool
+	}{
+		{
+			name:     "nil allowed mcp allows all",
+			agent:    config.Agent{},
+			mcpName:  "github",
+			toolName: "search",
+			want:     true,
+		},
+		{
+			name: "empty allowed mcp blocks all",
+			agent: config.Agent{
+				AllowedMCP: map[string][]string{},
+			},
+			mcpName:  "github",
+			toolName: "search",
+			want:     false,
+		},
+		{
+			name: "nil tool list allows all tools for mcp",
+			agent: config.Agent{
+				AllowedMCP: map[string][]string{
+					"github": nil,
+				},
+			},
+			mcpName:  "github",
+			toolName: "search",
+			want:     true,
+		},
+		{
+			name: "empty tool list allows all tools for mcp",
+			agent: config.Agent{
+				AllowedMCP: map[string][]string{
+					"github": {},
+				},
+			},
+			mcpName:  "github",
+			toolName: "search",
+			want:     true,
+		},
+		{
+			name: "listed tool is allowed",
+			agent: config.Agent{
+				AllowedMCP: map[string][]string{
+					"github": {"search"},
+				},
+			},
+			mcpName:  "github",
+			toolName: "search",
+			want:     true,
+		},
+		{
+			name: "unlisted tool is blocked",
+			agent: config.Agent{
+				AllowedMCP: map[string][]string{
+					"github": {"search"},
+				},
+			},
+			mcpName:  "github",
+			toolName: "fetch",
+			want:     false,
+		},
+		{
+			name: "unlisted mcp is blocked",
+			agent: config.Agent{
+				AllowedMCP: map[string][]string{
+					"github": {"search"},
+				},
+			},
+			mcpName:  "linear",
+			toolName: "search",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, mcpToolAllowed(tt.agent, tt.mcpName, tt.toolName))
+		})
 	}
 }
 

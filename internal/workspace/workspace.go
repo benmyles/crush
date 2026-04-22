@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/userquestion"
 )
@@ -70,6 +71,7 @@ type Workspace interface {
 	GetSession(ctx context.Context, sessionID string) (session.Session, error)
 	ListSessions(ctx context.Context) ([]session.Session, error)
 	SaveSession(ctx context.Context, sess session.Session) (session.Session, error)
+	ForkSession(ctx context.Context, sessionID, messageID string) (session.ForkResult, error)
 	DeleteSession(ctx context.Context, sessionID string) error
 	CreateAgentToolSessionID(messageID, toolCallID string) string
 	ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool)
@@ -105,6 +107,7 @@ type Workspace interface {
 	PermissionDeny(perm permission.PermissionRequest)
 	PermissionSkipRequests() bool
 	PermissionSetSkipRequests(skip bool)
+	PlanRespond(resp planning.Response)
 	UserQuestionRespond(resp userquestion.Response)
 
 	// FileTracker
@@ -127,6 +130,8 @@ type Workspace interface {
 	Resolver() config.VariableResolver
 
 	// Config mutations (proxied to server in client mode)
+	CriticalInstructions(scope config.Scope) (string, error)
+	Snippets(scope config.Scope) ([]config.Snippet, error)
 	UpdatePreferredModel(scope config.Scope, modelType config.SelectedModelType, model config.SelectedModel) error
 	SetCompactMode(scope config.Scope, enabled bool) error
 	SetProviderAPIKey(scope config.Scope, providerID string, apiKey any) error

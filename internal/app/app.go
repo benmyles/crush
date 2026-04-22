@@ -493,6 +493,7 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "plans", app.Planning.Subscribe, app.events)
+	setupSubscriber(ctx, app.serviceEventsWG, "plan-mode-changes", app.Planning.SubscribeModeChanges, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "user-questions", app.UserQuestion.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "agent-notifications", app.agentNotifications.Subscribe, app.events)

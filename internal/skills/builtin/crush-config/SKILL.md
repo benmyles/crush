@@ -135,6 +135,13 @@ The `$schema` property enables IDE autocomplete but is optional.
 {
   "options": {
     "skills_paths": ["./skills"],
+    "critical_instructions": "Never truncate output unless the user explicitly asks.",
+    "snippets": [
+      {
+        "title": "Review checklist",
+        "body": "Please review this for correctness, edge cases, and missing tests."
+      }
+    ],
     "disabled_tools": ["bash", "sourcegraph"],
     "disable_subagents": false,
     "disabled_skills": ["crush-config"],
@@ -183,6 +190,21 @@ are still loaded as extra context.
 `/compact` prompt input. It is disabled unless `enabled` is true and requires a
 Morph API key in `api_key`. `base_url`, `compression_ratio`, and
 `preserve_recent` are optional.
+
+`critical_instructions` is a high-priority instruction string. It is injected into
+every agent system prompt and repeated as a reminder at the end of each user
+message. The workspace value overrides the global value. The command palette can
+edit either global critical instructions or project critical instructions;
+project-level edits are written to the project config file.
+
+Legacy configs that use an array of strings are auto-migrated: entries are joined
+with a blank line separator.
+
+`snippets` is an array of reusable prompt snippets available from the TUI
+snippet library. Each snippet has an optional `id`, a `title`, and a `body`;
+global and project entries are additive, and project-level edits are written
+to the project config file. If `id` is omitted, it is auto-generated on first
+save.
 
 `auto_compact` controls automatic conversation compaction. `strategy` can be
 `summarize`, `morph`, `summarize_then_morph`, or `disabled`, and defaults to

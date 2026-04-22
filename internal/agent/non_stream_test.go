@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -121,6 +122,72 @@ func hasPromptRole(prompt fantasy.Prompt, role fantasy.MessageRole) bool {
 		}
 	}
 	return false
+}
+
+func promptText(prompt fantasy.Prompt, role fantasy.MessageRole) string {
+	var parts []string
+	for _, msg := range prompt {
+		if msg.Role != role {
+			continue
+		}
+		for _, part := range msg.Content {
+			if text, ok := fantasy.AsMessagePart[fantasy.TextPart](part); ok {
+				parts = append(parts, text.Text)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func TestSessionAgentRunInjectsCriticalInstructions(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	large := newFakeLanguageModel(
+		"test-provider",
+		"large-model",
+		func(_ context.Context, call fantasy.Call) (*fantasy.Response, error) {
+			systemText := promptText(call.Prompt, fantasy.MessageRoleSystem)
+			require.Contains(t, systemText, "<critical_instructions>")
+			require.Contains(t, systemText, "Do not truncate output.")
+
+			userText := promptText(call.Prompt, fantasy.MessageRoleUser)
+			require.Contains(t, userText, "<critical_instruction_reminder>")
+			require.Contains(t, userText, "Do not truncate output.")
+
+			return &fantasy.Response{
+				Content:      fantasy.ResponseContent{fantasy.TextContent{Text: "Final answer"}},
+				FinishReason: fantasy.FinishReasonStop,
+			}, nil
+		},
+	)
+
+	agent := NewSessionAgent(SessionAgentOptions{
+		LargeModel:           newNonStreamingModel("test-provider", "large-model", large),
+		SmallModel:           newNonStreamingModel("test-provider", "small-model", large),
+		SystemPrompt:         "Test system prompt",
+		CriticalInstructions: "Do not truncate output.",
+		Sessions:             env.sessions,
+		Messages:             env.messages,
+		IsYolo:               true,
+	})
+	currentSession, err := env.sessions.Create(t.Context(), DefaultSessionName)
+	require.NoError(t, err)
+	_, err = env.messages.Create(t.Context(), currentSession.ID, message.CreateMessageParams{
+		Role: message.User,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "Previous message."},
+		},
+	})
+	require.NoError(t, err)
+
+	result, err := agent.Run(t.Context(), SessionAgentCall{
+		SessionID:       currentSession.ID,
+		Prompt:          "Current message.",
+		MaxOutputTokens: 128,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Final answer", result.Response.Content.Text())
 }
 
 func TestSessionAgentRunNonStreamingPersistsToolCalls(t *testing.T) {

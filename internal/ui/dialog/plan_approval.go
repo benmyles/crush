@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/planning"
+	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/chat"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/styles"
@@ -54,6 +55,7 @@ type planApprovalKeyMap struct {
 	Select          key.Binding
 	Approve         key.Binding
 	Revise          key.Binding
+	CopyPlan        key.Binding
 	Close           key.Binding
 	ScrollUp        key.Binding
 	ScrollDown      key.Binding
@@ -109,6 +111,10 @@ func defaultPlanApprovalKeyMap() planApprovalKeyMap {
 		Revise: key.NewBinding(
 			key.WithKeys("n", "N"),
 			key.WithHelp("n", "revise"),
+		),
+		CopyPlan: key.NewBinding(
+			key.WithKeys("c", "C"),
+			key.WithHelp("c", "copy"),
 		),
 		Close: CloseKey,
 		ScrollUp: key.NewBinding(
@@ -201,6 +207,10 @@ func (p *PlanApproval) HandleMsg(msg tea.Msg) Action {
 		}
 	case tea.MouseWheelMsg:
 		p.viewport, _ = p.viewport.Update(msg)
+	default:
+		if p.focus == planApprovalFocusComments {
+			return p.updateComments(msg)
+		}
 	}
 	return nil
 }
@@ -215,13 +225,26 @@ func (p *PlanApproval) handleCommentsKey(msg tea.KeyPressMsg) Action {
 		p.viewport, _ = p.viewport.Update(msg)
 	case key.Matches(msg, p.keyMap.InputScrollDown):
 		p.viewport, _ = p.viewport.Update(msg)
+	case key.Matches(msg, CopyKey):
+		return ActionCmd{Cmd: common.CopyToClipboard(p.comments.Value(), "Plan feedback copied to clipboard")}
 	default:
-		var cmd tea.Cmd
-		p.comments, cmd = p.comments.Update(msg)
-		if cmd != nil {
-			return ActionCmd{Cmd: cmd}
-		}
+		return p.updateComments(msg)
 	}
+	return nil
+}
+
+func (p *PlanApproval) updateComments(msg tea.Msg) Action {
+	var cmd tea.Cmd
+	p.comments, cmd = p.comments.Update(msg)
+	if cmd != nil {
+		return ActionCmd{Cmd: cmd}
+	}
+	return nil
+}
+
+func (p *PlanApproval) InsertText(text string) tea.Cmd {
+	p.focusComments()
+	p.comments.InsertString(text)
 	return nil
 }
 
@@ -250,15 +273,24 @@ func (p *PlanApproval) handleActionsKey(msg tea.KeyPressMsg) Action {
 	case key.Matches(msg, p.keyMap.Comments):
 		p.focusComments()
 	case key.Matches(msg, p.keyMap.Left):
-		p.selected = (p.selected + 1) % 2
+		p.selected = (p.selected + 2) % 3
 	case key.Matches(msg, p.keyMap.Right):
-		p.selected = (p.selected + 1) % 2
+		p.selected = (p.selected + 1) % 3
 	case key.Matches(msg, p.keyMap.Approve):
 		return p.respond(true)
 	case key.Matches(msg, p.keyMap.Revise):
 		return p.respond(false)
+	case key.Matches(msg, p.keyMap.CopyPlan):
+		return p.copyPlan()
 	case key.Matches(msg, p.keyMap.Select):
-		return p.respond(p.selected == 0)
+		switch p.selected {
+		case 0:
+			return p.respond(true)
+		case 1:
+			return p.respond(false)
+		case 2:
+			return p.copyPlan()
+		}
 	case key.Matches(msg, p.keyMap.ScrollUp), key.Matches(msg, p.keyMap.ScrollDown):
 		p.viewport, _ = p.viewport.Update(msg)
 	}
@@ -287,6 +319,42 @@ func (p *PlanApproval) respond(approved bool) Action {
 		Comment:        strings.TrimSpace(p.comments.Value()),
 		CompactHistory: p.compactHistory && approved,
 	}
+}
+
+func (p *PlanApproval) copyPlan() Action {
+	return ActionCmd{Cmd: common.CopyToClipboard(p.planClipboardText(), "Plan copied to clipboard")}
+}
+
+func (p *PlanApproval) planClipboardText() string {
+	var parts []string
+	if markdown := strings.TrimSpace(p.submission.Markdown); markdown != "" {
+		parts = append(parts, markdown)
+	}
+	if len(p.submission.Todos) > 0 {
+		var b strings.Builder
+		b.WriteString("## Tasks\n\n")
+		for _, todo := range p.submission.Todos {
+			b.WriteString("- [")
+			switch todo.Status {
+			case session.TodoStatusCompleted:
+				b.WriteString("x")
+			case session.TodoStatusInProgress:
+				b.WriteString("~")
+			default:
+				b.WriteString(" ")
+			}
+			b.WriteString("] ")
+			b.WriteString(todo.Content)
+			if todo.ActiveForm != "" && todo.ActiveForm != todo.Content {
+				b.WriteString(" (")
+				b.WriteString(todo.ActiveForm)
+				b.WriteString(")")
+			}
+			b.WriteByte('\n')
+		}
+		parts = append(parts, strings.TrimSpace(b.String()))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (p *PlanApproval) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
@@ -389,6 +457,7 @@ func (p *PlanApproval) renderButtons() string {
 	return common.ButtonGroup(t, []common.ButtonOpts{
 		{Text: "Approve", UnderlineIndex: 0, Selected: p.focus == planApprovalFocusActions && p.selected == 0},
 		{Text: "Revise", UnderlineIndex: 0, Selected: p.focus == planApprovalFocusActions && p.selected == 1},
+		{Text: "Copy Plan", UnderlineIndex: 0, Selected: p.focus == planApprovalFocusActions && p.selected == 2},
 	}, "  ")
 }
 
@@ -415,6 +484,7 @@ func (p *PlanApproval) ShortHelp() []key.Binding {
 			p.keyMap.Select,
 			p.keyMap.Approve,
 			p.keyMap.Revise,
+			p.keyMap.CopyPlan,
 			p.keyMap.Compact,
 			p.keyMap.Close,
 		}

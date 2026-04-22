@@ -61,6 +61,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/editor"
 	xstrings "github.com/charmbracelet/x/exp/strings"
+	"github.com/google/uuid"
 )
 
 // MouseScrollThreshold defines how many lines to scroll the chat when a mouse
@@ -117,6 +118,24 @@ const (
 
 type openEditorMsg struct {
 	Text string
+}
+
+type criticalInstructionsLoadedMsg struct {
+	Scope config.Scope
+	Text  string
+}
+
+type snippetsLoadedMsg struct {
+	Snippets []dialog.ScopedSnippet
+}
+
+type snippetsSavedMsg struct {
+	Snippets []dialog.ScopedSnippet
+	Message  string
+}
+
+type sessionForkedMsg struct {
+	Result session.ForkResult
 }
 
 type attachedJobState struct {
@@ -625,6 +644,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setPlanModeActive(false)
 			m.openPlanApprovalDialog(msg.Payload)
 		}
+	case pubsub.Event[planning.ModeChangeRequest]:
+		if msg.Payload.SessionID == "" || (m.session != nil && msg.Payload.SessionID == m.session.ID) {
+			if cmd := m.handlePlanModeChangeRequest(msg.Payload); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	case pubsub.Event[userquestion.Request]:
 		if msg.Payload.SessionID == "" || (m.session != nil && msg.Payload.SessionID == m.session.ID) {
 			m.openUserQuestionDialog(msg.Payload)
@@ -899,6 +924,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetValue(msg.Text)
 		m.textarea.MoveToEnd()
 		cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
+	case criticalInstructionsLoadedMsg:
+		m.openCriticalInstructionsDialog(msg.Scope, msg.Text)
+	case snippetsLoadedMsg:
+		m.openSnippetsDialog(msg.Snippets)
+	case snippetsSavedMsg:
+		m.dialog.CloseDialog(dialog.SnippetEditorID)
+		m.openSnippetsDialog(msg.Snippets)
+		cmds = append(cmds, util.ReportInfo(msg.Message))
+	case sessionForkedMsg:
+		cmds = append(cmds, m.handleSessionForked(msg.Result))
 	case util.InfoMsg:
 		if msg.Type == util.InfoTypeError {
 			slog.Error("Error reported", "error", msg.Msg)
@@ -1471,6 +1506,22 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if cmd := m.openDialog(msg.DialogID); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.ActionOpenSnippets:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		cmds = append(cmds, m.loadSnippets())
+	case dialog.ActionSnippetSelected:
+		m.dialog.CloseDialog(dialog.SnippetsID)
+		if cmd := m.insertSnippetText(msg.Snippet.Body); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case dialog.ActionNewSnippet:
+		m.openSnippetEditor(msg.Scope, -1, config.Snippet{})
+	case dialog.ActionEditSnippet:
+		m.openSnippetEditor(msg.Scope, msg.Index, msg.Snippet)
+	case dialog.ActionSnippetSaved:
+		cmds = append(cmds, m.saveSnippet(msg.OriginalScope, msg.OriginalIndex, msg.Scope, msg.Snippet))
+	case dialog.ActionSnippetDeleted:
+		cmds = append(cmds, m.deleteSnippet(msg.Scope, msg.Index))
 
 	// Command dialog messages.
 	case dialog.ActionToggleYoloMode:
@@ -1529,6 +1580,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionForkSession:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before forking session..."))
+			break
+		}
+		cmds = append(cmds, m.forkSelectedSession())
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionSummarize:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before summarizing session..."))
@@ -1559,6 +1617,16 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		cmds = append(cmds, m.openEditor(m.textarea.Value()))
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionEditCriticalInstructions:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
+			break
+		}
+		cmds = append(cmds, m.loadCriticalInstructions(msg.Scope))
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionCriticalInstructionsResponse:
+		m.dialog.CloseDialog(dialog.CriticalInstructionsID)
+		cmds = append(cmds, m.saveCriticalInstructions(msg.Scope, msg.Text))
 	case dialog.ActionToggleCompactMode:
 		cmds = append(cmds, m.toggleCompactMode())
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -1928,8 +1996,16 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 
+	if key.Matches(msg, m.keyMap.Snippets) &&
+		(m.dialog == nil ||
+			(!m.dialog.ContainsDialog(dialog.SnippetsID) &&
+				!m.dialog.ContainsDialog(dialog.SnippetEditorID))) {
+		cmds = append(cmds, m.loadSnippets())
+		return tea.Batch(cmds...)
+	}
+
 	// Route all messages to dialog if one is open.
-	if m.dialog.HasDialogs() {
+	if m.dialog != nil && m.dialog.HasDialogs() {
 		return m.handleDialogMsg(msg)
 	}
 
@@ -2077,6 +2153,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					break
 				}
 				cmds = append(cmds, m.openEditor(m.textarea.Value()))
+			case key.Matches(msg, m.keyMap.Editor.ClearPrompt):
+				if cmd := m.clearPrompt(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			case key.Matches(msg, m.keyMap.Editor.Newline):
 				prevHeight := m.textarea.Height()
 				m.textarea.InsertRune('\n')
@@ -2379,7 +2459,7 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	// This needs to come last to overlay on top of everything. We always pass
 	// the full screen bounds because the dialogs will position themselves
 	// accordingly.
-	if m.dialog.HasDialogs() {
+	if m.dialog != nil && m.dialog.HasDialogs() {
 		return m.dialog.Draw(scr, scr.Bounds())
 	}
 
@@ -2475,12 +2555,14 @@ func (m *UI) ShortHelp() []key.Binding {
 			tab,
 			commands,
 			k.Models,
+			k.Snippets,
 		)
 
 		switch m.focus {
 		case uiFocusEditor:
 			binds = append(binds,
 				k.Editor.Newline,
+				k.Editor.ClearPrompt,
 			)
 		case uiFocusMain:
 			binds = append(binds,
@@ -2502,7 +2584,9 @@ func (m *UI) ShortHelp() []key.Binding {
 		binds = append(binds,
 			commands,
 			k.Models,
+			k.Snippets,
 			k.Editor.Newline,
+			k.Editor.ClearPrompt,
 		)
 	}
 
@@ -2561,6 +2645,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 			commands,
 			k.Models,
 			k.Sessions,
+			k.Snippets,
 		)
 		if hasSession {
 			mainBinds = append(mainBinds, k.Chat.NewSession)
@@ -2574,6 +2659,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 				k.Editor.Newline,
 				k.Editor.MentionFile,
 				k.Editor.OpenEditor,
+				k.Editor.ClearPrompt,
 			}
 			if m.currentModelSupportsImages() {
 				editorBinds = append(editorBinds, k.Editor.AddImage, k.Editor.PasteImage)
@@ -2620,12 +2706,14 @@ func (m *UI) FullHelp() [][]key.Binding {
 					commands,
 					k.Models,
 					k.Sessions,
+					k.Snippets,
 				},
 			)
 			editorBinds := []key.Binding{
 				k.Editor.Newline,
 				k.Editor.MentionFile,
 				k.Editor.OpenEditor,
+				k.Editor.ClearPrompt,
 			}
 			if m.currentModelSupportsImages() {
 				editorBinds = append(editorBinds, k.Editor.AddImage, k.Editor.PasteImage)
@@ -2719,6 +2807,14 @@ func (m *UI) handleTextareaHeightChange(prevHeight int) tea.Cmd {
 		return m.chat.ScrollToBottomAndAnimate()
 	}
 	return nil
+}
+
+func (m *UI) clearPrompt() tea.Cmd {
+	prevHeight := m.textarea.Height()
+	m.textarea.Reset()
+	m.historyReset()
+	m.closeCompletions()
+	return m.handleTextareaHeightChange(prevHeight)
 }
 
 // updateTextarea updates the textarea for msg and then reconciles layout if
@@ -3019,6 +3115,206 @@ func (m *UI) openEditor(value string) tea.Cmd {
 	})
 }
 
+func (m *UI) loadCriticalInstructions(scope config.Scope) tea.Cmd {
+	return func() tea.Msg {
+		text, err := m.com.Workspace.CriticalInstructions(scope)
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		return criticalInstructionsLoadedMsg{
+			Scope: scope,
+			Text:  text,
+		}
+	}
+}
+
+func (m *UI) openCriticalInstructionsDialog(scope config.Scope, text string) {
+	if m.dialog == nil {
+		m.dialog = dialog.NewOverlay()
+	}
+	m.dialog.CloseDialog(dialog.CriticalInstructionsID)
+	m.dialog.OpenDialog(dialog.NewCriticalInstructions(m.com, scope, text))
+}
+
+func (m *UI) saveCriticalInstructions(scope config.Scope, text string) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		if text == "" {
+			err = m.com.Workspace.RemoveConfigField(scope, "options.critical_instructions")
+		} else {
+			err = m.com.Workspace.SetConfigField(scope, "options.critical_instructions", text)
+		}
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		if err := m.com.Workspace.UpdateAgentModel(context.Background()); err != nil {
+			return util.ReportError(err)()
+		}
+		return util.NewInfoMsg("Critical instructions updated (" + configScopeLabel(scope) + ")")
+	}
+}
+
+func configScopeLabel(scope config.Scope) string {
+	if scope == config.ScopeWorkspace {
+		return "project"
+	}
+	return scope.String()
+}
+
+func (m *UI) loadSnippets() tea.Cmd {
+	return func() tea.Msg {
+		snippets, err := m.loadScopedSnippets()
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		return snippetsLoadedMsg{Snippets: snippets}
+	}
+}
+
+func (m *UI) loadScopedSnippets() ([]dialog.ScopedSnippet, error) {
+	var result []dialog.ScopedSnippet
+	for _, scope := range []config.Scope{config.ScopeGlobal, config.ScopeWorkspace} {
+		snippets, err := m.com.Workspace.Snippets(scope)
+		if err != nil {
+			if scope == config.ScopeWorkspace && errors.Is(err, config.ErrNoWorkspaceConfig) {
+				continue
+			}
+			return nil, err
+		}
+		for i, snippet := range snippets {
+			result = append(result, dialog.ScopedSnippet{
+				Scope:   scope,
+				Index:   i,
+				Snippet: snippet,
+			})
+		}
+	}
+	return result, nil
+}
+
+func (m *UI) openSnippetsDialog(snippets []dialog.ScopedSnippet) {
+	if m.dialog == nil {
+		m.dialog = dialog.NewOverlay()
+	}
+	m.dialog.CloseDialog(dialog.SnippetsID)
+	m.dialog.OpenDialog(dialog.NewSnippets(m.com, snippets))
+}
+
+func (m *UI) openSnippetEditor(scope config.Scope, index int, snippet config.Snippet) {
+	if m.dialog == nil {
+		m.dialog = dialog.NewOverlay()
+	}
+	m.dialog.CloseDialog(dialog.SnippetEditorID)
+	m.dialog.OpenDialog(dialog.NewSnippetEditor(m.com, scope, index, snippet))
+}
+
+func (m *UI) saveSnippet(originalScope config.Scope, originalIndex int, scope config.Scope, snippet config.Snippet) tea.Cmd {
+	return func() tea.Msg {
+		snippet.Title = strings.TrimSpace(snippet.Title)
+		snippet.Body = strings.TrimSpace(snippet.Body)
+		if snippet.Body == "" {
+			return util.NewWarnMsg("Snippet body cannot be empty")
+		}
+		if snippet.ID == "" {
+			snippet.ID = newSnippetID()
+		}
+
+		if originalIndex >= 0 && originalScope != scope {
+			if err := m.removeSnippetAt(originalScope, originalIndex); err != nil {
+				return util.ReportError(err)()
+			}
+			originalIndex = -1
+		}
+
+		snippets, err := m.com.Workspace.Snippets(scope)
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		if originalIndex >= 0 && originalIndex < len(snippets) {
+			snippets[originalIndex] = snippet
+		} else {
+			snippets = append(snippets, snippet)
+		}
+		if err := m.writeScopedSnippets(scope, snippets); err != nil {
+			return util.ReportError(err)()
+		}
+
+		loaded, err := m.loadScopedSnippets()
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		return snippetsSavedMsg{
+			Snippets: loaded,
+			Message:  "Snippet saved (" + configScopeLabel(scope) + ")",
+		}
+	}
+}
+
+func (m *UI) deleteSnippet(scope config.Scope, index int) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.removeSnippetAt(scope, index); err != nil {
+			return util.ReportError(err)()
+		}
+		loaded, err := m.loadScopedSnippets()
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		return snippetsSavedMsg{
+			Snippets: loaded,
+			Message:  "Snippet deleted (" + configScopeLabel(scope) + ")",
+		}
+	}
+}
+
+func (m *UI) removeSnippetAt(scope config.Scope, index int) error {
+	snippets, err := m.com.Workspace.Snippets(scope)
+	if err != nil {
+		return err
+	}
+	if index < 0 || index >= len(snippets) {
+		return fmt.Errorf("snippet no longer exists")
+	}
+	snippets = slices.Delete(snippets, index, index+1)
+	return m.writeScopedSnippets(scope, snippets)
+}
+
+func (m *UI) writeScopedSnippets(scope config.Scope, snippets []config.Snippet) error {
+	if len(snippets) == 0 {
+		return m.com.Workspace.RemoveConfigField(scope, "options.snippets")
+	}
+	return m.com.Workspace.SetConfigField(scope, "options.snippets", snippets)
+}
+
+func (m *UI) insertSnippetText(text string) tea.Cmd {
+	if strings.TrimSpace(text) == "" {
+		return util.ReportWarn("Snippet body is empty")
+	}
+	if m.dialog != nil && m.dialog.HasDialogs() {
+		if inserter, ok := m.dialog.DialogLast().(dialog.TextInserter); ok {
+			return inserter.InsertText(text)
+		}
+		return util.ReportWarn("No active text input for snippet insertion")
+	}
+
+	oldValue := m.textarea.Value()
+	prevHeight := m.textarea.Height()
+	m.textarea.InsertString(text)
+	m.updateHistoryDraft(oldValue)
+	m.focus = uiFocusEditor
+	cmds := []tea.Cmd{m.textarea.Focus()}
+	if m.chat != nil {
+		m.chat.Blur()
+	}
+	if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
+}
+
+func newSnippetID() string {
+	return uuid.NewString()
+}
+
 // setEditorPrompt configures the textarea prompt function based on whether
 // yolo or plan mode is enabled. Plan mode takes priority over yolo mode.
 func (m *UI) setEditorPrompt(plan, yolo bool) {
@@ -3064,6 +3360,32 @@ func (m *UI) togglePlanMode() tea.Cmd {
 		status = "enabled"
 	}
 	return util.CmdHandler(util.NewInfoMsg("Plan mode " + status))
+}
+
+func (m *UI) handlePlanModeChangeRequest(request planning.ModeChangeRequest) tea.Cmd {
+	prompt := strings.TrimSpace(request.Prompt)
+	switch request.Mode {
+	case planning.ModeEnter:
+		m.setPlanModeActive(true)
+		if prompt != "" {
+			return tea.Batch(
+				m.sendMessageWithOptions(prompt, workspace.AgentRunOptions{PlanMode: true}),
+				util.ReportInfo("Plan mode requested"),
+			)
+		}
+		return util.ReportInfo("Plan mode enabled")
+	case planning.ModeExit:
+		m.setPlanModeActive(false)
+		if prompt != "" {
+			return tea.Batch(
+				m.sendMessageWithOptions(prompt, workspace.AgentRunOptions{}),
+				util.ReportInfo("Plan mode exit requested"),
+			)
+		}
+		return util.ReportInfo("Plan mode disabled")
+	default:
+		return util.ReportWarn("Unknown plan mode request")
+	}
 }
 
 // normalPromptFunc returns the normal editor prompt style ("  > " on first
@@ -3122,7 +3444,9 @@ func (m *UI) closeCompletions() {
 	m.completionsQuery = ""
 	m.completionsTrigger = ""
 	m.completionsStartIndex = 0
-	m.completions.Close()
+	if m.completions != nil {
+		m.completions.Close()
+	}
 }
 
 // insertCompletionText replaces the @query in the textarea with the given text.
@@ -3391,6 +3715,67 @@ func (m *UI) sendMessageWithOptions(content string, options workspace.AgentRunOp
 		}
 		return nil
 	})
+	return tea.Batch(cmds...)
+}
+
+func (m *UI) selectedForkMessageID() (string, error) {
+	if m.chat == nil {
+		return "", errors.New("select a message to fork from")
+	}
+	item := m.chat.SelectedMessageItem()
+	if item == nil {
+		return "", errors.New("select a message to fork from")
+	}
+	if parent, ok := item.(interface{ MessageID() string }); ok {
+		if id := parent.MessageID(); id != "" {
+			return id, nil
+		}
+	}
+	if id := item.ID(); id != "" {
+		return id, nil
+	}
+	return "", errors.New("select a message to fork from")
+}
+
+func (m *UI) forkSelectedSession() tea.Cmd {
+	if !m.hasSession() {
+		return util.ReportWarn("No active session to fork")
+	}
+	messageID, err := m.selectedForkMessageID()
+	if err != nil {
+		return util.ReportWarn(err.Error())
+	}
+
+	sessionID := m.session.ID
+	return func() tea.Msg {
+		result, err := m.com.Workspace.ForkSession(context.Background(), sessionID, messageID)
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		return sessionForkedMsg{Result: result}
+	}
+}
+
+func (m *UI) handleSessionForked(result session.ForkResult) tea.Cmd {
+	if result.Session.ID == "" {
+		return util.ReportError(errors.New("forked session is missing an ID"))
+	}
+
+	m.session = &result.Session
+	cmds := []tea.Cmd{m.loadSession(result.Session.ID)}
+	if result.Prefill != "" {
+		prevHeight := m.textarea.Height()
+		m.textarea.SetValue(result.Prefill)
+		m.textarea.MoveToEnd()
+		m.setState(uiChat, uiFocusEditor)
+		m.textarea.Focus()
+		m.chat.Blur()
+		if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	} else {
+		cmds = append(cmds, util.ReportInfo("Forked session"))
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -3757,12 +4142,28 @@ func (m *UI) handlePlanApprovalResponse(response dialog.ActionPlanApprovalRespon
 		return m.approvePlan(response.Submission, response.Comment, response.CompactHistory)
 	}
 	m.setPlanModeActive(true)
-	return m.revisePlan(response.Submission, response.Comment)
+	m.com.Workspace.PlanRespond(planning.Response{
+		SubmissionID: response.Submission.ID,
+		Approved:     false,
+		Comment:      response.Comment,
+	})
+	return util.ReportInfo("Plan returned for revision")
 }
 
 func (m *UI) approvePlan(submission planning.Submission, comment string, compactHistory bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
+		if err := m.waitForSessionIdle(ctx, submission.SessionID); err != nil {
+			return util.ReportError(err)()
+		}
+
+		m.com.Workspace.PlanRespond(planning.Response{
+			SubmissionID:   submission.ID,
+			Approved:       true,
+			Comment:        comment,
+			CompactHistory: compactHistory,
+		})
+
 		current, err := m.com.Workspace.GetSession(ctx, submission.SessionID)
 		if err != nil {
 			return util.ReportError(err)()
@@ -3774,10 +4175,6 @@ func (m *UI) approvePlan(submission planning.Submission, comment string, compact
 		}
 		if m.session != nil && m.session.ID == saved.ID {
 			m.session = &saved
-		}
-
-		if err := m.waitForSessionIdle(ctx, submission.SessionID); err != nil {
-			return util.ReportError(err)()
 		}
 
 		if compactHistory {
@@ -3847,7 +4244,11 @@ func approvedPlanPrompt(submission planning.Submission, comment string) string {
 
 func revisePlanPrompt(submission planning.Submission, comment string) string {
 	var b strings.Builder
-	b.WriteString("The plan was not approved. Revise the plan and call submit_plan again.\n\n")
+	b.WriteString("The plan was not approved. You must revise it before doing any implementation.\n\n")
+	b.WriteString("Revision instructions:\n")
+	b.WriteString("- Rework the plan based on the user's feedback below.\n")
+	b.WriteString("- If the feedback is unclear or you need more information, ask the user follow-up questions using the relevant tool before resubmitting.\n")
+	b.WriteString("- After resolving any ambiguity, call submit_plan with a complete updated plan and structured todos so the user can re-review the revised plan.\n\n")
 	b.WriteString("Previous plan:\n")
 	b.WriteString(submission.Markdown)
 	b.WriteString("\n\nUser feedback:\n")

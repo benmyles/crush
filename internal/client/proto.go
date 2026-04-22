@@ -176,6 +176,10 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 				var e pubsub.Event[proto.PlanSubmission]
 				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
+			case pubsub.PayloadTypePlanModeChangeRequest:
+				var e pubsub.Event[proto.PlanModeChangeRequest]
+				_ = json.Unmarshal(p.Payload, &e)
+				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypeUserQuestion:
 				var e pubsub.Event[proto.UserQuestionRequest]
 				_ = json.Unmarshal(p.Payload, &e)
@@ -385,6 +389,18 @@ func (c *Client) RespondUserQuestion(ctx context.Context, id string, response pr
 	defer rsp.Body.Close()
 	if rsp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to respond to user question: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+func (c *Client) RespondPlan(ctx context.Context, id string, response proto.PlanResponse) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/plans/respond", id), nil, jsonBody(response), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to respond to plan: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to respond to plan: status code %d", rsp.StatusCode)
 	}
 	return nil
 }
@@ -659,6 +675,25 @@ func (c *Client) SaveSession(ctx context.Context, id string, sess proto.Session)
 		return nil, fmt.Errorf("failed to decode session: %w", err)
 	}
 	return &saved, nil
+}
+
+// ForkSession creates a new session forked at the selected message.
+func (c *Client) ForkSession(ctx context.Context, id string, sessionID string, messageID string) (*proto.ForkSessionResponse, error) {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s/fork", id, sessionID), nil, jsonBody(proto.ForkSessionRequest{
+		MessageID: messageID,
+	}), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fork session: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fork session: status code %d", rsp.StatusCode)
+	}
+	var result proto.ForkSessionResponse
+	if err := json.NewDecoder(rsp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode forked session: %w", err)
+	}
+	return &result, nil
 }
 
 // DeleteSession deletes a session from a workspace.

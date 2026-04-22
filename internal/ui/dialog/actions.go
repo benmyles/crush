@@ -56,8 +56,38 @@ type (
 	ActionToggleNotifications         struct{}
 	ActionToggleSubAgents             struct{}
 	ActionToggleTransparentBackground struct{}
-	ActionInitializeProject           struct{}
-	ActionSummarize                   struct {
+	ActionForkSession                 struct{}
+	ActionEditCriticalInstructions    struct {
+		Scope config.Scope
+	}
+	ActionCriticalInstructionsResponse struct {
+		Scope config.Scope
+		Text  string
+	}
+	ActionOpenSnippets    struct{}
+	ActionSnippetSelected struct {
+		Snippet config.Snippet
+	}
+	ActionNewSnippet struct {
+		Scope config.Scope
+	}
+	ActionEditSnippet struct {
+		Scope   config.Scope
+		Index   int
+		Snippet config.Snippet
+	}
+	ActionSnippetSaved struct {
+		OriginalScope config.Scope
+		OriginalIndex int
+		Scope         config.Scope
+		Snippet       config.Snippet
+	}
+	ActionSnippetDeleted struct {
+		Scope config.Scope
+		Index int
+	}
+	ActionInitializeProject struct{}
+	ActionSummarize         struct {
 		SessionID string
 	}
 	ActionCompact struct {

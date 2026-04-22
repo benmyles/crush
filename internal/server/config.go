@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/proto"
 )
 
@@ -63,6 +64,64 @@ func (c *controllerV1) handlePostWorkspaceConfigRemove(w http.ResponseWriter, r 
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleGetWorkspaceConfigCriticalInstructions reads critical instructions
+// from a single config scope.
+//
+//	@Summary		Get scoped critical instructions
+//	@Tags			config
+//	@Produce		json
+//	@Param			id		path	string	true	"Workspace ID"
+//	@Param			scope	query	string	false	"Config scope"
+//	@Success		200	{object}	proto.CriticalInstructionsResponse
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/critical-instructions [get]
+func (c *controllerV1) handleGetWorkspaceConfigCriticalInstructions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	scope, err := config.ParseScope(r.URL.Query().Get("scope"))
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	instructions, err := c.backend.CriticalInstructions(id, scope)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, proto.CriticalInstructionsResponse{Text: instructions})
+}
+
+// handleGetWorkspaceConfigSnippets reads prompt snippets from a single config
+// scope.
+//
+//	@Summary		Get scoped prompt snippets
+//	@Tags			config
+//	@Produce		json
+//	@Param			id		path	string	true	"Workspace ID"
+//	@Param			scope	query	string	false	"Config scope"
+//	@Success		200	{object}	proto.SnippetsResponse
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/snippets [get]
+func (c *controllerV1) handleGetWorkspaceConfigSnippets(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	scope, err := config.ParseScope(r.URL.Query().Get("scope"))
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	snippets, err := c.backend.Snippets(id, scope)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, proto.SnippetsResponse{Snippets: snippets})
 }
 
 // handlePostWorkspaceConfigModel updates the preferred model.

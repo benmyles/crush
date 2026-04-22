@@ -139,6 +139,82 @@ func (s *ConfigStore) HasConfigField(scope Scope, key string) bool {
 	return gjson.Get(string(data), key).Exists()
 }
 
+// CriticalInstructions reads the raw critical instructions configured at the
+// requested scope without applying merged higher-priority config.
+// It auto-migrates legacy []string values by joining them with "\n\n".
+func (s *ConfigStore) CriticalInstructions(scope Scope) (string, error) {
+	path, err := s.configPath(scope)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read config file: %w", err)
+	}
+	result := gjson.Get(string(data), "options.critical_instructions")
+	if !result.Exists() {
+		return "", nil
+	}
+	if result.Type == gjson.String {
+		return strings.TrimSpace(result.String()), nil
+	}
+	if result.IsArray() {
+		var items []string
+		for _, item := range result.Array() {
+			if text := strings.TrimSpace(item.String()); text != "" {
+				items = append(items, text)
+			}
+		}
+		return strings.Join(items, "\n\n"), nil
+	}
+	return "", fmt.Errorf("options.critical_instructions must be a string")
+}
+
+// Snippets reads the raw snippets configured at the requested scope without
+// applying merged higher-priority config.
+func (s *ConfigStore) Snippets(scope Scope) ([]Snippet, error) {
+	path, err := s.configPath(scope)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+	result := gjson.Get(string(data), "options.snippets")
+	if !result.Exists() {
+		return nil, nil
+	}
+	if !result.IsArray() {
+		return nil, fmt.Errorf("options.snippets must be an array of snippet objects")
+	}
+
+	items := result.Array()
+	snippets := make([]Snippet, 0, len(items))
+	for _, item := range items {
+		if !item.IsObject() {
+			return nil, fmt.Errorf("options.snippets must be an array of snippet objects")
+		}
+		title := strings.TrimSpace(item.Get("title").String())
+		body := strings.TrimSpace(item.Get("body").String())
+		if title == "" && body == "" {
+			continue
+		}
+		snippets = append(snippets, Snippet{
+			ID:    strings.TrimSpace(item.Get("id").String()),
+			Title: title,
+			Body:  body,
+		})
+	}
+	return snippets, nil
+}
+
 // SetConfigField sets a key/value pair in the config file for the given scope.
 // After a successful write, it automatically reloads config to keep in-memory
 // state fresh.

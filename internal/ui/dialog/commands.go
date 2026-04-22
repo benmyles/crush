@@ -423,10 +423,12 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "switch_session", "Sessions", "ctrl+s", ActionOpenDialog{SessionsID}),
 		NewCommandItem(c.com.Styles, "switch_model", "Switch Model", "ctrl+l", ActionOpenDialog{ModelsID}),
 		NewCommandItem(c.com.Styles, "plan", "Toggle Plan Mode", "ctrl+k", ActionRunPlan{}),
+		NewCommandItem(c.com.Styles, "snippets", "Snippets", "ctrl+b", ActionOpenSnippets{}),
 	}
 
 	// Only show session commands if there's an active session.
 	if c.hasSession {
+		commands = append(commands, NewCommandItem(c.com.Styles, "fork_session", "Fork Session", "", ActionForkSession{}))
 		commands = append(commands, NewCommandItem(c.com.Styles, "summarize", "Summarize Session", "", ActionSummarize{SessionID: c.sessionID}))
 		if cfg := c.com.Config(); cfg != nil && cfg.Options != nil && cfg.Options.MorphCompact != nil && cfg.Options.MorphCompact.Enabled {
 			commands = append(commands, NewCommandItem(c.com.Styles, "compact", "Compact Session", "", ActionCompact{SessionID: c.sessionID}))
@@ -481,6 +483,10 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	if os.Getenv("EDITOR") != "" {
 		commands = append(commands, NewCommandItem(c.com.Styles, "open_external_editor", "Open External Editor", "ctrl+o", ActionExternalEditor{}))
 	}
+	commands = append(commands,
+		NewCommandItem(c.com.Styles, "edit_global_critical_instructions", "Edit Global Critical Instructions", "", ActionEditCriticalInstructions{Scope: config.ScopeGlobal}),
+		NewCommandItem(c.com.Styles, "edit_project_critical_instructions", "Edit Project Critical Instructions", "", ActionEditCriticalInstructions{Scope: config.ScopeWorkspace}),
+	)
 
 	// Add Docker MCP command if available and not already enabled.
 	if !cfg.IsDockerMCPEnabled() && c.dockerMCPAvailable != nil && *c.dockerMCPAvailable {

@@ -5,7 +5,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/crush/internal/planning"
+	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/common"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,6 +101,66 @@ func TestPlanApprovalCompactHistoryOnlyOnApproval(t *testing.T) {
 	require.True(t, ok)
 	require.False(t, r.Approved)
 	require.False(t, r.CompactHistory)
+}
+
+func TestPlanApprovalCommentsAcceptPaste(t *testing.T) {
+	t.Parallel()
+
+	plan := NewPlanApproval(common.DefaultCommon(nil), planning.Submission{
+		Markdown: "## Plan\n\nDo the thing.",
+	})
+
+	action := plan.HandleMsg(tea.PasteMsg{Content: "Please keep the full output."})
+	require.Nil(t, action)
+	require.Equal(t, "Please keep the full output.", plan.comments.Value())
+
+	action = plan.HandleMsg(tea.KeyPressMsg(tea.Key{Code: 'v', Mod: tea.ModCtrl}))
+	_, ok := action.(ActionCmd)
+	require.True(t, ok)
+
+	action = plan.HandleMsg(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
+	_, ok = action.(ActionCmd)
+	require.True(t, ok)
+}
+
+func TestPlanApprovalInsertTextTargetsComments(t *testing.T) {
+	t.Parallel()
+
+	plan := NewPlanApproval(common.DefaultCommon(nil), planning.Submission{
+		Markdown: "## Plan",
+	})
+
+	cmd := plan.InsertText("Looks good")
+	require.Nil(t, cmd)
+	require.Equal(t, planApprovalFocusComments, plan.focus)
+	require.Equal(t, "Looks good", plan.comments.Value())
+}
+
+func TestPlanApprovalCopiesFullPlanFromActionButton(t *testing.T) {
+	t.Parallel()
+
+	plan := NewPlanApproval(common.DefaultCommon(nil), planning.Submission{
+		Markdown: "## Plan\n\nDo the thing.",
+		Todos: []session.Todo{{
+			Content:    "Do the thing",
+			Status:     session.TodoStatusInProgress,
+			ActiveForm: "Doing the thing",
+		}},
+	})
+
+	plan.HandleMsg(keyCode(tea.KeyTab)) // Comments to compact.
+	plan.HandleMsg(keyCode(tea.KeyTab)) // Compact to actions.
+	plan.HandleMsg(keyCode(tea.KeyRight))
+	plan.HandleMsg(keyCode(tea.KeyRight))
+	require.Equal(t, 2, plan.selected)
+	require.Contains(t, xansi.Strip(plan.renderButtons()), "Copy Plan")
+
+	action := plan.HandleMsg(keyCode(tea.KeyEnter))
+	_, ok := action.(ActionCmd)
+	require.True(t, ok)
+	require.Contains(t, plan.planClipboardText(), "## Plan")
+	require.Contains(t, plan.planClipboardText(), "## Tasks")
+	require.Contains(t, plan.planClipboardText(), "- [~] Do the thing (Doing the thing)")
 }
 
 func keyPress(text string) tea.KeyPressMsg {

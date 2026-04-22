@@ -22,8 +22,10 @@ type SubmitPlanParams struct {
 }
 
 type SubmitPlanResponseMetadata struct {
-	ID    string         `json:"id"`
-	Todos []session.Todo `json:"todos"`
+	ID       string         `json:"id"`
+	Todos    []session.Todo `json:"todos"`
+	Approved bool           `json:"approved"`
+	Comment  string         `json:"comment,omitempty"`
 }
 
 func NewSubmitPlanTool(service planning.Service) fantasy.AgentTool {
@@ -49,7 +51,7 @@ func NewSubmitPlanTool(service planning.Service) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
-			submission, err := service.Submit(ctx, planning.Submission{
+			submission, response, err := service.Submit(ctx, planning.Submission{
 				SessionID:  sessionID,
 				ToolCallID: call.ID,
 				Markdown:   strings.TrimSpace(params.Markdown),
@@ -60,15 +62,47 @@ func NewSubmitPlanTool(service planning.Service) fantasy.AgentTool {
 			}
 
 			metadata := SubmitPlanResponseMetadata{
-				ID:    submission.ID,
-				Todos: submission.Todos,
+				ID:       submission.ID,
+				Todos:    submission.Todos,
+				Approved: response.Approved,
+				Comment:  strings.TrimSpace(response.Comment),
+			}
+			content := planSubmissionResponseText(submission, response)
+			toolResponse := fantasy.NewTextResponse(content)
+			if response.Approved {
+				toolResponse.StopTurn = true
 			}
 			return fantasy.WithResponseMetadata(
-				fantasy.NewTextResponse("Plan submitted for approval."),
+				toolResponse,
 				metadata,
 			), nil
 		},
 	)
+}
+
+func planSubmissionResponseText(submission planning.Submission, response planning.Response) string {
+	comment := strings.TrimSpace(response.Comment)
+	if response.Approved {
+		var parts []string
+		parts = append(parts, "Plan approved by the user.")
+		if comment != "" {
+			parts = append(parts, "User comment: "+comment)
+		}
+		parts = append(parts, "Stop planning now. Implementation will begin after this plan-mode turn completes.")
+		return strings.Join(parts, "\n")
+	}
+
+	var parts []string
+	parts = append(parts, "Plan was not approved. Revise the plan based on the user's feedback before doing any implementation.")
+	parts = append(parts, "You must ask follow-up questions with ask_user if the feedback is unclear or if any remaining choice requires user judgement.")
+	parts = append(parts, "After resolving any ambiguity, call submit_plan again with a complete updated plan and structured todos so the user can re-review the revised plan.")
+	if comment != "" {
+		parts = append(parts, "User feedback: "+comment)
+	}
+	if markdown := strings.TrimSpace(submission.Markdown); markdown != "" {
+		parts = append(parts, "Previous plan:\n"+markdown)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func todoItemsToSessionTodos(items []TodoItem) ([]session.Todo, error) {

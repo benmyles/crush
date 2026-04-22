@@ -7,6 +7,7 @@ type KeyMap struct {
 		AddFile     key.Binding
 		SendMessage key.Binding
 		OpenEditor  key.Binding
+		ClearPrompt key.Binding
 		Newline     key.Binding
 		AddImage    key.Binding
 		PasteImage  key.Binding
@@ -65,6 +66,7 @@ type KeyMap struct {
 	Models   key.Binding
 	Suspend  key.Binding
 	Sessions key.Binding
+	Snippets key.Binding
 	Tab      key.Binding
 	Plan     key.Binding
 }
@@ -95,6 +97,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("ctrl+s"),
 			key.WithHelp("ctrl+s", "sessions"),
 		),
+		Snippets: key.NewBinding(
+			key.WithKeys("ctrl+b"),
+			key.WithHelp("ctrl+b", "snippets"),
+		),
 		Tab: key.NewBinding(
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "change focus"),
@@ -112,6 +118,10 @@ func DefaultKeyMap() KeyMap {
 	km.Editor.OpenEditor = key.NewBinding(
 		key.WithKeys("ctrl+o"),
 		key.WithHelp("ctrl+o", "open editor"),
+	)
+	km.Editor.ClearPrompt = key.NewBinding(
+		key.WithKeys("ctrl+x"),
+		key.WithHelp("ctrl+x", "clear prompt"),
 	)
 	km.Editor.Newline = key.NewBinding(
 		key.WithKeys("shift+enter", "ctrl+j"),

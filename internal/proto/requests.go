@@ -41,6 +41,16 @@ type ConfigRefreshOAuthRequest struct {
 	ProviderID string       `json:"provider_id"`
 }
 
+// CriticalInstructionsResponse represents scoped critical instructions.
+type CriticalInstructionsResponse struct {
+	Text string `json:"text"`
+}
+
+// SnippetsResponse represents scoped prompt snippets.
+type SnippetsResponse struct {
+	Snippets []config.Snippet `json:"snippets"`
+}
+
 // ImportCopilotResponse represents the response from importing Copilot credentials.
 type ImportCopilotResponse struct {
 	Token   any  `json:"token"`

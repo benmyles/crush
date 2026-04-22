@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/ui/common"
@@ -37,6 +38,12 @@ func InputCursor(t *styles.Styles, cur *tea.Cursor) *tea.Cursor {
 	}
 	return cur
 }
+
+// CopyKey is a shared key binding for copying text to the clipboard.
+var CopyKey = key.NewBinding(
+	key.WithKeys("ctrl+c"),
+	key.WithHelp("ctrl+c", "copy"),
+)
 
 // adjustOnboardingInputCursor removes the dialog view frame offset from an
 // input cursor. Onboarding dialogs render without Dialog.View frame, while

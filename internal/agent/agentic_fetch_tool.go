@@ -171,12 +171,14 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				tools.NewSourcegraphTool(client),
 				tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, nil, tmpDir),
 			}
+			fetchTools = append(fetchTools, c.coderMCPTools()...)
 
 			agent := NewSessionAgent(SessionAgentOptions{
 				LargeModel:           small, // Use small model for both (fetch doesn't need large)
 				SmallModel:           small,
 				SystemPromptPrefix:   smallProviderCfg.SystemPromptPrefix,
 				SystemPrompt:         systemPrompt,
+				CriticalInstructions: c.cfg.Config().Options.CriticalInstructions,
 				DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
 				IsYolo:               c.permissions.SkipRequests(),
 				Sessions:             c.sessions,
@@ -191,9 +193,6 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				ToolCallID:     call.ID,
 				Prompt:         fullPrompt,
 				SessionTitle:   "Fetch Analysis",
-				SessionSetup: func(sessionID string) {
-					c.permissions.AutoApproveSession(sessionID)
-				},
 			})
 		}), nil
 }

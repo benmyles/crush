@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/shell"
 	"github.com/charmbracelet/crush/internal/userquestion"
@@ -38,6 +39,21 @@ func (b *Backend) SendMessage(ctx context.Context, workspaceID string, msg proto
 		PlanMode: msg.PlanMode,
 	}, attachments...)
 	return err
+}
+
+func (b *Backend) RespondPlan(workspaceID string, resp proto.PlanResponse) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	ws.Planning.Respond(planning.Response{
+		SubmissionID:   resp.SubmissionID,
+		Approved:       resp.Approved,
+		Comment:        resp.Comment,
+		CompactHistory: resp.CompactHistory,
+	})
+	return nil
 }
 
 func (b *Backend) RespondUserQuestion(workspaceID string, resp proto.UserQuestionResponse) error {

@@ -36,6 +36,31 @@ func TestConfig_LoadFromBytes(t *testing.T) {
 	require.Equal(t, "https://api.openai.com/v2", pc.BaseURL)
 }
 
+func TestConfig_LoadFromBytesMergesCriticalInstructions(t *testing.T) {
+	t.Parallel()
+
+	global := []byte(`{"options":{"critical_instructions":"global rule"}}`)
+	workspace := []byte(`{"options":{"critical_instructions":"project rule"}}`)
+
+	loadedConfig, err := loadFromBytes([][]byte{global, workspace})
+	require.NoError(t, err)
+	require.Equal(t, "project rule", loadedConfig.Options.CriticalInstructions)
+}
+
+func TestConfig_LoadFromBytesMergesSnippets(t *testing.T) {
+	t.Parallel()
+
+	global := []byte(`{"options":{"snippets":[{"id":"g","title":"Global","body":"Global body"}]}}`)
+	workspace := []byte(`{"options":{"snippets":[{"id":"p","title":"Project","body":"Project body"}]}}`)
+
+	loadedConfig, err := loadFromBytes([][]byte{global, workspace})
+	require.NoError(t, err)
+	require.Equal(t, []Snippet{
+		{ID: "g", Title: "Global", Body: "Global body"},
+		{ID: "p", Title: "Project", Body: "Project body"},
+	}, loadedConfig.Options.Snippets)
+}
+
 func TestConfig_LoadMorphCompactOptions(t *testing.T) {
 	t.Parallel()
 
@@ -606,10 +631,12 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
 	assert.Equal(t, allToolNames(), coderAgent.AllowedTools)
+	assert.Nil(t, coderAgent.AllowedMCP)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
 	assert.Equal(t, []string{"ask_user", "glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Nil(t, taskAgent.AllowedMCP)
 }
 
 func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {

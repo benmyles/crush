@@ -722,6 +722,47 @@ func TestPreparePrompt_OrphanedToolUse(t *testing.T) {
 	require.True(t, found, "expected synthetic tool result for orphaned tool call")
 }
 
+func TestPreparePromptAddsCriticalInstructionReminderToUserMessages(t *testing.T) {
+	env := testEnv(t)
+	sa := testSessionAgent(env, nil, nil, "test prompt")
+	agent := sa.(*sessionAgent)
+	agent.SetCriticalInstructions("Do not truncate output.")
+
+	ctx := t.Context()
+	sess, err := env.sessions.Create(ctx, "test")
+	require.NoError(t, err)
+	_, err = env.messages.Create(ctx, sess.ID, message.CreateMessageParams{
+		Role: message.User,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "hello"},
+		},
+	})
+	require.NoError(t, err)
+
+	msgs, err := env.messages.List(ctx, sess.ID)
+	require.NoError(t, err)
+
+	history, _ := agent.preparePrompt(msgs)
+	var found bool
+	for _, msg := range history {
+		if msg.Role != fantasy.MessageRoleUser {
+			continue
+		}
+		for _, part := range msg.Content {
+			if text, ok := fantasy.AsMessagePart[fantasy.TextPart](part); ok {
+				if !strings.Contains(text.Text, "hello") {
+					continue
+				}
+				require.Contains(t, text.Text, "hello")
+				require.Contains(t, text.Text, "<critical_instruction_reminder>")
+				require.Contains(t, text.Text, "Do not truncate output.")
+				found = true
+			}
+		}
+	}
+	require.True(t, found, "expected user message with critical instruction reminder")
+}
+
 func TestPreparePrompt_OrphanedToolUseMixed(t *testing.T) {
 	env := testEnv(t)
 	sa := testSessionAgent(env, nil, nil, "test prompt")

@@ -20,3 +20,14 @@ type Session struct {
 	CreatedAt        int64   `json:"created_at"`
 	UpdatedAt        int64   `json:"updated_at"`
 }
+
+// ForkSessionRequest represents a request to fork a session at a message.
+type ForkSessionRequest struct {
+	MessageID string `json:"message_id"`
+}
+
+// ForkSessionResponse contains the forked session and any prompt prefill.
+type ForkSessionResponse struct {
+	Session Session `json:"session"`
+	Prefill string  `json:"prefill,omitempty"`
+}

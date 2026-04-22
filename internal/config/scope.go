@@ -24,6 +24,18 @@ func (s Scope) String() string {
 	}
 }
 
+// ParseScope converts a user/API scope string into a Scope.
+func ParseScope(value string) (Scope, error) {
+	switch value {
+	case "", "global":
+		return ScopeGlobal, nil
+	case "workspace", "project":
+		return ScopeWorkspace, nil
+	default:
+		return ScopeGlobal, fmt.Errorf("unknown config scope %q", value)
+	}
+}
+
 // ErrNoWorkspaceConfig is returned when a workspace-scoped write is
 // attempted on a ConfigStore that has no workspace config path.
 var ErrNoWorkspaceConfig = fmt.Errorf("no workspace config path configured")

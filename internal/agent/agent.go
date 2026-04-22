@@ -34,6 +34,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
+	promptpkg "github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
@@ -101,6 +102,7 @@ type SessionAgent interface {
 	SetModels(large Model, small Model)
 	SetTools(tools []fantasy.AgentTool)
 	SetSystemPrompt(systemPrompt string)
+	SetCriticalInstructions(instructions string)
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -122,11 +124,12 @@ type Model struct {
 }
 
 type sessionAgent struct {
-	largeModel         *csync.Value[Model]
-	smallModel         *csync.Value[Model]
-	systemPromptPrefix *csync.Value[string]
-	systemPrompt       *csync.Value[string]
-	tools              *csync.Slice[fantasy.AgentTool]
+	largeModel           *csync.Value[Model]
+	smallModel           *csync.Value[Model]
+	systemPromptPrefix   *csync.Value[string]
+	systemPrompt         *csync.Value[string]
+	criticalInstructions *csync.Value[string]
+	tools                *csync.Slice[fantasy.AgentTool]
 
 	isSubAgent           bool
 	sessions             session.Service
@@ -144,6 +147,7 @@ type SessionAgentOptions struct {
 	SmallModel           Model
 	SystemPromptPrefix   string
 	SystemPrompt         string
+	CriticalInstructions string
 	IsSubAgent           bool
 	DisableAutoSummarize bool
 	IsYolo               bool
@@ -161,6 +165,7 @@ func NewSessionAgent(
 		smallModel:           csync.NewValue(opts.SmallModel),
 		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
 		systemPrompt:         csync.NewValue(opts.SystemPrompt),
+		criticalInstructions: csync.NewValue(promptpkg.NormalizeCriticalInstructions(opts.CriticalInstructions)),
 		isSubAgent:           opts.IsSubAgent,
 		sessions:             opts.Sessions,
 		messages:             opts.Messages,
@@ -234,6 +239,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	largeModel := a.largeModel.Get()
 	systemPrompt := a.systemPrompt.Get()
 	promptPrefix := a.systemPromptPrefix.Get()
+	criticalInstructions := a.criticalInstructions.Get()
 	var instructions strings.Builder
 
 	for _, server := range mcp.GetStates() {
@@ -254,6 +260,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	} else {
 		agentTools = filterAgentTools(agentTools, tools.SubmitPlanToolName)
 	}
+	systemPrompt = appendCriticalInstructionsToSystemPrompt(systemPrompt, criticalInstructions)
 
 	if len(agentTools) > 0 {
 		// Add Anthropic caching to the last tool.
@@ -324,8 +331,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if call.PlanMode {
 		streamPrompt = planModeUserPrompt(call.Prompt)
 	}
+	streamPrompt = message.PromptWithTextAttachments(streamPrompt, call.Attachments)
+	streamPrompt = promptpkg.AppendCriticalInstructionReminder(streamPrompt, criticalInstructions)
 	streamCall := fantasy.AgentStreamCall{
-		Prompt:           message.PromptWithTextAttachments(streamPrompt, call.Attachments),
+		Prompt:           streamPrompt,
 		Files:            files,
 		Messages:         history,
 		ProviderOptions:  call.ProviderOptions,
@@ -354,7 +363,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				if createErr != nil {
 					return callContext, prepared, createErr
 				}
-				prepared.Messages = append(prepared.Messages, userMessage.ToAIMessage()...)
+				prepared.Messages = append(prepared.Messages, a.withCriticalInstructionReminders(userMessage.ToAIMessage())...)
 			}
 
 			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)
@@ -744,10 +753,10 @@ func (a *sessionAgent) generateSummary(
 
 	agent := fantasy.NewAgent(
 		wrapLanguageModelForNonStreaming(largeModel.Model, largeModel.DisableStreaming),
-		fantasy.WithSystemPrompt(string(summaryPrompt)),
+		fantasy.WithSystemPrompt(appendCriticalInstructionsToSystemPrompt(string(summaryPrompt), a.criticalInstructions.Get())),
 		fantasy.WithUserAgent(userAgent),
 	)
-	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
+	summaryPromptText := promptpkg.AppendCriticalInstructionReminder(buildSummaryPrompt(currentSession.Todos), a.criticalInstructions.Get())
 
 	update := func() error {
 		if onUpdate == nil {
@@ -848,16 +857,58 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	return msg, nil
 }
 
+func (a *sessionAgent) withCriticalInstructionReminders(messages []fantasy.Message) []fantasy.Message {
+	instructions := a.criticalInstructions.Get()
+	if strings.TrimSpace(instructions) == "" {
+		return messages
+	}
+
+	result := make([]fantasy.Message, len(messages))
+	copy(result, messages)
+	for i, msg := range result {
+		if msg.Role != fantasy.MessageRoleUser {
+			continue
+		}
+		result[i] = appendCriticalInstructionReminderToMessage(msg, instructions)
+	}
+	return result
+}
+
+func appendCriticalInstructionsToSystemPrompt(systemPrompt string, instructions string) string {
+	block := promptpkg.CriticalInstructionsBlock(instructions)
+	if block == "" {
+		return systemPrompt
+	}
+	return strings.TrimSpace(systemPrompt) + "\n\n" + block
+}
+
+func appendCriticalInstructionReminderToMessage(msg fantasy.Message, instructions string) fantasy.Message {
+	block := promptpkg.CriticalInstructionReminderBlock(instructions)
+	if block == "" {
+		return msg
+	}
+	for i := len(msg.Content) - 1; i >= 0; i-- {
+		if textPart, ok := fantasy.AsMessagePart[fantasy.TextPart](msg.Content[i]); ok {
+			textPart.Text = strings.TrimSpace(textPart.Text) + "\n\n" + block
+			msg.Content[i] = textPart
+			return msg
+		}
+	}
+	msg.Content = append(msg.Content, fantasy.TextPart{Text: block})
+	return msg
+}
+
 func (a *sessionAgent) preparePrompt(msgs []message.Message, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
 	var history []fantasy.Message
 	if !a.isSubAgent {
-		history = append(history, fantasy.NewUserMessage(
+		reminderMessage := fantasy.NewUserMessage(
 			fmt.Sprintf("<system_reminder>%s</system_reminder>",
 				`This is a reminder that your todo list is currently empty. DO NOT mention this to the user explicitly because they are already aware.
 If you are working on tasks that would benefit from a todo list please use the "todos" tool to create one.
 If not, please feel free to ignore. Again do not mention this message to the user.`,
 			),
-		))
+		)
+		history = append(history, a.withCriticalInstructionReminders([]fantasy.Message{reminderMessage})...)
 	}
 	// Collect all tool call IDs present in assistant messages and all tool
 	// result IDs present in tool messages. This lets us detect both orphaned
@@ -892,7 +943,11 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			}
 			continue
 		}
-		history = append(history, m.ToAIMessage()...)
+		aiMessages := m.ToAIMessage()
+		if m.Role == message.User {
+			aiMessages = a.withCriticalInstructionReminders(aiMessages)
+		}
+		history = append(history, aiMessages...)
 
 		if m.Role == message.Assistant {
 			if msg, ok := syntheticToolResultsForOrphanedCalls(m, knownToolResultIDs); ok {
@@ -923,10 +978,13 @@ You are in Crush plan mode for this request.
 Gather detailed context before proposing work. Do not edit files, create files,
 delete files, rename files, or run commands whose purpose is to mutate the
 workspace. Ask the user questions when there are ambiguous requirements or
-multiple reasonable options only the user can choose between by calling the
-ask_user tool; do not write questions as a plain text list. Finish by calling
+judgement calls by calling the ask_user tool; provide multiple-choice answers
+when there are several acceptable options, such as different truncation lengths
+or no truncation. Do not write questions as a plain text list. Finish by calling
 submit_plan with approval-ready Markdown and structured todos. Do not implement
-until the user approves the plan.
+until the user approves the plan. If the user clearly asked you to proceed with
+implementation while this turn is still in plan mode, call
+request_exit_plan_mode with the exact continuation task as prompt.
 
 User request:
 `) + "\n" + prompt
@@ -1048,14 +1106,17 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 	newAgent := func(m Model, p []byte, tok int64) fantasy.Agent {
 		return fantasy.NewAgent(
 			wrapLanguageModelForNonStreaming(m.Model, m.DisableStreaming),
-			fantasy.WithSystemPrompt(string(p)+"\n /no_think"),
+			fantasy.WithSystemPrompt(appendCriticalInstructionsToSystemPrompt(string(p)+"\n /no_think", a.criticalInstructions.Get())),
 			fantasy.WithMaxOutputTokens(tok),
 			fantasy.WithUserAgent(userAgent),
 		)
 	}
 
 	streamCall := fantasy.AgentStreamCall{
-		Prompt: fmt.Sprintf("Generate a concise title for the following content:\n\n%s\n <think>\n\n</think>", userPrompt),
+		Prompt: promptpkg.AppendCriticalInstructionReminder(
+			fmt.Sprintf("Generate a concise title for the following content:\n\n%s\n <think>\n\n</think>", userPrompt),
+			a.criticalInstructions.Get(),
+		),
 		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = opts.Messages
 			if systemPromptPrefix != "" {
@@ -1285,6 +1346,10 @@ func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
 	a.systemPrompt.Set(systemPrompt)
+}
+
+func (a *sessionAgent) SetCriticalInstructions(instructions string) {
+	a.criticalInstructions.Set(promptpkg.NormalizeCriticalInstructions(instructions))
 }
 
 func (a *sessionAgent) Model() Model {

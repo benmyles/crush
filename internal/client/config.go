@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/oauth"
+	"github.com/charmbracelet/crush/internal/proto"
 )
 
 // SetConfigField sets a config key/value pair on the server.
@@ -41,6 +43,40 @@ func (c *Client) RemoveConfigField(ctx context.Context, id string, scope config.
 		return fmt.Errorf("failed to remove config field: status code %d", rsp.StatusCode)
 	}
 	return nil
+}
+
+// GetCriticalInstructions reads scoped critical instructions from the server.
+func (c *Client) GetCriticalInstructions(ctx context.Context, id string, scope config.Scope) (string, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/config/critical-instructions", id), url.Values{"scope": []string{scope.String()}}, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to get critical instructions: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to get critical instructions: status code %d", rsp.StatusCode)
+	}
+	var response proto.CriticalInstructionsResponse
+	if err := json.NewDecoder(rsp.Body).Decode(&response); err != nil {
+		return "", fmt.Errorf("failed to decode critical instructions: %w", err)
+	}
+	return response.Text, nil
+}
+
+// GetSnippets reads scoped snippets from the server.
+func (c *Client) GetSnippets(ctx context.Context, id string, scope config.Scope) ([]config.Snippet, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/config/snippets", id), url.Values{"scope": []string{scope.String()}}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get snippets: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get snippets: status code %d", rsp.StatusCode)
+	}
+	var response proto.SnippetsResponse
+	if err := json.NewDecoder(rsp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode snippets: %w", err)
+	}
+	return response.Snippets, nil
 }
 
 // UpdatePreferredModel updates the preferred model on the server.

@@ -41,6 +41,25 @@ func (b *Backend) RemoveConfigField(workspaceID string, scope config.Scope, key 
 	return ws.Cfg.RemoveConfigField(scope, key)
 }
 
+// CriticalInstructions reads critical instructions from the requested config
+// scope.
+func (b *Backend) CriticalInstructions(workspaceID string, scope config.Scope) (string, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return "", err
+	}
+	return ws.Cfg.CriticalInstructions(scope)
+}
+
+// Snippets reads prompt snippets from the requested config scope.
+func (b *Backend) Snippets(workspaceID string, scope config.Scope) ([]config.Snippet, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return ws.Cfg.Snippets(scope)
+}
+
 // UpdatePreferredModel updates the preferred model for the given type
 // and persists it to the config file at the given scope.
 func (b *Backend) UpdatePreferredModel(workspaceID string, scope config.Scope, modelType config.SelectedModelType, model config.SelectedModel) error {

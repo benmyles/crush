@@ -440,6 +440,44 @@ func (c *controllerV1) handlePutWorkspaceSession(w http.ResponseWriter, r *http.
 	jsonEncode(w, sessionToProto(saved))
 }
 
+// handlePostWorkspaceSessionFork creates a new forked session from a selected
+// message.
+//
+//	@Summary		Fork session
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string						true	"Workspace ID"
+//	@Param			sid		path		string						true	"Session ID"
+//	@Param			request	body		proto.ForkSessionRequest	true	"Fork params"
+//	@Success		200		{object}	proto.ForkSessionResponse
+//	@Failure		400		{object}	proto.Error
+//	@Failure		404		{object}	proto.Error
+//	@Failure		500		{object}	proto.Error
+//	@Router			/workspaces/{id}/sessions/{sid}/fork [post]
+func (c *controllerV1) handlePostWorkspaceSessionFork(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+
+	var args proto.ForkSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+
+	result, err := c.backend.ForkSession(r.Context(), id, sid, args.MessageID)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+
+	jsonEncode(w, proto.ForkSessionResponse{
+		Session: sessionToProto(result.Session),
+		Prefill: result.Prefill,
+	})
+}
+
 // handleDeleteWorkspaceSession deletes a session.
 //
 //	@Summary		Delete session
@@ -991,6 +1029,36 @@ func (c *controllerV1) handlePostWorkspacePermissionsGrant(w http.ResponseWriter
 	}
 
 	if err := c.backend.GrantPermission(id, req); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePostWorkspacePlanResponse responds to an interactive plan approval
+// request.
+//
+//	@Summary		Respond to plan approval
+//	@Tags			agent
+//	@Accept			json
+//	@Param			id		path	string				true	"Workspace ID"
+//	@Param			request	body	proto.PlanResponse	true	"Plan response"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/plans/respond [post]
+func (c *controllerV1) handlePostWorkspacePlanResponse(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req proto.PlanResponse
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+
+	if err := c.backend.RespondPlan(id, req); err != nil {
 		c.handleError(w, r, err)
 		return
 	}

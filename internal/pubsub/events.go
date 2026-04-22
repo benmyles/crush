@@ -26,6 +26,7 @@ const (
 	PayloadTypeAgentEvent             PayloadType = "agent_event"
 	PayloadTypeCommandOutput          PayloadType = "command_output"
 	PayloadTypePlanSubmission         PayloadType = "plan_submission"
+	PayloadTypePlanModeChangeRequest  PayloadType = "plan_mode_change_request"
 	PayloadTypeUserQuestion           PayloadType = "user_question"
 )
 

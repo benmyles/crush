@@ -64,6 +64,25 @@ func TestCommandsShowsPlanCommand(t *testing.T) {
 	require.Fail(t, "plan command not found")
 }
 
+func TestCommandsShowsSnippetsCommand(t *testing.T) {
+	t.Parallel()
+
+	cmds := newCommandsForMorphCompactTest(t, false)
+	items := cmds.defaultCommands()
+
+	require.Contains(t, commandIDs(items), "snippets")
+	for _, item := range items {
+		if item.ID() == "snippets" {
+			_, ok := item.Action().(ActionOpenSnippets)
+			require.True(t, ok)
+			require.Equal(t, "Snippets", item.title)
+			require.Equal(t, "ctrl+b", item.Shortcut())
+			return
+		}
+	}
+	require.Fail(t, "snippets command not found")
+}
+
 func TestCommandsShowsSubAgentsToggle(t *testing.T) {
 	t.Parallel()
 
@@ -96,6 +115,27 @@ func TestCommandsShowsEnableSubAgentsWhenDisabled(t *testing.T) {
 		}
 	}
 	require.Fail(t, "sub-agents toggle command not found")
+}
+
+func TestCommandsShowsCriticalInstructionEditorsWithoutEditor(t *testing.T) {
+	t.Setenv("EDITOR", "")
+	cmds := newCommandsForMorphCompactTest(t, false)
+	items := cmds.defaultCommands()
+
+	require.Contains(t, commandIDs(items), "edit_global_critical_instructions")
+	require.Contains(t, commandIDs(items), "edit_project_critical_instructions")
+	for _, item := range items {
+		switch item.ID() {
+		case "edit_global_critical_instructions":
+			action, ok := item.Action().(ActionEditCriticalInstructions)
+			require.True(t, ok)
+			require.Equal(t, config.ScopeGlobal, action.Scope)
+		case "edit_project_critical_instructions":
+			action, ok := item.Action().(ActionEditCriticalInstructions)
+			require.True(t, ok)
+			require.Equal(t, config.ScopeWorkspace, action.Scope)
+		}
+	}
 }
 
 func newCommandsForMorphCompactTest(t *testing.T, enabled bool) *Commands {

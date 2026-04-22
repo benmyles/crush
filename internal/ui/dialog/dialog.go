@@ -41,6 +41,12 @@ type Dialog interface {
 	Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor
 }
 
+// TextInserter is implemented by dialogs with an active text input that can
+// receive snippet insertion.
+type TextInserter interface {
+	InsertText(text string) tea.Cmd
+}
+
 // LoadingDialog is a dialog that can show a loading state.
 type LoadingDialog interface {
 	StartLoading() tea.Cmd

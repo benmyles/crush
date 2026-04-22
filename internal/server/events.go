@@ -104,6 +104,11 @@ func wrapEvent(ev any) *pubsub.Payload {
 			Type:    e.Type,
 			Payload: planSubmissionToProto(e.Payload),
 		})
+	case pubsub.Event[planning.ModeChangeRequest]:
+		return envelope(pubsub.PayloadTypePlanModeChangeRequest, pubsub.Event[proto.PlanModeChangeRequest]{
+			Type:    e.Type,
+			Payload: planModeChangeRequestToProto(e.Payload),
+		})
 	case pubsub.Event[userquestion.Request]:
 		return envelope(pubsub.PayloadTypeUserQuestion, pubsub.Event[proto.UserQuestionRequest]{
 			Type:    e.Type,
@@ -143,6 +148,17 @@ func planSubmissionToProto(p planning.Submission) proto.PlanSubmission {
 		ToolCallID: p.ToolCallID,
 		Markdown:   p.Markdown,
 		Todos:      todosToProto(p.Todos),
+	}
+}
+
+func planModeChangeRequestToProto(p planning.ModeChangeRequest) proto.PlanModeChangeRequest {
+	return proto.PlanModeChangeRequest{
+		ID:         p.ID,
+		SessionID:  p.SessionID,
+		ToolCallID: p.ToolCallID,
+		Mode:       proto.PlanMode(p.Mode),
+		Prompt:     p.Prompt,
+		Reason:     p.Reason,
 	}
 }
 

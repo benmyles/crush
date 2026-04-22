@@ -451,6 +451,20 @@
           "type": "array",
           "description": "Paths to directories containing Agent Skills (folders with SKILL.md files)"
         },
+        "critical_instructions": {
+          "type": "string",
+          "description": "Critical instructions injected into every agent system prompt and repeated at the end of every user message",
+          "examples": [
+            "Never truncate output unless the user explicitly asks"
+          ]
+        },
+        "snippets": {
+          "items": {
+            "$ref": "#/$defs/Snippet"
+          },
+          "type": "array",
+          "description": "Reusable prompt snippets available from the TUI snippet library"
+        },
         "tui": {
           "$ref": "#/$defs/TUIOptions",
           "description": "Terminal user interface options"
@@ -792,6 +806,33 @@
         "model",
         "provider"
       ]
+    },
+    "Snippet": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable snippet identifier",
+          "examples": [
+            "commit-summary"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable snippet title",
+          "examples": [
+            "Review checklist"
+          ]
+        },
+        "body": {
+          "type": "string",
+          "description": "Snippet text inserted into message inputs",
+          "examples": [
+            "Please review this for correctness and missing tests."
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "TUIOptions": {
       "properties": {

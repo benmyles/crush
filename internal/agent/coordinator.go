@@ -453,6 +453,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		SmallModel:           small,
 		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
 		SystemPrompt:         "",
+		CriticalInstructions: c.cfg.Config().Options.CriticalInstructions,
 		IsSubAgent:           isSubAgent,
 		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
 		IsYolo:               c.permissions.SkipRequests(),
@@ -554,33 +555,57 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		}
 	}
 
-	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
-		if agent.AllowedMCP == nil {
-			// No MCP restrictions
-			filteredTools = append(filteredTools, tool)
-			continue
-		}
-		if len(agent.AllowedMCP) == 0 {
-			// No MCPs allowed
-			slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
-			break
-		}
-
-		for mcp, tools := range agent.AllowedMCP {
-			if mcp != tool.MCP() {
-				continue
-			}
-			if len(tools) == 0 || slices.Contains(tools, tool.MCPToolName()) {
-				filteredTools = append(filteredTools, tool)
-				break
-			}
-			slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
-		}
+	if agent.ID == config.AgentCoder {
+		filteredTools = append(filteredTools,
+			tools.NewRequestEnterPlanModeTool(c.planning),
+			tools.NewRequestExitPlanModeTool(c.planning),
+		)
 	}
+
+	filteredTools = append(filteredTools, c.mcpToolsForAgent(agent, c.cfg.WorkingDir())...)
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
 	return filteredTools, nil
+}
+
+func (c *coordinator) mcpToolsForAgent(agent config.Agent, workingDir string) []fantasy.AgentTool {
+	if agent.AllowedMCP != nil && len(agent.AllowedMCP) == 0 {
+		slog.Debug("No MCPs allowed", "agent", agent.Name)
+		return nil
+	}
+
+	var filteredTools []fantasy.AgentTool
+	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, workingDir) {
+		if mcpToolAllowed(agent, tool.MCP(), tool.MCPToolName()) {
+			filteredTools = append(filteredTools, tool)
+			continue
+		}
+		slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
+	}
+	return filteredTools
+}
+
+func (c *coordinator) coderMCPTools() []fantasy.AgentTool {
+	agent, ok := c.cfg.Config().Agents[config.AgentCoder]
+	if !ok {
+		agent = config.Agent{}
+	}
+	return c.mcpToolsForAgent(agent, c.cfg.WorkingDir())
+}
+
+func mcpToolAllowed(agent config.Agent, mcpName, toolName string) bool {
+	if agent.AllowedMCP == nil {
+		return true
+	}
+	if len(agent.AllowedMCP) == 0 {
+		return false
+	}
+	allowedTools, ok := agent.AllowedMCP[mcpName]
+	if !ok {
+		return false
+	}
+	return len(allowedTools) == 0 || slices.Contains(allowedTools, toolName)
 }
 
 func (c *coordinator) resolvedSkillsPaths() []string {
@@ -1028,6 +1053,7 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return err
 	}
 	c.currentAgent.SetModels(large, small)
+	c.currentAgent.SetCriticalInstructions(c.cfg.Config().Options.CriticalInstructions)
 
 	agentCfg, ok := c.cfg.Config().Agents[config.AgentCoder]
 	if !ok {

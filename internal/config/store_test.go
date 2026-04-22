@@ -163,6 +163,69 @@ func TestScope_String(t *testing.T) {
 	require.Contains(t, Scope(99).String(), "Scope(99)")
 }
 
+func TestParseScope(t *testing.T) {
+	t.Parallel()
+
+	scope, err := ParseScope("")
+	require.NoError(t, err)
+	require.Equal(t, ScopeGlobal, scope)
+
+	scope, err = ParseScope("project")
+	require.NoError(t, err)
+	require.Equal(t, ScopeWorkspace, scope)
+
+	_, err = ParseScope("bad")
+	require.Error(t, err)
+}
+
+func TestConfigStore_CriticalInstructionsReadsScopedValues(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.json")
+	workspacePath := filepath.Join(dir, ".crush", "crush.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(workspacePath), 0o755))
+	require.NoError(t, os.WriteFile(globalPath, []byte(`{"options":{"critical_instructions":[" global rule ",""]}}`), 0o600))
+	require.NoError(t, os.WriteFile(workspacePath, []byte(`{"options":{"critical_instructions":"project rule"}}`), 0o600))
+
+	store := &ConfigStore{
+		globalDataPath: globalPath,
+		workspacePath:  workspacePath,
+	}
+
+	global, err := store.CriticalInstructions(ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "global rule", global)
+
+	workspace, err := store.CriticalInstructions(ScopeWorkspace)
+	require.NoError(t, err)
+	require.Equal(t, "project rule", workspace)
+}
+
+func TestConfigStore_SnippetsReadsScopedValues(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.json")
+	workspacePath := filepath.Join(dir, ".crush", "crush.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(workspacePath), 0o755))
+	require.NoError(t, os.WriteFile(globalPath, []byte(`{"options":{"snippets":[{"id":"g","title":" Global ","body":" global body "},{"title":"","body":""}]}}`), 0o600))
+	require.NoError(t, os.WriteFile(workspacePath, []byte(`{"options":{"snippets":[{"id":"p","title":"Project","body":"project body"}]}}`), 0o600))
+
+	store := &ConfigStore{
+		globalDataPath: globalPath,
+		workspacePath:  workspacePath,
+	}
+
+	global, err := store.Snippets(ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, []Snippet{{ID: "g", Title: "Global", Body: "global body"}}, global)
+
+	workspace, err := store.Snippets(ScopeWorkspace)
+	require.NoError(t, err)
+	require.Equal(t, []Snippet{{ID: "p", Title: "Project", Body: "project body"}}, workspace)
+}
+
 func TestConfigStaleness_CleanImmediatelyAfterSnapshot(t *testing.T) {
 	t.Parallel()
 

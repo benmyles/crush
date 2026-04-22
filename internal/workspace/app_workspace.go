@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/planning"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
 	"github.com/charmbracelet/crush/internal/userquestion"
@@ -55,6 +56,10 @@ func (w *AppWorkspace) ListSessions(ctx context.Context) ([]session.Session, err
 
 func (w *AppWorkspace) SaveSession(ctx context.Context, sess session.Session) (session.Session, error) {
 	return w.app.Sessions.Save(ctx, sess)
+}
+
+func (w *AppWorkspace) ForkSession(ctx context.Context, sessionID, messageID string) (session.ForkResult, error) {
+	return session.Fork(ctx, w.app.Sessions, w.app.Messages, sessionID, messageID)
 }
 
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
@@ -225,6 +230,10 @@ func (w *AppWorkspace) PermissionSetSkipRequests(skip bool) {
 	w.app.Permissions.SetSkipRequests(skip)
 }
 
+func (w *AppWorkspace) PlanRespond(resp planning.Response) {
+	w.app.Planning.Respond(resp)
+}
+
 func (w *AppWorkspace) UserQuestionRespond(resp userquestion.Response) {
 	w.app.UserQuestion.Respond(resp)
 }
@@ -297,6 +306,14 @@ func (w *AppWorkspace) Resolver() config.VariableResolver {
 }
 
 // -- Config mutations --
+
+func (w *AppWorkspace) CriticalInstructions(scope config.Scope) (string, error) {
+	return w.store.CriticalInstructions(scope)
+}
+
+func (w *AppWorkspace) Snippets(scope config.Scope) ([]config.Snippet, error) {
+	return w.store.Snippets(scope)
+}
 
 func (w *AppWorkspace) UpdatePreferredModel(scope config.Scope, modelType config.SelectedModelType, model config.SelectedModel) error {
 	return w.store.UpdatePreferredModel(scope, modelType, model)

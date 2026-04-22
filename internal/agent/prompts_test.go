@@ -64,6 +64,21 @@ func TestAgentPromptsUseSelectedInstructionsFile(t *testing.T) {
 	}
 }
 
+func TestPlanModeInstructionsAskUserForJudgmentCalls(t *testing.T) {
+	t.Parallel()
+
+	instructions := string(planModePrompt)
+	require.Contains(t, instructions, "Treat judgement calls as questions for the user")
+	require.Contains(t, instructions, "ask with `ask_user`")
+	require.Contains(t, instructions, "provide mutually exclusive choices")
+	require.Contains(t, instructions, "concrete lengths plus an option to not truncate at all")
+
+	userPrompt := planModeUserPrompt("Plan a change.")
+	require.Contains(t, userPrompt, "judgement calls by calling the ask_user tool")
+	require.Contains(t, userPrompt, "different truncation lengths")
+	require.Contains(t, userPrompt, "no truncation")
+}
+
 func writePromptTestFile(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

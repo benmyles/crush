@@ -95,6 +95,17 @@ func (b *Backend) SaveSession(ctx context.Context, workspaceID string, sess sess
 	return ws.Sessions.Save(ctx, sess)
 }
 
+// ForkSession creates a new session from the source session up to the selected
+// message.
+func (b *Backend) ForkSession(ctx context.Context, workspaceID, sessionID, messageID string) (session.ForkResult, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return session.ForkResult{}, err
+	}
+
+	return session.Fork(ctx, ws.Sessions, ws.Messages, sessionID, messageID)
+}
+
 // DeleteSession deletes a session from the given workspace.
 func (b *Backend) DeleteSession(ctx context.Context, workspaceID, sessionID string) error {
 	ws, err := b.GetWorkspace(workspaceID)

@@ -409,9 +409,17 @@ func (Attribution) JSONSchemaExtend(schema *jsonschema.Schema) {
 	}
 }
 
+type Snippet struct {
+	ID    string `json:"id,omitempty" jsonschema:"description=Stable snippet identifier,example=commit-summary"`
+	Title string `json:"title,omitempty" jsonschema:"description=Human-readable snippet title,example=Review checklist"`
+	Body  string `json:"body,omitempty" jsonschema:"description=Snippet text inserted into message inputs,example=Please review this for correctness and missing tests."`
+}
+
 type Options struct {
 	ContextPaths              []string             `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
 	SkillsPaths               []string             `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/crush/skills,example=./skills"`
+	CriticalInstructions      string               `json:"critical_instructions,omitempty" jsonschema:"description=Critical instructions injected into every agent system prompt and repeated at the end of every user message,example=Never truncate output unless the user explicitly asks"`
+	Snippets                  []Snippet            `json:"snippets,omitempty" jsonschema:"description=Reusable prompt snippets available from the TUI snippet library"`
 	TUI                       *TUIOptions          `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
 	PlanCompactStrategy       *string              `json:"plan_compact_strategy,omitempty" jsonschema:"description=Strategy for compacting history before plan implementation,enum=morph,enum=summarize,enum=summarize_then_morph,enum=disabled,example=morph,example=summarize,example=summarize_then_morph,example=disabled"`
 	MorphCompact              *MorphCompactOptions `json:"morph_compact,omitempty" jsonschema:"description=Morph Compact options for manual session compaction"`
@@ -505,17 +513,19 @@ type Agent struct {
 
 	Model SelectedModelType `json:"model" jsonschema:"required,description=The model type to use for this agent,enum=large,enum=small,default=large"`
 
-	// The available tools for the agent
-	//  if this is nil, all tools are available
+	// The available tools for the agent.
+	// If this is nil, all tools are available.
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 
-	// this tells us which MCPs are available for this agent
-	//  if this is empty all mcps are available
-	//  the string array is the list of tools from the AllowedMCP the agent has available
-	//  if the string array is nil, all tools from the AllowedMCP are available
+	// AllowedMCP tells us which MCPs are available for this agent.
+	// If this is nil, all MCPs and MCP tools are available.
+	// If this is an empty map, no MCPs are available.
+	// The string array is the list of tools the agent has for that MCP.
+	// If the string array is nil or empty, all tools from that MCP are
+	// available.
 	AllowedMCP map[string][]string `json:"allowed_mcp,omitempty"`
 
-	// Overrides the context paths for this agent
+	// Overrides the context paths for this agent.
 	ContextPaths []string `json:"context_paths,omitempty"`
 }
 
@@ -718,8 +728,6 @@ func (c *Config) SetupAgents() {
 			Model:        SelectedModelTypeLarge,
 			ContextPaths: c.Options.ContextPaths,
 			AllowedTools: resolveReadOnlyTools(allowedTools),
-			// NO MCPs or LSPs by default
-			AllowedMCP: map[string][]string{},
 		},
 	}
 	c.Agents = agents

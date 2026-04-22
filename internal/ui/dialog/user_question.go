@@ -87,14 +87,29 @@ func (q *UserQuestion) HandleMsg(msg tea.Msg) Action {
 			q.selected = (q.selected + q.choiceCount() - 1) % q.choiceCount()
 		case key.Matches(msg, q.keyMap.Select):
 			return q.respond()
+		case key.Matches(msg, CopyKey):
+			return ActionCmd{Cmd: common.CopyToClipboard(q.input.Value(), "Question comment copied to clipboard")}
 		default:
-			var cmd tea.Cmd
-			q.input, cmd = q.input.Update(msg)
-			if cmd != nil {
-				return ActionCmd{Cmd: cmd}
-			}
+			return q.updateInput(msg)
 		}
+	default:
+		return q.updateInput(msg)
 	}
+	return nil
+}
+
+func (q *UserQuestion) updateInput(msg tea.Msg) Action {
+	var cmd tea.Cmd
+	q.input, cmd = q.input.Update(msg)
+	if cmd != nil {
+		return ActionCmd{Cmd: cmd}
+	}
+	return nil
+}
+
+func (q *UserQuestion) InsertText(text string) tea.Cmd {
+	q.input.Focus()
+	insertIntoTextInput(&q.input, text)
 	return nil
 }
 
@@ -148,12 +163,31 @@ func (q *UserQuestion) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	parts = append(parts, q.renderChoices(contentWidth))
 	parts = append(parts, "")
 	parts = append(parts, t.Muted.Render("Comment"))
+	inputIndex := len(parts)
 	parts = append(parts, q.input.View())
 	parts = append(parts, "")
 	parts = append(parts, q.help.View(q))
 
-	DrawCenterCursor(scr, area, dialogStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...)), nil)
-	return nil
+	cur := q.inputCursor(dialogStyle, parts[:inputIndex])
+	DrawCenterCursor(scr, area, dialogStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...)), cur)
+	return cur
+}
+
+func (q *UserQuestion) inputCursor(dialogStyle lipgloss.Style, partsBeforeInput []string) *tea.Cursor {
+	cur := q.input.Cursor()
+	if cur == nil {
+		return nil
+	}
+	cur.X += dialogStyle.GetBorderLeftSize() +
+		dialogStyle.GetMarginLeft() +
+		dialogStyle.GetPaddingLeft()
+	cur.Y += dialogStyle.GetBorderTopSize() +
+		dialogStyle.GetMarginTop() +
+		dialogStyle.GetPaddingTop()
+	for _, part := range partsBeforeInput {
+		cur.Y += max(1, lipgloss.Height(part))
+	}
+	return cur
 }
 
 func (q *UserQuestion) renderChoices(width int) string {
