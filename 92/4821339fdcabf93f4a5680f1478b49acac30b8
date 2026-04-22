@@ -1,0 +1,75 @@
+internal/agent/auto_compact.go
+  4bef5d696391409b 1-110
+internal/agent/tools/crush_info.go
+  4bef5d696391409b 399-402
+internal/config/load_test.go
+  4bef5d696391409b 61-78,89-106
+internal/skills/builtin/crush-config/SKILL.md
+  4bef5d696391409b 152-155,178-181
+internal/ui/common/elements_test.go
+  4bef5d696391409b 1-47
+internal/proto/agent.go
+  e3b292e71523343a 12-16
+internal/ui/model/ui_test.go
+  e3b292e71523343a 8,11,170-209,220-229
+internal/agent/coordinator.go
+  4bef5d696391409b 225,1050-1061,1064,1068,1073,1079,1083-1107,1199
+internal/agent/notify/notify.go
+  e3b292e71523343a 15-18
+internal/ui/model/ui.go
+  e3b292e71523343a 61,85-86,275-279,348,858-862,2319-2321,3884-3888,3894-3954
+internal/agent/agent.go
+  4bef5d696391409b 53,82,92-98,112,312,318-321,479-480,617,619-620,685-733,736-743,756,760,764,768,772,776-777,792-798
+internal/agent/auto_compact_test.go
+  4bef5d696391409b 1-260,436-446
+  e3b292e71523343a 261-435
+internal/ui/model/header.go
+  4bef5d696391409b 127-131
+internal/agent/tools/crush_info_test.go
+  4bef5d696391409b 196-197,204-207,213-214
+internal/ui/common/elements.go
+  4bef5d696391409b 7,40-59,128-133
+internal/config/config.go
+  4bef5d696391409b 309-314,358-367,411
+internal/agent/coordinator_test.go
+  e3b292e71523343a 47
+internal/agent/morph_compact.go
+  e3b292e71523343a 16,19,165-167,235-243
+  4bef5d696391409b 15,117,150-159,168-172,190,200-201,205-230
+internal/agent/morph_compact_test.go
+  4bef5d696391409b 4,10,98,104,118,124-125,129,131,135-138,147-152,159,174,205,213-216,262-271,274-299,351,354,357-375,380-386,388
+  e3b292e71523343a 11,14,217-261,272-273,300-334,376-379,387,389-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "924821339fdcabf93f4a5680f1478b49acac30b8",
+  "prompts": {
+    "4bef5d696391409b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db2fa-8501-7020-9c17-b246b7686b2d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 819,
+      "total_deletions": 100,
+      "accepted_lines": 808,
+      "overriden_lines": 0
+    },
+    "e3b292e71523343a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db34c-3c16-7f33-99b0-521e0e2ec7e7",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 447,
+      "total_deletions": 5,
+      "accepted_lines": 447,
+      "overriden_lines": 0
+    }
+  }
+}
