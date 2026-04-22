@@ -1,0 +1,103 @@
+internal/workspace/workspace.go
+  bbafb8af550020f6 21,58-62,84,95,108
+internal/agent/tools/wait.go
+  bbafb8af550020f6 1-113
+internal/agent/tools/edit.go
+  bbafb8af550020f6 76-78
+internal/agent/templates/plan_mode.md
+  bbafb8af550020f6 1-65
+internal/ui/model/ui.go
+  bbafb8af550020f6 40,55,144,212,350,556,614-628,925,1465,1694-1699,1733-1757,1875-1877,1993-2004,2015,2980-2985,2993,2995-3008,3010-3025,3059-3075,3295-3298,3318-3323,3337,3701-3713,3715-3719,3721-3837
+internal/agent/tools/submit_plan.go
+  bbafb8af550020f6 1-111
+internal/agent/tools/todos.go
+  bbafb8af550020f6 41-44
+internal/agent/tools/wait.md
+  bbafb8af550020f6 1-8
+internal/agent/tools/write.go
+  bbafb8af550020f6 64-66
+internal/proto/session.go
+  bbafb8af550020f6 3-8,19
+internal/workspace/client_workspace.go
+  bbafb8af550020f6 23,27,166-170,240-243,330-339,681-690,697-725,772,778-789,881,886-896
+internal/planning/planning.go
+  bbafb8af550020f6 1-40
+internal/ui/model/ui_test.go
+  bbafb8af550020f6 6,11,13,81-101,103-109,112-150,152-157,160-167,181-182,188-198
+internal/ui/dialog/user_question.go
+  bbafb8af550020f6 1-198
+internal/ui/dialog/arguments.go
+  bbafb8af550020f6 215-217
+internal/ui/dialog/plan_approval_test.go
+  bbafb8af550020f6 1-111
+internal/ui/dialog/commands.go
+  bbafb8af550020f6 425
+internal/config/load_test.go
+  bbafb8af550020f6 511,529,533,545,553
+internal/server/server.go
+  bbafb8af550020f6 139
+internal/server/events.go
+  bbafb8af550020f6 15,19,102-111,139-167,206,212-221
+internal/agent/tools/ask_user.go
+  bbafb8af550020f6 1-89
+internal/agent/coordinator.go
+  bbafb8af550020f6 36,40,69-73,78,88,94-104,123-124,140-141,175-178,231,515,521,530
+internal/agent/tools/multiedit.go
+  bbafb8af550020f6 78-80
+internal/config/config.go
+  bbafb8af550020f6 614,620,633,651
+internal/ui/dialog/commands_test.go
+  bbafb8af550020f6 47-66
+internal/ui/dialog/plan_approval.go
+  bbafb8af550020f6 1-191,194-210,212-245,249-308,310-320,343-394,397-415,417-435
+internal/agent/tools/submit_plan.md
+  bbafb8af550020f6 1-10
+internal/workspace/app_workspace.go
+  bbafb8af550020f6 22,89-92,96-98,171-177,228-229
+internal/backend/agent.go
+  bbafb8af550020f6 7,9,12,27-39,43-56
+internal/client/proto.go
+  bbafb8af550020f6 175-182,351-354,368,380-387
+internal/ui/dialog/actions.go
+  bbafb8af550020f6 16,20,74-85
+internal/proto/planning.go
+  bbafb8af550020f6 1-9
+internal/proto/proto.go
+  bbafb8af550020f6 49,60
+internal/agent/tools/ask_user.md
+  bbafb8af550020f6 1-10
+internal/agent/tools/tools.go
+  bbafb8af550020f6 16,28-29,65-68
+internal/agent/agent.go
+  bbafb8af550020f6 67-69,88,179-198,251-255,298,318-321,323,341-343,873-886
+internal/pubsub/events.go
+  bbafb8af550020f6 28-29
+internal/userquestion/userquestion.go
+  bbafb8af550020f6 1-124
+internal/server/proto.go
+  bbafb8af550020f6 1000-1029
+internal/app/app.go
+  bbafb8af550020f6 35,43,58-64,98-105,495-496,570-571
+internal/proto/userquestion.go
+  bbafb8af550020f6 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "1dfcbbf73b3f375bb77c13f2399acce9b47fbd98",
+  "prompts": {
+    "bbafb8af550020f6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db18a-c33b-71e1-ba79-99ae192e7c69",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 2048,
+      "total_deletions": 148,
+      "accepted_lines": 1922,
+      "overriden_lines": 22
+    }
+  }
+}
