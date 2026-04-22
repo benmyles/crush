@@ -1,0 +1,27 @@
+schema.json
+  e3b292e71523343a 32-62,458-473,478-481,516-519
+internal/agent/skill_injection_test.go
+  e3b292e71523343a 1-83
+internal/ui/model/sidebar.go
+  e3b292e71523343a 7-8,11-12,17,64-91,185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "7876eb1c238758d624684254d762bcd0fa1fab56",
+  "prompts": {
+    "e3b292e71523343a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db34c-3c16-7f33-99b0-521e0e2ec7e7",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 173,
+      "total_deletions": 0,
+      "accepted_lines": 173,
+      "overriden_lines": 0
+    }
+  }
+}
