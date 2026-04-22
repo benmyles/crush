@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"image/color"
+	"math"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -34,6 +35,26 @@ type ModelContextInfo struct {
 	ContextUsed  int64
 	ModelContext int64
 	Cost         float64
+}
+
+// ContextUsagePercentage formats context usage as a bounded integer
+// percentage. It returns false when the context window is unknown.
+func ContextUsagePercentage(tokens, contextWindow int64) (int64, bool) {
+	if contextWindow <= 0 {
+		return 0, false
+	}
+	if tokens < 0 {
+		tokens = 0
+	}
+	percentage := (float64(tokens) / float64(contextWindow)) * 100
+	if math.IsNaN(percentage) || math.IsInf(percentage, 0) {
+		return 0, false
+	}
+	const maxContextPercentage = 999
+	if percentage > maxContextPercentage {
+		return maxContextPercentage, true
+	}
+	return int64(percentage), true
 }
 
 // ModelInfo renders model information including name, provider, reasoning
@@ -101,15 +122,15 @@ func formatTokensAndCost(t *styles.Styles, tokens, contextWindow int64, cost flo
 		formattedTokens = strings.Replace(formattedTokens, ".0M", "M", 1)
 	}
 
-	percentage := (float64(tokens) / float64(contextWindow)) * 100
-
 	formattedCost := t.Muted.Render(fmt.Sprintf("$%.2f", cost))
 
 	formattedTokens = t.Subtle.Render(fmt.Sprintf("(%s)", formattedTokens))
-	formattedPercentage := t.Muted.Render(fmt.Sprintf("%d%%", int(percentage)))
-	formattedTokens = fmt.Sprintf("%s %s", formattedPercentage, formattedTokens)
-	if percentage > 80 {
-		formattedTokens = fmt.Sprintf("%s %s", styles.LSPWarningIcon, formattedTokens)
+	if percentage, ok := ContextUsagePercentage(tokens, contextWindow); ok {
+		formattedPercentage := t.Muted.Render(fmt.Sprintf("%d%%", percentage))
+		formattedTokens = fmt.Sprintf("%s %s", formattedPercentage, formattedTokens)
+		if percentage > 80 {
+			formattedTokens = fmt.Sprintf("%s %s", styles.LSPWarningIcon, formattedTokens)
+		}
 	}
 
 	return fmt.Sprintf("%s %s", formattedTokens, formattedCost)

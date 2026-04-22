@@ -12,6 +12,10 @@ const (
 	// TypeReAuthenticate indicates the agent encountered an
 	// authentication error and the user needs to re-authenticate.
 	TypeReAuthenticate Type = "re_authenticate"
+	// TypeCompactionStarted indicates session compaction has started.
+	TypeCompactionStarted Type = "compaction_started"
+	// TypeCompactionFinished indicates session compaction has finished.
+	TypeCompactionFinished Type = "compaction_finished"
 )
 
 // Notification represents a domain event published by the agent.

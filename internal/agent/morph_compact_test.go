@@ -1,13 +1,17 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"charm.land/fantasy"
+	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,13 +95,13 @@ func TestSessionAgentCompactCreatesSummaryAnchor(t *testing.T) {
 	var got morphCompactRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
-		_, err := w.Write([]byte(`{"id":"cmpr-test","model":"morph-compactor","output":"Compacted transcript"}`))
+		_, err := w.Write([]byte(`{"id":"cmpr-test","model":"morph-compactor","output":"Compacted transcript","usage":{"input_tokens":100,"output_tokens":7}}`))
 		require.NoError(t, err)
 	}))
 	defer server.Close()
 
 	env := testEnv(t)
-	agent := testSessionAgent(env, newFakeLanguageModel("test-provider", "large-model"), newFakeLanguageModel("test-provider", "small-model"), "")
+	agent := newMorphCompactTestAgent(env, newSummaryFakeLanguageModel(t, "Model summary", 5), newFakeLanguageModel("test-provider", "small-model"))
 
 	currentSession, err := env.sessions.Create(t.Context(), "Session")
 	require.NoError(t, err)
@@ -111,21 +115,27 @@ func TestSessionAgentCompactCreatesSummaryAnchor(t *testing.T) {
 		Enabled: true,
 		APIKey:  "test-key",
 		BaseURL: server.URL + "/v1",
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	currentSession, err = env.sessions.Get(t.Context(), currentSession.ID)
 	require.NoError(t, err)
 	require.NotEmpty(t, currentSession.SummaryMessageID)
+	assert.Zero(t, currentSession.PromptTokens)
+	assert.Equal(t, int64(12), currentSession.CompletionTokens)
 
 	msgs, err := env.messages.List(t.Context(), currentSession.ID)
 	require.NoError(t, err)
-	require.Len(t, msgs, 2)
+	require.Len(t, msgs, 3)
 
-	var compactMsg message.Message
+	var compactMsg, modelSummaryMsg message.Message
 	for _, msg := range msgs {
 		if msg.ID == currentSession.SummaryMessageID {
 			compactMsg = msg
+			continue
+		}
+		if msg.IsSummaryMessage {
+			modelSummaryMsg = msg
 		}
 	}
 	require.True(t, compactMsg.IsSummaryMessage)
@@ -134,12 +144,19 @@ func TestSessionAgentCompactCreatesSummaryAnchor(t *testing.T) {
 	assert.Equal(t, message.FinishReasonEndTurn, compactMsg.FinishReason())
 	assert.Equal(t, "morph-compactor", compactMsg.Model)
 	assert.Equal(t, "morph", compactMsg.Provider)
+	require.True(t, modelSummaryMsg.IsSummaryMessage)
+	assert.Equal(t, message.Assistant, modelSummaryMsg.Role)
+	assert.Equal(t, "Model summary", modelSummaryMsg.Content().Text)
+	assert.Equal(t, message.FinishReasonEndTurn, modelSummaryMsg.FinishReason())
+	assert.Equal(t, "large-model", modelSummaryMsg.Model)
+	assert.Equal(t, "test-provider", modelSummaryMsg.Provider)
 
 	assert.Equal(t, "Please compact this later.", got.Query)
 	assert.Equal(t, config.DefaultMorphCompactCompressionRatio, got.CompressionRatio)
 	assert.Equal(t, config.DefaultMorphCompactPreserveRecent, got.PreserveRecent)
 	require.Len(t, got.Messages, 1)
 	assert.Equal(t, "Please compact this later.", got.Messages[0].Content)
+	assert.NotContains(t, got.Messages[0].Content, "Model summary")
 }
 
 func TestSessionAgentCompactUsesEffectiveHistory(t *testing.T) {
@@ -154,7 +171,7 @@ func TestSessionAgentCompactUsesEffectiveHistory(t *testing.T) {
 	defer server.Close()
 
 	env := testEnv(t)
-	agent := testSessionAgent(env, newFakeLanguageModel("test-provider", "large-model"), newFakeLanguageModel("test-provider", "small-model"), "")
+	agent := newMorphCompactTestAgent(env, newSummaryFakeLanguageModel(t, "Model summary", 4), newFakeLanguageModel("test-provider", "small-model"))
 
 	currentSession, err := env.sessions.Create(t.Context(), "Session")
 	require.NoError(t, err)
@@ -185,7 +202,7 @@ func TestSessionAgentCompactUsesEffectiveHistory(t *testing.T) {
 		Enabled: true,
 		APIKey:  "test-key",
 		BaseURL: server.URL + "/v1",
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	require.Len(t, got.Messages, 2)
@@ -193,6 +210,128 @@ func TestSessionAgentCompactUsesEffectiveHistory(t *testing.T) {
 	assert.Equal(t, "Existing compacted context.", got.Messages[0].Content)
 	assert.Equal(t, "Current task.", got.Messages[1].Content)
 	assert.Equal(t, "Current task.", got.Query)
+	assert.NotContains(t, got.Messages[0].Content, "Model summary")
+	assert.NotContains(t, got.Messages[1].Content, "Model summary")
+}
+
+func TestSessionAgentCompactPublishesCompactionNotifications(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, err := w.Write([]byte(`{"id":"cmpr-test","model":"morph-compactor","output":"Compacted transcript"}`))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	env := testEnv(t)
+	publisher := &recordingNotifyPublisher{}
+	agent := newMorphCompactTestAgentWithNotify(
+		env,
+		newSummaryFakeLanguageModel(t, "Model summary", 5),
+		newFakeLanguageModel("test-provider", "small-model"),
+		publisher,
+	)
+
+	currentSession, err := env.sessions.Create(t.Context(), "Session")
+	require.NoError(t, err)
+	_, err = env.messages.Create(t.Context(), currentSession.ID, message.CreateMessageParams{
+		Role:  message.User,
+		Parts: []message.ContentPart{message.TextContent{Text: "Please compact."}},
+	})
+	require.NoError(t, err)
+
+	err = agent.Compact(t.Context(), currentSession.ID, config.MorphCompactOptions{
+		Enabled: true,
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	}, nil)
+	require.NoError(t, err)
+
+	events := publisher.Events()
+	require.Len(t, events, 2)
+	assert.Equal(t, pubsub.CreatedEvent, events[0].Type)
+	assert.Equal(t, notify.TypeCompactionStarted, events[0].Payload.Type)
+	assert.Equal(t, currentSession.ID, events[0].Payload.SessionID)
+	assert.Equal(t, "Session", events[0].Payload.SessionTitle)
+	assert.Equal(t, pubsub.CreatedEvent, events[1].Type)
+	assert.Equal(t, notify.TypeCompactionFinished, events[1].Payload.Type)
+	assert.Equal(t, currentSession.ID, events[1].Payload.SessionID)
+	assert.Equal(t, "Session", events[1].Payload.SessionTitle)
+}
+
+func TestSessionAgentCompactMorphFailureDoesNotPersistGeneratedSummary(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "compact failed", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	env := testEnv(t)
+	large := newSummaryFakeLanguageModel(t, "Model summary", 5)
+	publisher := &recordingNotifyPublisher{}
+	agent := newMorphCompactTestAgentWithNotify(env, large, newFakeLanguageModel("test-provider", "small-model"), publisher)
+
+	currentSession, err := env.sessions.Create(t.Context(), "Session")
+	require.NoError(t, err)
+	_, err = env.messages.Create(t.Context(), currentSession.ID, message.CreateMessageParams{
+		Role:  message.User,
+		Parts: []message.ContentPart{message.TextContent{Text: "Please compact."}},
+	})
+	require.NoError(t, err)
+
+	err = agent.Compact(t.Context(), currentSession.ID, config.MorphCompactOptions{
+		Enabled: true,
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "status 500")
+	assert.Equal(t, 1, large.GenerateCallCount())
+
+	currentSession, err = env.sessions.Get(t.Context(), currentSession.ID)
+	require.NoError(t, err)
+	assert.Empty(t, currentSession.SummaryMessageID)
+
+	msgs, err := env.messages.List(t.Context(), currentSession.ID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.False(t, msgs[0].IsSummaryMessage)
+
+	events := publisher.Events()
+	require.Len(t, events, 2)
+	assert.Equal(t, notify.TypeCompactionStarted, events[0].Payload.Type)
+	assert.Equal(t, notify.TypeCompactionFinished, events[1].Payload.Type)
+}
+
+func TestSessionAgentCompactDoesNotPublishNotificationsForEmptySession(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, err := w.Write([]byte(`{"id":"cmpr-test","model":"morph-compactor","output":"Compacted transcript"}`))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	env := testEnv(t)
+	publisher := &recordingNotifyPublisher{}
+	agent := newMorphCompactTestAgentWithNotify(
+		env,
+		newSummaryFakeLanguageModel(t, "Model summary", 5),
+		newFakeLanguageModel("test-provider", "small-model"),
+		publisher,
+	)
+
+	currentSession, err := env.sessions.Create(t.Context(), "Session")
+	require.NoError(t, err)
+
+	err = agent.Compact(t.Context(), currentSession.ID, config.MorphCompactOptions{
+		Enabled: true,
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, publisher.Events())
 }
 
 func TestSessionAgentCompactDisabledAndMissingKey(t *testing.T) {
@@ -209,9 +348,59 @@ func TestSessionAgentCompactDisabledAndMissingKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = agent.Compact(t.Context(), currentSession.ID, config.MorphCompactOptions{})
+	err = agent.Compact(t.Context(), currentSession.ID, config.MorphCompactOptions{}, nil)
 	require.ErrorIs(t, err, ErrMorphCompactDisabled)
 
-	err = agent.Compact(t.Context(), currentSession.ID, config.MorphCompactOptions{Enabled: true})
+	err = agent.Compact(t.Context(), currentSession.ID, config.MorphCompactOptions{Enabled: true}, nil)
 	require.ErrorIs(t, err, ErrMorphCompactAPIKeyMissing)
+}
+
+func newSummaryFakeLanguageModel(t *testing.T, text string, outputTokens int64) *fakeLanguageModel {
+	t.Helper()
+	return newFakeLanguageModel("test-provider", "large-model", func(_ context.Context, call fantasy.Call) (*fantasy.Response, error) {
+		require.True(t, promptTextContains(call.Prompt, "You are summarizing a conversation"))
+		return &fantasy.Response{
+			Content: fantasy.ResponseContent{
+				fantasy.TextContent{Text: text},
+			},
+			FinishReason: fantasy.FinishReasonStop,
+			Usage: fantasy.Usage{
+				InputTokens:  10,
+				OutputTokens: outputTokens,
+			},
+		}, nil
+	})
+}
+
+func newMorphCompactTestAgent(env fakeEnv, large, small fantasy.LanguageModel) SessionAgent {
+	return newMorphCompactTestAgentWithNotify(env, large, small, nil)
+}
+
+func newMorphCompactTestAgentWithNotify(env fakeEnv, large, small fantasy.LanguageModel, publisher pubsub.Publisher[notify.Notification]) SessionAgent {
+	return NewSessionAgent(SessionAgentOptions{
+		LargeModel:   newNonStreamingModel("test-provider", "large-model", large),
+		SmallModel:   newNonStreamingModel("test-provider", "small-model", small),
+		SystemPrompt: "Test system prompt",
+		Sessions:     env.sessions,
+		Messages:     env.messages,
+		IsYolo:       true,
+		Notify:       publisher,
+	})
+}
+
+type recordingNotifyPublisher struct {
+	events []pubsub.Event[notify.Notification]
+}
+
+func (p *recordingNotifyPublisher) Publish(t pubsub.EventType, payload notify.Notification) {
+	p.events = append(p.events, pubsub.Event[notify.Notification]{
+		Type:    t,
+		Payload: payload,
+	})
+}
+
+func (p *recordingNotifyPublisher) Events() []pubsub.Event[notify.Notification] {
+	events := make([]pubsub.Event[notify.Notification], len(p.events))
+	copy(events, p.events)
+	return events
 }

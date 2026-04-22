@@ -58,6 +58,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
 	"github.com/charmbracelet/ultraviolet/screen"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/editor"
 	xstrings "github.com/charmbracelet/x/exp/strings"
 )
@@ -80,6 +81,8 @@ const pasteColsThreshold = 1000
 
 // Session details panel max height.
 const sessionDetailsMaxHeight = 20
+
+const compactionLoaderLabel = "Crushing context"
 
 // TextareaMaxHeight is the maximum height of the prompt textarea.
 const TextareaMaxHeight = 15
@@ -269,6 +272,11 @@ type UI struct {
 	todoSpinner    spinner.Model
 	todoIsSpinning bool
 
+	// Compaction loader.
+	compactionAnim      *anim.Anim
+	compactionActive    bool
+	compactionSessionID string
+
 	// mouse highlighting related state
 	lastClickTime time.Time
 
@@ -337,6 +345,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		completions:           comp,
 		attachments:           attachments,
 		todoSpinner:           todoSpinner,
+		compactionAnim:        newCompactionAnim(com.Styles),
 		lspStates:             make(map[string]app.LSPClientInfo),
 		mcpStates:             make(map[string]mcp.ClientInfo),
 		notifyBackend:         notification.NoopBackend{},
@@ -846,6 +855,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case anim.StepMsg:
+		if m.compactionActive && m.compactionAnim != nil {
+			if cmd := m.compactionAnim.Animate(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		if m.state == uiChat {
 			if cmd := m.chat.Animate(msg); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -2302,6 +2316,9 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	// Add status and help layer
 	m.status.SetHideHelp(isOnboarding)
 	m.status.Draw(scr, layout.status)
+	if m.shouldDrawCompactionLoader(isOnboarding) {
+		m.drawCompactionLoader(scr, layout.status)
+	}
 
 	// Draw completions popup if open
 	if !isOnboarding && m.completionsOpen && m.completions.HasItems() {
@@ -3864,9 +3881,77 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 		})
 	case notify.TypeReAuthenticate:
 		return m.handleReAuthenticate(n.ProviderID)
+	case notify.TypeCompactionStarted:
+		return m.startCompactionLoader(n.SessionID)
+	case notify.TypeCompactionFinished:
+		m.stopCompactionLoader(n.SessionID)
+		return nil
 	default:
 		return nil
 	}
+}
+
+func newCompactionAnim(sty *styles.Styles) *anim.Anim {
+	if sty == nil {
+		defaultStyles := styles.DefaultStyles()
+		sty = &defaultStyles
+	}
+	return anim.New(anim.Settings{
+		Size:        12,
+		Label:       compactionLoaderLabel,
+		GradColorA:  sty.Primary,
+		GradColorB:  sty.Secondary,
+		LabelColor:  sty.FgBase,
+		CycleColors: true,
+	})
+}
+
+func (m *UI) startCompactionLoader(sessionID string) tea.Cmd {
+	if !m.hasSession() || m.session.ID != sessionID {
+		return nil
+	}
+	m.ensureCompactionAnim()
+	m.compactionActive = true
+	m.compactionSessionID = sessionID
+	return m.compactionAnim.Start()
+}
+
+func (m *UI) stopCompactionLoader(sessionID string) {
+	if !m.compactionActive || m.compactionSessionID != sessionID {
+		return
+	}
+	m.compactionActive = false
+	m.compactionSessionID = ""
+}
+
+func (m *UI) ensureCompactionAnim() {
+	if m.compactionAnim != nil {
+		return
+	}
+	var sty *styles.Styles
+	if m.com != nil {
+		sty = m.com.Styles
+	}
+	m.compactionAnim = newCompactionAnim(sty)
+}
+
+func (m *UI) shouldDrawCompactionLoader(isOnboarding bool) bool {
+	return !isOnboarding &&
+		m.compactionActive &&
+		m.compactionAnim != nil &&
+		m.hasSession() &&
+		m.session.ID == m.compactionSessionID &&
+		(m.status == nil || m.status.msg.IsEmpty())
+}
+
+func (m *UI) drawCompactionLoader(scr uv.Screen, area uv.Rectangle) {
+	if area.Dx() <= 0 {
+		return
+	}
+	view := ansi.Truncate(m.compactionAnim.Render(), area.Dx(), "…")
+	padding := max(0, area.Dx()-lipgloss.Width(view))
+	view += strings.Repeat(" ", padding)
+	uv.NewStyledString(view).Draw(scr, area)
 }
 
 func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {

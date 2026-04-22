@@ -44,7 +44,7 @@ func (m *mockSessionAgent) ClearQueue(sessionID string)                 {}
 func (m *mockSessionAgent) Summarize(context.Context, string, fantasy.ProviderOptions) error {
 	return nil
 }
-func (m *mockSessionAgent) Compact(context.Context, string, config.MorphCompactOptions) error {
+func (m *mockSessionAgent) Compact(context.Context, string, config.MorphCompactOptions, fantasy.ProviderOptions) error {
 	return nil
 }
 

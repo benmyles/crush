@@ -193,17 +193,25 @@ func TestCrushInfo_DisabledTools(t *testing.T) {
 func TestCrushInfo_Options(t *testing.T) {
 	t.Parallel()
 
+	threshold := int64(160000)
+	strategy := config.PlanCompactStrategyMorph
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 		Options: &config.Options{
 			DataDirectory:        "/Users/user/project/.crush",
 			Debug:                true,
 			DisableAutoSummarize: true,
+			AutoCompact: &config.AutoCompactOptions{
+				Strategy:       &strategy,
+				TokenThreshold: &threshold,
+			},
 		},
 	})
 
 	output := buildCrushInfo(cfg, nil, nil, nil, nil)
 	require.Contains(t, output, "[options]")
+	require.Contains(t, output, "auto_compact.strategy = morph")
+	require.Contains(t, output, "auto_compact.token_threshold = 160000")
 	require.Contains(t, output, "auto_lsp = true")
 	require.Contains(t, output, "auto_summarize = false")
 	require.Contains(t, output, "data_directory = /Users/user/project/.crush")

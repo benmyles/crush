@@ -306,6 +306,12 @@ type MorphCompactOptions struct {
 	PreserveRecent   *int     `json:"preserve_recent,omitempty" jsonschema:"description=Number of most recent messages to keep verbatim,minimum=0,default=3,example=3"`
 }
 
+// AutoCompactOptions controls automatic conversation compaction.
+type AutoCompactOptions struct {
+	Strategy       *string `json:"strategy,omitempty" jsonschema:"description=Strategy for automatic conversation compaction,enum=morph,enum=summarize,enum=disabled,default=summarize,example=morph,example=summarize,example=disabled"`
+	TokenThreshold *int64  `json:"token_threshold,omitempty" jsonschema:"description=Used-token count at which Crush should automatically compact the conversation,minimum=1,example=160000"`
+}
+
 const (
 	DefaultMorphCompactBaseURL          = "https://api.morphllm.com/v1"
 	DefaultMorphCompactCompressionRatio = 0.5
@@ -345,6 +351,16 @@ func (o *Options) EffectivePlanCompactStrategy() string {
 	}
 	if o != nil && o.MorphCompact != nil && o.MorphCompact.Enabled {
 		return PlanCompactStrategyMorph
+	}
+	return PlanCompactStrategySummarize
+}
+
+// EffectiveAutoCompactStrategy returns the effective automatic compaction
+// strategy. Automatic compaction defaults to summarization unless the user
+// explicitly selects Morph or disables it.
+func (o *Options) EffectiveAutoCompactStrategy() string {
+	if o != nil && o.AutoCompact != nil && o.AutoCompact.Strategy != nil {
+		return *o.AutoCompact.Strategy
 	}
 	return PlanCompactStrategySummarize
 }
@@ -392,6 +408,7 @@ type Options struct {
 	TUI                       *TUIOptions          `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
 	PlanCompactStrategy       *string              `json:"plan_compact_strategy,omitempty" jsonschema:"description=Strategy for compacting history before plan implementation,enum=morph,enum=summarize,enum=disabled,example=morph,example=summarize,example=disabled"`
 	MorphCompact              *MorphCompactOptions `json:"morph_compact,omitempty" jsonschema:"description=Morph Compact options for manual session compaction"`
+	AutoCompact               *AutoCompactOptions  `json:"auto_compact,omitempty" jsonschema:"description=Automatic conversation compaction options"`
 	Debug                     bool                 `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP                  bool                 `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize      bool                 `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`

@@ -58,6 +58,24 @@ func TestConfig_LoadMorphCompactOptions(t *testing.T) {
 	require.Equal(t, 0, opts.EffectivePreserveRecent())
 }
 
+func TestConfig_LoadAutoCompactOptions(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"options":{"auto_compact":{"strategy":"morph","token_threshold":160000}}}`)
+
+	loadedConfig, err := loadFromBytes([][]byte{data})
+
+	require.NoError(t, err)
+	require.NotNil(t, loadedConfig.Options)
+	require.NotNil(t, loadedConfig.Options.AutoCompact)
+	opts := loadedConfig.Options.AutoCompact
+	require.NotNil(t, opts.Strategy)
+	require.Equal(t, PlanCompactStrategyMorph, *opts.Strategy)
+	require.NotNil(t, opts.TokenThreshold)
+	require.Equal(t, int64(160000), *opts.TokenThreshold)
+	require.Equal(t, PlanCompactStrategyMorph, loadedConfig.Options.EffectiveAutoCompactStrategy())
+}
+
 func TestMorphCompactOptionsDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -66,6 +84,26 @@ func TestMorphCompactOptionsDefaults(t *testing.T) {
 	require.Equal(t, DefaultMorphCompactBaseURL, opts.EffectiveBaseURL())
 	require.Equal(t, DefaultMorphCompactCompressionRatio, opts.EffectiveCompressionRatio())
 	require.Equal(t, DefaultMorphCompactPreserveRecent, opts.EffectivePreserveRecent())
+}
+
+func TestEffectiveAutoCompactStrategy(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults to summarize when no options set", func(t *testing.T) {
+		var opts *Options
+		require.Equal(t, PlanCompactStrategySummarize, opts.EffectiveAutoCompactStrategy())
+	})
+
+	t.Run("defaults to summarize when auto compact is nil", func(t *testing.T) {
+		opts := &Options{}
+		require.Equal(t, PlanCompactStrategySummarize, opts.EffectiveAutoCompactStrategy())
+	})
+
+	t.Run("explicit setting overrides default", func(t *testing.T) {
+		strategy := PlanCompactStrategyDisabled
+		opts := &Options{AutoCompact: &AutoCompactOptions{Strategy: &strategy}}
+		require.Equal(t, PlanCompactStrategyDisabled, opts.EffectiveAutoCompactStrategy())
+	})
 }
 
 // testStore wraps a Config in a minimal ConfigStore for testing.

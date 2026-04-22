@@ -12,8 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/fantasy"
+	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 )
 
@@ -111,7 +114,7 @@ func (c *morphCompactClient) compact(ctx context.Context, req morphCompactReques
 	return &compactResp, nil
 }
 
-func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts config.MorphCompactOptions) error {
+func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts config.MorphCompactOptions, providerOpts fantasy.ProviderOptions) error {
 	if a.IsSessionBusy(sessionID) {
 		return ErrSessionBusy
 	}
@@ -144,10 +147,28 @@ func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts confi
 		return nil
 	}
 
+	largeModel := a.largeModel.Get()
+	systemPromptPrefix := a.systemPromptPrefix.Get()
+	summaryMessage := message.Message{
+		Role:             message.Assistant,
+		SessionID:        sessionID,
+		Model:            largeModel.Model.Model(),
+		Provider:         largeModel.Model.Provider(),
+		IsSummaryMessage: true,
+	}
+
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(sessionID, cancel)
 	defer a.activeRequests.Del(sessionID)
 	defer cancel()
+
+	a.publishCompactionNotification(pubsub.CreatedEvent, notify.TypeCompactionStarted, currentSession)
+	defer a.publishCompactionNotification(pubsub.CreatedEvent, notify.TypeCompactionFinished, currentSession)
+
+	generated, err := a.generateSummary(genCtx, currentSession, msgs, providerOpts, largeModel, systemPromptPrefix, summaryMessage, nil)
+	if err != nil {
+		return err
+	}
 
 	resp, err := client.compact(genCtx, morphCompactRequest{
 		Messages:          compactMessages,
@@ -166,7 +187,7 @@ func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts confi
 	if model == "" {
 		model = morphCompactModel
 	}
-	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+	compactMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:             message.Assistant,
 		Parts:            []message.ContentPart{message.TextContent{Text: resp.Output}},
 		Provider:         "morph",
@@ -176,14 +197,50 @@ func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts confi
 	if err != nil {
 		return err
 	}
-	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	if err := a.messages.Update(genCtx, summaryMessage); err != nil {
+	compactMessage.AddFinish(message.FinishReasonEndTurn, "", "")
+	if err := a.messages.Update(genCtx, compactMessage); err != nil {
 		return err
 	}
 
-	currentSession.SummaryMessageID = summaryMessage.ID
+	generatedMessage := generated.message.Clone()
+	_, err = a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:             generatedMessage.Role,
+		Parts:            generatedMessage.Parts,
+		Provider:         generatedMessage.Provider,
+		Model:            generatedMessage.Model,
+		IsSummaryMessage: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	a.updateSessionUsage(generated.model, &currentSession, generated.totalUsage, generated.openrouterCost)
+
+	summaryTokens := generated.responseUsage.OutputTokens
+	if summaryTokens == 0 {
+		summaryTokens = approximateTokenCount(generated.message.Content().Text)
+	}
+	compactTokens := resp.Usage.OutputTokens
+	if compactTokens == 0 {
+		compactTokens = approximateTokenCount(resp.Output)
+	}
+
+	currentSession.SummaryMessageID = compactMessage.ID
+	currentSession.PromptTokens = 0
+	currentSession.CompletionTokens = compactTokens + summaryTokens
 	_, err = a.sessions.Save(genCtx, currentSession)
 	return err
+}
+
+func (a *sessionAgent) publishCompactionNotification(eventType pubsub.EventType, notificationType notify.Type, currentSession session.Session) {
+	if a.notify == nil {
+		return
+	}
+	a.notify.Publish(eventType, notify.Notification{
+		SessionID:    currentSession.ID,
+		SessionTitle: currentSession.Title,
+		Type:         notificationType,
+	})
 }
 
 func validateMorphCompactOptions(opts config.MorphCompactOptions) error {

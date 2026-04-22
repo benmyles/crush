@@ -124,10 +124,11 @@ func renderHeaderDetails(
 
 	agentCfg := com.Config().Agents[config.AgentCoder]
 	model := com.Config().GetModelByType(agentCfg.Model)
-	if model != nil && model.ContextWindow > 0 {
-		percentage := (float64(session.CompletionTokens+session.PromptTokens) / float64(model.ContextWindow)) * 100
-		formattedPercentage := t.Header.Percentage.Render(fmt.Sprintf("%d%%", int(percentage)))
-		parts = append(parts, formattedPercentage)
+	if model != nil {
+		if percentage, ok := common.ContextUsagePercentage(session.CompletionTokens+session.PromptTokens, model.ContextWindow); ok {
+			formattedPercentage := t.Header.Percentage.Render(fmt.Sprintf("%d%%", percentage))
+			parts = append(parts, formattedPercentage)
+		}
 	}
 
 	const keystroke = "ctrl+d"

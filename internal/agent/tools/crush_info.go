@@ -396,6 +396,10 @@ func writeOptions(b *strings.Builder, cfg *config.ConfigStore) {
 	opts = append(opts, kv{"auto_lsp", fmt.Sprintf("%v", autoLSP)})
 	autoSummarize := !c.Options.DisableAutoSummarize
 	opts = append(opts, kv{"auto_summarize", fmt.Sprintf("%v", autoSummarize)})
+	opts = append(opts, kv{"auto_compact.strategy", c.Options.EffectiveAutoCompactStrategy()})
+	if c.Options.AutoCompact != nil && c.Options.AutoCompact.TokenThreshold != nil {
+		opts = append(opts, kv{"auto_compact.token_threshold", fmt.Sprintf("%d", *c.Options.AutoCompact.TokenThreshold)})
+	}
 
 	slices.SortFunc(opts, func(a, b kv) int { return strings.Compare(a.key, b.key) })
 	b.WriteString("[options]\n")

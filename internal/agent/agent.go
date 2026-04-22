@@ -50,7 +50,7 @@ import (
 const (
 	DefaultSessionName = "Untitled Session"
 
-	// Constants for auto-summarization thresholds
+	// Constants for automatic compaction thresholds.
 	largeContextWindowThreshold = 200_000
 	largeContextWindowBuffer    = 20_000
 	smallContextWindowRatio     = 0.2
@@ -79,6 +79,7 @@ type SessionAgentCall struct {
 	ProviderOptions  fantasy.ProviderOptions
 	Attachments      []message.Attachment
 	MaxOutputTokens  int64
+	AutoCompact      AutoCompactOptions
 	Temperature      *float64
 	TopP             *float64
 	TopK             *int64
@@ -86,6 +87,13 @@ type SessionAgentCall struct {
 	PresencePenalty  *float64
 	NonInteractive   bool
 	PlanMode         bool
+}
+
+// AutoCompactOptions controls automatic compaction for a single agent run.
+type AutoCompactOptions struct {
+	Strategy       string
+	TokenThreshold *int64
+	MorphCompact   *config.MorphCompactOptions
 }
 
 type SessionAgent interface {
@@ -101,7 +109,7 @@ type SessionAgent interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string, fantasy.ProviderOptions) error
-	Compact(context.Context, string, config.MorphCompactOptions) error
+	Compact(context.Context, string, config.MorphCompactOptions, fantasy.ProviderOptions) error
 	Model() Model
 }
 
@@ -166,14 +174,6 @@ func NewSessionAgent(
 
 func executeAgent(ctx context.Context, agent fantasy.Agent, call fantasy.AgentStreamCall) (*fantasy.AgentResult, error) {
 	return agent.Stream(ctx, call)
-}
-
-func latestStepTokens(steps []fantasy.StepResult) int64 {
-	if len(steps) == 0 {
-		return 0
-	}
-	usage := steps[len(steps)-1].Usage
-	return usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens
 }
 
 func filterAgentTools(agentTools []fantasy.AgentTool, names ...string) []fantasy.AgentTool {
@@ -309,11 +309,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	a.eventPromptSent(call.SessionID)
 
 	var currentAssistant *message.Message
-	var shouldSummarize bool
+	var shouldAutoCompact bool
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
 	if call.MaxOutputTokens > 0 {
 		maxOutputTokens = &call.MaxOutputTokens
+	}
+	autoCompact := call.AutoCompact
+	if a.disableAutoSummarize && autoCompact.Strategy == "" {
+		autoCompact.Strategy = config.PlanCompactStrategyDisabled
 	}
 	streamPrompt := call.Prompt
 	if call.PlanMode {
@@ -472,22 +476,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		StopWhen: []fantasy.StopCondition{
 			func(steps []fantasy.StepResult) bool {
-				cw := int64(largeModel.CatwalkCfg.ContextWindow)
-				// If context window is unknown (0), skip auto-summarize
-				// to avoid immediately truncating custom/local models.
-				if cw == 0 {
-					return false
-				}
-				tokens := latestStepTokens(steps)
-				remaining := cw - tokens
-				var threshold int64
-				if cw > largeContextWindowThreshold {
-					threshold = largeContextWindowBuffer
-				} else {
-					threshold = int64(float64(cw) * smallContextWindowRatio)
-				}
-				if (remaining <= threshold) && !a.disableAutoSummarize {
-					shouldSummarize = true
+				if a.shouldAutoCompact(steps, largeModel, autoCompact) {
+					shouldAutoCompact = true
 					return true
 				}
 				return false
@@ -624,10 +614,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		})
 	}
 
-	if shouldSummarize {
+	if shouldAutoCompact {
 		a.activeRequests.Del(call.SessionID)
-		if summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
-			return nil, summarizeErr
+		if compactErr := a.autoCompact(genCtx, call.SessionID, call.ProviderOptions, autoCompact); compactErr != nil {
+			return nil, compactErr
 		}
 		// If the agent wasn't done...
 		if len(currentAssistant.ToolCalls()) > 0 {
@@ -677,18 +667,11 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return nil
 	}
 
-	aiMsgs, _ := a.preparePrompt(msgs)
-
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(sessionID, cancel)
 	defer a.activeRequests.Del(sessionID)
 	defer cancel()
 
-	agent := fantasy.NewAgent(
-		wrapLanguageModelForNonStreaming(largeModel.Model, largeModel.DisableStreaming),
-		fantasy.WithSystemPrompt(string(summaryPrompt)),
-		fantasy.WithUserAgent(userAgent),
-	)
 	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:             message.Assistant,
 		Model:            largeModel.Model.Model(),
@@ -699,9 +682,65 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return err
 	}
 
+	generated, err := a.generateSummary(genCtx, currentSession, msgs, opts, largeModel, systemPromptPrefix, summaryMessage, func(msg message.Message) error {
+		return a.messages.Update(genCtx, msg)
+	})
+	if err != nil {
+		isCancelErr := errors.Is(err, context.Canceled)
+		if isCancelErr {
+			// User cancelled summarize we need to remove the summary message.
+			deleteErr := a.messages.Delete(ctx, summaryMessage.ID)
+			return deleteErr
+		}
+		return err
+	}
+	summaryMessage = generated.message
+	a.updateSessionUsage(generated.model, &currentSession, generated.totalUsage, generated.openrouterCost)
+
+	// Just in case, get just the last usage info.
+	usage := generated.responseUsage
+	currentSession.SummaryMessageID = summaryMessage.ID
+	currentSession.CompletionTokens = usage.OutputTokens
+	currentSession.PromptTokens = 0
+	_, err = a.sessions.Save(genCtx, currentSession)
+	return err
+}
+
+type generatedSummary struct {
+	message        message.Message
+	model          Model
+	totalUsage     fantasy.Usage
+	responseUsage  fantasy.Usage
+	openrouterCost *float64
+}
+
+func (a *sessionAgent) generateSummary(
+	ctx context.Context,
+	currentSession session.Session,
+	msgs []message.Message,
+	opts fantasy.ProviderOptions,
+	largeModel Model,
+	systemPromptPrefix string,
+	summaryMessage message.Message,
+	onUpdate func(message.Message) error,
+) (generatedSummary, error) {
+	aiMsgs, _ := a.preparePrompt(msgs)
+
+	agent := fantasy.NewAgent(
+		wrapLanguageModelForNonStreaming(largeModel.Model, largeModel.DisableStreaming),
+		fantasy.WithSystemPrompt(string(summaryPrompt)),
+		fantasy.WithUserAgent(userAgent),
+	)
 	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
 
-	resp, err := executeAgent(genCtx, agent, fantasy.AgentStreamCall{
+	update := func() error {
+		if onUpdate == nil {
+			return nil
+		}
+		return onUpdate(summaryMessage)
+	}
+
+	resp, err := executeAgent(ctx, agent, fantasy.AgentStreamCall{
 		Prompt:          summaryPromptText,
 		Messages:        aiMsgs,
 		ProviderOptions: opts,
@@ -714,35 +753,28 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		},
 		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
 			summaryMessage.AppendReasoningContent(reasoning.Text)
-			return a.messages.Update(genCtx, summaryMessage)
+			return update()
 		},
 		OnReasoningDelta: func(id string, text string) error {
 			summaryMessage.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			return update()
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
 			a.finalizeReasoningContent(&summaryMessage, reasoning)
-			return a.messages.Update(genCtx, summaryMessage)
+			return update()
 		},
 		OnTextDelta: func(id, text string) error {
 			summaryMessage.AppendContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			return update()
 		},
 	})
 	if err != nil {
-		isCancelErr := errors.Is(err, context.Canceled)
-		if isCancelErr {
-			// User cancelled summarize we need to remove the summary message.
-			deleteErr := a.messages.Delete(ctx, summaryMessage.ID)
-			return deleteErr
-		}
-		return err
+		return generatedSummary{}, err
 	}
 
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	err = a.messages.Update(genCtx, summaryMessage)
-	if err != nil {
-		return err
+	if err := update(); err != nil {
+		return generatedSummary{}, err
 	}
 
 	var openrouterCost *float64
@@ -757,15 +789,13 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		}
 	}
 
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost)
-
-	// Just in case, get just the last usage info.
-	usage := resp.Response.Usage
-	currentSession.SummaryMessageID = summaryMessage.ID
-	currentSession.CompletionTokens = usage.OutputTokens
-	currentSession.PromptTokens = 0
-	_, err = a.sessions.Save(genCtx, currentSession)
-	return err
+	return generatedSummary{
+		message:        summaryMessage,
+		model:          largeModel,
+		totalUsage:     resp.TotalUsage,
+		responseUsage:  resp.Response.Usage,
+		openrouterCost: openrouterCost,
+	}, nil
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {

@@ -9,9 +9,11 @@ import (
 type AgentEventType string
 
 const (
-	AgentEventTypeError     AgentEventType = "error"
-	AgentEventTypeResponse  AgentEventType = "response"
-	AgentEventTypeSummarize AgentEventType = "summarize"
+	AgentEventTypeError              AgentEventType = "error"
+	AgentEventTypeResponse           AgentEventType = "response"
+	AgentEventTypeSummarize          AgentEventType = "summarize"
+	AgentEventTypeCompactionStarted  AgentEventType = "compaction_started"
+	AgentEventTypeCompactionFinished AgentEventType = "compaction_finished"
 )
 
 // MarshalText implements the [encoding.TextMarshaler] interface.

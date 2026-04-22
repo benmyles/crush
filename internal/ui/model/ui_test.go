@@ -5,8 +5,10 @@ import (
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/catwalk/pkg/catwalk"
+	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
+	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/workspace"
@@ -165,6 +167,46 @@ func TestPlanModeToggleActionTogglesVisualState(t *testing.T) {
 	require.NotContains(t, xansi.Strip(ui.textarea.View()), " ✎ ")
 }
 
+func TestCompactionNotificationStartsAndStopsLoader(t *testing.T) {
+	t.Parallel()
+
+	ui := newCompactionTestUI("session-1")
+
+	cmd := ui.handleAgentNotification(notify.Notification{
+		SessionID: "session-1",
+		Type:      notify.TypeCompactionStarted,
+	})
+
+	require.NotNil(t, cmd)
+	require.True(t, ui.compactionActive)
+	require.Equal(t, "session-1", ui.compactionSessionID)
+	require.True(t, ui.shouldDrawCompactionLoader(false))
+
+	ui.handleAgentNotification(notify.Notification{
+		SessionID: "session-1",
+		Type:      notify.TypeCompactionFinished,
+	})
+
+	require.False(t, ui.compactionActive)
+	require.Empty(t, ui.compactionSessionID)
+	require.False(t, ui.shouldDrawCompactionLoader(false))
+}
+
+func TestCompactionNotificationIgnoresOtherSessions(t *testing.T) {
+	t.Parallel()
+
+	ui := newCompactionTestUI("session-1")
+
+	cmd := ui.handleAgentNotification(notify.Notification{
+		SessionID: "session-2",
+		Type:      notify.TypeCompactionStarted,
+	})
+
+	require.Nil(t, cmd)
+	require.False(t, ui.compactionActive)
+	require.False(t, ui.shouldDrawCompactionLoader(false))
+}
+
 func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 	t.Helper()
 
@@ -172,6 +214,19 @@ func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 		com: &common.Common{
 			Workspace: &testWorkspace{cfg: cfg},
 		},
+	}
+}
+
+func newCompactionTestUI(sessionID string) *UI {
+	sty := styles.DefaultStyles()
+	com := &common.Common{
+		Workspace: &testWorkspace{},
+		Styles:    &sty,
+	}
+	return &UI{
+		com:     com,
+		session: &session.Session{ID: sessionID},
+		status:  NewStatus(com, nil),
 	}
 }
 

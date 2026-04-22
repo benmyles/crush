@@ -222,6 +222,7 @@ func (c *coordinator) RunWithOptions(ctx context.Context, sessionID string, prom
 			Prompt:           prompt,
 			Attachments:      attachments,
 			MaxOutputTokens:  maxTokens,
+			AutoCompact:      c.autoCompactOptions(),
 			ProviderOptions:  mergedOptions,
 			Temperature:      temp,
 			TopP:             topP,
@@ -1046,28 +1047,64 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 }
 
 func (c *coordinator) Compact(ctx context.Context, sessionID string) error {
+	resolved, err := c.resolveMorphCompactOptions()
+	if err != nil {
+		return err
+	}
+	providerCfg, ok := c.cfg.Config().Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
+	if !ok {
+		return errModelProviderNotConfigured
+	}
+	return c.currentAgent.Compact(ctx, sessionID, *resolved, getProviderOptions(c.currentAgent.Model(), providerCfg))
+}
+
+func (c *coordinator) resolveMorphCompactOptions() (*config.MorphCompactOptions, error) {
 	cfg := c.cfg.Config()
 	if cfg.Options == nil {
-		return ErrMorphCompactDisabled
+		return nil, ErrMorphCompactDisabled
 	}
 	opts := cfg.Options.MorphCompact
 	if opts == nil || !opts.Enabled {
-		return ErrMorphCompactDisabled
+		return nil, ErrMorphCompactDisabled
 	}
 	resolved := *opts
 	apiKey, err := c.cfg.Resolve(resolved.APIKey)
 	if err != nil {
-		return fmt.Errorf("failed to resolve Morph Compact API key: %w", err)
+		return nil, fmt.Errorf("failed to resolve Morph Compact API key: %w", err)
 	}
 	resolved.APIKey = apiKey
 	if resolved.BaseURL != "" {
 		baseURL, err := c.cfg.Resolve(resolved.BaseURL)
 		if err != nil {
-			return fmt.Errorf("failed to resolve Morph Compact base_url: %w", err)
+			return nil, fmt.Errorf("failed to resolve Morph Compact base_url: %w", err)
 		}
 		resolved.BaseURL = baseURL
 	}
-	return c.currentAgent.Compact(ctx, sessionID, resolved)
+	return &resolved, nil
+}
+
+func (c *coordinator) autoCompactOptions() AutoCompactOptions {
+	cfg := c.cfg.Config()
+	opts := AutoCompactOptions{
+		Strategy: config.PlanCompactStrategySummarize,
+	}
+	if cfg.Options == nil || cfg.Options.DisableAutoSummarize {
+		opts.Strategy = config.PlanCompactStrategyDisabled
+		return opts
+	}
+	opts.Strategy = cfg.Options.EffectiveAutoCompactStrategy()
+	if cfg.Options.AutoCompact != nil {
+		opts.TokenThreshold = cfg.Options.AutoCompact.TokenThreshold
+	}
+	if opts.Strategy == config.PlanCompactStrategyMorph {
+		morphOpts, err := c.resolveMorphCompactOptions()
+		if err != nil {
+			slog.Warn("Failed to prepare Morph auto-compaction, will fall back to summarization", "error", err)
+		} else {
+			opts.MorphCompact = morphOpts
+		}
+	}
+	return opts
 }
 
 func (c *coordinator) CompactForPlan(ctx context.Context, sessionID, strategy string) error {
@@ -1159,6 +1196,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		SessionID:        session.ID,
 		Prompt:           params.Prompt,
 		MaxOutputTokens:  maxTokens,
+		AutoCompact:      c.autoCompactOptions(),
 		ProviderOptions:  getProviderOptions(model, providerCfg),
 		Temperature:      model.ModelCfg.Temperature,
 		TopP:             model.ModelCfg.TopP,

@@ -149,6 +149,10 @@ The `$schema` property enables IDE autocomplete but is optional.
       "compression_ratio": 0.5,
       "preserve_recent": 3
     },
+    "auto_compact": {
+      "strategy": "morph",
+      "token_threshold": 160000
+    },
     "auto_lsp": true,
     "debug": false,
     "debug_lsp": false,
@@ -170,6 +174,11 @@ Other options: `context_paths`, `progress`, `disable_notifications`, `disable_au
 `/compact` prompt input. It is disabled unless `enabled` is true and requires a
 Morph API key in `api_key`. `base_url`, `compression_ratio`, and
 `preserve_recent` are optional.
+
+`auto_compact` controls automatic conversation compaction. `strategy` can be
+`summarize`, `morph`, or `disabled`, and defaults to `summarize`.
+`token_threshold` is an optional used-token count at which Crush should compact
+the conversation. When omitted, Crush uses its model-context defaults.
 
 ## Tool Permissions
 
