@@ -1,0 +1,29 @@
+internal/ui/model/ui_test.go
+  3858fe33e4ab8f64 5,363,369,380,415-419,426-506,771-788,825-828
+internal/ui/dialog/plan_approval_test.go
+  3858fe33e4ab8f64 86-103
+internal/ui/model/ui.go
+  3858fe33e4ab8f64 4142-4147,4179,4187,4197-4198
+internal/ui/dialog/plan_approval.go
+  3858fe33e4ab8f64 441,443,445,447,449
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "1ee6f1ebfbfa7b73205d60575f8ead9174a7d951",
+  "prompts": {
+    "3858fe33e4ab8f64": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db6d2-415c-7763-939e-392782c55650",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 151,
+      "total_deletions": 37,
+      "accepted_lines": 149,
+      "overriden_lines": 0
+    }
+  }
+}
