@@ -1,0 +1,62 @@
+internal/ui/chat/loading_stats.go
+  d79ebe83b59ac1e0 1-75
+internal/ui/model/layout_test.go
+  d79ebe83b59ac1e0 9-11,14,27,35-40,52,55-56,60-68,137-287
+internal/ui/styles/styles.go
+  3858fe33e4ab8f64 289-293,1154-1156
+internal/ui/chat/assistant.go
+  d79ebe83b59ac1e0 34,219-220,222-226,244,258-264
+internal/agent/tools/diagnostics.go
+  d79ebe83b59ac1e0 98-100,105-107,112-114,116-118
+internal/ui/chat/loading_stats_test.go
+  d79ebe83b59ac1e0 1-88
+internal/ui/chat/tools.go
+  d79ebe83b59ac1e0 333-335,442-443,451-464,487,495
+internal/ui/model/ui.go
+  d79ebe83b59ac1e0 21,196-197,773,853-856,988,991-993,1024-1044,1229,1247,1293-1299,1306-1307,1329,1706-1724,2206-2208,2265-2269,2304-2308,2866-2873
+internal/agent/tools/multiedit.go
+  d79ebe83b59ac1e0 87-89,109-111,115-117,143-145,153-155,167-171,181-184,212-214,268-270,291-293,305-307,326-329,357-359,415-443
+internal/agent/tools/write.go
+  d79ebe83b59ac1e0 72-74,96-98,113-116,139-141,171-173,175-178
+internal/ui/dialog/snippets.go
+  d79ebe83b59ac1e0 101,128,136
+internal/agent/tools/multiedit_test.go
+  d79ebe83b59ac1e0 155-186
+internal/agent/tools/edit.go
+  d79ebe83b59ac1e0 80-82,105-107,110-112,131-133,145-148,170-172,218-220,239-241,271-274,297-299,357-359,378-380,410-413,436-437
+internal/agent/tools/edit_change_counts.go
+  d79ebe83b59ac1e0 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "f476549d19bb9a45372bea05a20a5f077829aa64",
+  "prompts": {
+    "3858fe33e4ab8f64": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db6d2-415c-7763-939e-392782c55650",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 2,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "d79ebe83b59ac1e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db84e-e1c0-7a62-bb85-615bb8a9d356",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ben Myles",
+      "messages": [],
+      "total_additions": 693,
+      "total_deletions": 98,
+      "accepted_lines": 688,
+      "overriden_lines": 0
+    }
+  }
+}
