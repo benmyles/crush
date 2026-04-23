@@ -21,6 +21,7 @@ Get stdout/stderr from a background shell by ID; set wait=true to wait for compl
 - Check the 'done' status to see if process completed
 - Can be called multiple times to view incremental output
 - Use wait=true when you need the final output and exit status
+- Prefer job_output with wait=true over wait with seconds only, since it returns as soon as the job completes instead of blocking for a fixed duration
 - If the returned status is running and the job accepts input, use job_input to
   respond to prompts instead of calling job_output with wait=true again
 </tips>

@@ -307,6 +307,7 @@ When running non-trivial bash commands (especially those that modify the system)
 - This ensures the user understands potentially dangerous operations
 - Simple read-only commands (ls, cat, etc.) don't need explanation
 - Use `&` for background processes that won't stop on their own (e.g., `node server.js &`)
+- When waiting for a background job, prefer waiting on the job directly (wait with shell_id or job_output with wait=true) over using wait with seconds only, which is less efficient when the job finishes before the timer
 - Avoid interactive commands - use non-interactive versions (e.g., `npm init -y` not `npm init`)
 - Combine related commands to save time (e.g., `git status && git diff HEAD && git log -n 3`)
 </bash_commands>
