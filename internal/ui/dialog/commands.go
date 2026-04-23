@@ -540,6 +540,12 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
 
+	autoFollowLabel := "Enable Auto-Follow on Focus"
+	if cfg != nil && cfg.Options != nil && cfg.Options.TUI.AutoFollowOnFocusEnabled() {
+		autoFollowLabel = "Disable Auto-Follow on Focus"
+	}
+	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_auto_follow_on_focus", autoFollowLabel, "", ActionToggleAutoFollowOnFocus{}))
+
 	commands = append(commands,
 		NewCommandItem(c.com.Styles, "quit", "Quit", "ctrl+c", tea.QuitMsg{}),
 	)

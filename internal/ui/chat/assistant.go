@@ -31,6 +31,7 @@ type AssistantMessageItem struct {
 	message           *message.Message
 	sty               *styles.Styles
 	anim              *anim.Anim
+	loadingUpChars    int
 	thinkingExpanded  bool
 	thinkingBoxHeight int // Tracks the rendered thinking box height for click detection.
 }
@@ -215,8 +216,14 @@ func (a *AssistantMessageItem) renderSpinning() string {
 		a.anim.SetLabel("Thinking")
 	} else if a.message.IsSummaryMessage {
 		a.anim.SetLabel("Summarizing")
+	} else {
+		a.anim.SetLabel("Receiving")
 	}
-	return a.anim.Render()
+	stats := renderLoadingStats(a.sty, LoadingStats{
+		UpChars:   a.loadingUpChars,
+		DownChars: a.receivedChars(),
+	})
+	return fmt.Sprintf("%s %s", a.anim.Render(), stats)
 }
 
 // renderError renders an error message.
@@ -233,9 +240,8 @@ func (a *AssistantMessageItem) renderError(width int) string {
 func (a *AssistantMessageItem) isSpinning() bool {
 	isThinking := a.message.IsThinking()
 	isFinished := a.message.IsFinished()
-	hasContent := strings.TrimSpace(a.message.Content().Text) != ""
 	hasToolCalls := len(a.message.ToolCalls()) > 0
-	return (isThinking || !isFinished) && !hasContent && !hasToolCalls
+	return (isThinking || !isFinished) && !hasToolCalls
 }
 
 // SetMessage is used to update the underlying message.
@@ -247,6 +253,15 @@ func (a *AssistantMessageItem) SetMessage(message *message.Message) tea.Cmd {
 		return a.StartAnimation()
 	}
 	return nil
+}
+
+func (a *AssistantMessageItem) SetLoadingUpChars(chars int) {
+	a.loadingUpChars = max(0, chars)
+}
+
+func (a *AssistantMessageItem) receivedChars() int {
+	return countLoadingChars(a.message.Content().Text) +
+		countLoadingChars(a.message.ReasoningContent().Thinking)
 }
 
 // ToggleExpanded toggles the expanded state of the thinking box.

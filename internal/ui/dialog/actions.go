@@ -56,6 +56,7 @@ type (
 	ActionToggleNotifications         struct{}
 	ActionToggleSubAgents             struct{}
 	ActionToggleTransparentBackground struct{}
+	ActionToggleAutoFollowOnFocus      struct{}
 	ActionForkSession                 struct{}
 	ActionEditCriticalInstructions    struct {
 		Scope config.Scope

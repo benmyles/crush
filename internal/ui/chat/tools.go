@@ -330,6 +330,9 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 			Status:          t.computeStatus(),
 			CommandOutput:   t.commandOutput,
 		})
+		if t.isSpinning() {
+			content = appendLoadingStats(content, renderLoadingFooter(t.sty, t.anim, t.loadingStats()), t.isCompact)
+		}
 		height = lipgloss.Height(content)
 		// cache the rendered content
 		t.setCachedRender(content, toolItemWidth, height)
@@ -436,12 +439,27 @@ func (t *baseToolMessageItem) isSpinning() bool {
 			Status:   t.status,
 		})
 	}
-	return !t.toolCall.Finished && t.status != ToolStatusCanceled
+	status := t.computeStatus()
+	return t.result == nil && status != ToolStatusSuccess && status != ToolStatusError && status != ToolStatusCanceled
 }
 
 // SetSpinningFunc sets a custom function to determine if the tool should spin.
 func (t *baseToolMessageItem) SetSpinningFunc(fn SpinningFunc) {
 	t.spinningFunc = fn
+}
+
+func (t *baseToolMessageItem) loadingStats() LoadingStats {
+	downChars := 0
+	if t.commandOutput != nil {
+		downChars += countLoadingChars(t.commandOutput.Output)
+	}
+	if t.result != nil {
+		downChars += countLoadingChars(t.result.Content)
+	}
+	return LoadingStats{
+		UpChars:   countLoadingChars(t.toolCall.Input),
+		DownChars: downChars,
+	}
 }
 
 // ToggleExpanded toggles the expanded state of the thinking box.
@@ -466,7 +484,7 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 // pendingTool renders a tool that is still in progress with an animation.
-func pendingTool(sty *styles.Styles, name string, anim *anim.Anim, nested bool) string {
+func pendingTool(sty *styles.Styles, name string, _ *anim.Anim, nested bool) string {
 	icon := sty.Tool.IconPending.Render()
 	nameStyle := sty.Tool.NameNormal
 	if nested {
@@ -474,12 +492,7 @@ func pendingTool(sty *styles.Styles, name string, anim *anim.Anim, nested bool) 
 	}
 	toolName := nameStyle.Render(name)
 
-	var animView string
-	if anim != nil {
-		animView = anim.Render()
-	}
-
-	return fmt.Sprintf("%s %s %s", icon, toolName, animView)
+	return fmt.Sprintf("%s %s", icon, toolName)
 }
 
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.

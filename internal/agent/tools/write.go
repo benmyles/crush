@@ -7,11 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/crush/internal/diff"
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/fsext"
@@ -71,6 +69,9 @@ func NewWriteTool(
 			}
 
 			filePath := filepathext.SmartJoin(workingDir, params.FilePath)
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			fileInfo, err := os.Stat(filePath)
 			if err == nil {
@@ -92,6 +93,9 @@ func NewWriteTool(
 			} else if !os.IsNotExist(err) {
 				return fantasy.ToolResponse{}, fmt.Errorf("error checking file: %w", err)
 			}
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			dir := filepath.Dir(filePath)
 			if err = os.MkdirAll(dir, 0o755); err != nil {
@@ -106,11 +110,10 @@ func NewWriteTool(
 				}
 			}
 
-			diff, additions, removals := diff.GenerateDiff(
-				oldContent,
-				params.Content,
-				strings.TrimPrefix(filePath, workingDir),
-			)
+			additions, removals := editChangeCounts(oldContent, params.Content)
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			p, err := permissions.Request(ctx,
 				permission.CreatePermissionRequest{
@@ -132,6 +135,9 @@ func NewWriteTool(
 			}
 			if !p {
 				return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+			}
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
 			}
 
 			err = os.WriteFile(filePath, []byte(params.Content), 0o644)
@@ -162,15 +168,20 @@ func NewWriteTool(
 			}
 
 			filetracker.RecordRead(ctx, sessionID, filePath)
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
-			notifyLSPs(ctx, lspManager, params.FilePath)
+			notifyLSPs(ctx, lspManager, filePath)
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			result := fmt.Sprintf("File successfully written: %s", filePath)
 			result = fmt.Sprintf("<result>\n%s\n</result>", result)
 			result += getDiagnostics(filePath, lspManager)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result),
 				WriteResponseMetadata{
-					Diff:      diff,
 					Additions: additions,
 					Removals:  removals,
 				},

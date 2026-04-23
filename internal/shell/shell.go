@@ -128,6 +128,15 @@ func (s *Shell) ExecPTY(ctx context.Context, command string, tty *os.File) error
 	return s.execPTY(ctx, command, tty)
 }
 
+// ExecPTYStream executes a command with terminal stdin while mirroring stdout
+// and stderr to output.
+func (s *Shell) ExecPTYStream(ctx context.Context, command string, tty *os.File, output io.Writer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.execPTYStream(ctx, command, tty, output)
+}
+
 // GetWorkingDir returns the current working directory
 func (s *Shell) GetWorkingDir() string {
 	s.mu.Lock()
@@ -336,6 +345,13 @@ func (s *Shell) execStream(ctx context.Context, command string, stdout, stderr i
 // execPTY executes commands using POSIX shell emulation with terminal stdio.
 func (s *Shell) execPTY(ctx context.Context, command string, tty *os.File) error {
 	return s.execCommon(ctx, command, tty, tty, tty, true)
+}
+
+// execPTYStream executes commands using POSIX shell emulation with terminal
+// stdin and captured terminal output.
+func (s *Shell) execPTYStream(ctx context.Context, command string, tty *os.File, output io.Writer) error {
+	terminalOutput := io.MultiWriter(output, tty)
+	return s.execCommon(ctx, command, tty, terminalOutput, terminalOutput, true)
 }
 
 func (s *Shell) execHandlers() []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {

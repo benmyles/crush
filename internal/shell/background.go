@@ -204,10 +204,10 @@ func (bs *BackgroundShell) startPTY(command string) error {
 		readDone := make(chan struct{})
 		go func() {
 			defer close(readDone)
-			_, _ = io.Copy(bs.stdout, master)
+			_, _ = io.Copy(io.Discard, master)
 		}()
 
-		err := bs.Shell.ExecPTY(bs.ctx, command, tty)
+		err := bs.Shell.ExecPTYStream(bs.ctx, command, tty, bs.stdout)
 		bs.exitErr = err
 		bs.completedAt.Store(time.Now().Unix())
 		_ = tty.Close()
@@ -215,6 +215,13 @@ func (bs *BackgroundShell) startPTY(command string) error {
 		select {
 		case <-readDone:
 		case <-time.After(250 * time.Millisecond):
+			// If EOF is delayed, close the master and wait for the reader to
+			// flush bytes it already read before marking the shell done.
+			bs.closePTY()
+			select {
+			case <-readDone:
+			case <-time.After(250 * time.Millisecond):
+			}
 		}
 		bs.closePTY()
 	}()

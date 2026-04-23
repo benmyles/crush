@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/crush/internal/diff"
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/fsext"
@@ -78,6 +77,9 @@ func NewEditTool(
 			}
 
 			params.FilePath = filepathext.SmartJoin(workingDir, params.FilePath)
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			var response fantasy.ToolResponse
 			var err error
@@ -100,8 +102,14 @@ func NewEditTool(
 				// This prevents unnecessary LSP diagnostics processing
 				return response, nil
 			}
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			notifyLSPs(ctx, lspManager, params.FilePath)
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
 			text += getDiagnostics(params.FilePath, lspManager)
@@ -120,6 +128,9 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	} else if !os.IsNotExist(err) {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to access file: %w", err)
 	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	dir := filepath.Dir(filePath)
 	if err = os.MkdirAll(dir, 0o755); err != nil {
@@ -131,11 +142,10 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 		return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for creating a new file")
 	}
 
-	_, additions, removals := diff.GenerateDiff(
-		"",
-		content,
-		strings.TrimPrefix(filePath, edit.workingDir),
-	)
+	additions, removals := editChangeCounts("", content)
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 	p, err := edit.permissions.Request(edit.ctx,
 		permission.CreatePermissionRequest{
 			SessionID:   sessionID,
@@ -156,6 +166,9 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	}
 	if !p {
 		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	err = os.WriteFile(filePath, []byte(content), 0o644)
@@ -202,6 +215,9 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 	if fileInfo.IsDir() {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("path is a directory, not a file: %s", filePath)), nil
 	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	sessionID := GetSessionFromContext(edit.ctx)
 	if sessionID == "" {
@@ -219,6 +235,9 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 			fmt.Sprintf("file %s has been modified since it was last read (mod time: %s, last read: %s)",
 				filePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339),
 			)), nil
+	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	content, err := os.ReadFile(filePath)
@@ -249,11 +268,10 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		newContent = oldContent[:index] + oldContent[index+len(oldString):]
 	}
 
-	_, additions, removals := diff.GenerateDiff(
-		oldContent,
-		newContent,
-		strings.TrimPrefix(filePath, edit.workingDir),
-	)
+	additions, removals := editChangeCounts(oldContent, newContent)
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	p, err := edit.permissions.Request(edit.ctx,
 		permission.CreatePermissionRequest{
@@ -275,6 +293,9 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 	}
 	if !p {
 		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	if isCrlf {
@@ -333,6 +354,9 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	if fileInfo.IsDir() {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("path is a directory, not a file: %s", filePath)), nil
 	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	sessionID := GetSessionFromContext(edit.ctx)
 	if sessionID == "" {
@@ -350,6 +374,9 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 			fmt.Sprintf("file %s has been modified since it was last read (mod time: %s, last read: %s)",
 				filePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339),
 			)), nil
+	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	content, err := os.ReadFile(filePath)
@@ -380,11 +407,10 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	if oldContent == newContent {
 		return fantasy.NewTextErrorResponse("new content is the same as old content. No changes made."), nil
 	}
-	_, additions, removals := diff.GenerateDiff(
-		oldContent,
-		newContent,
-		strings.TrimPrefix(filePath, edit.workingDir),
-	)
+	additions, removals := editChangeCounts(oldContent, newContent)
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	p, err := edit.permissions.Request(edit.ctx,
 		permission.CreatePermissionRequest{
@@ -406,6 +432,9 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	}
 	if !p {
 		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	if isCrlf {

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/crush/internal/diff"
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/fsext"
@@ -85,6 +84,9 @@ func NewMultiEditTool(
 			if err := validateEdits(params.Edits); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			var response fantasy.ToolResponse
 			var err error
@@ -104,9 +106,15 @@ func NewMultiEditTool(
 			if response.IsError {
 				return response, nil
 			}
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			// Notify LSP clients about the change
 			notifyLSPs(ctx, lspManager, params.FilePath)
+			if err := ctx.Err(); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 
 			// Wait for LSP diagnostics and add them to the response
 			text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
@@ -132,12 +140,18 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	if firstEdit.OldString != "" {
 		return fantasy.NewTextErrorResponse("first edit must have empty old_string for file creation"), nil
 	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	// Check if file already exists
 	if _, err := os.Stat(params.FilePath); err == nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("file already exists: %s", params.FilePath)), nil
 	} else if !os.IsNotExist(err) {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to access file: %w", err)
+	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	// Create parent directories
@@ -150,19 +164,11 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	currentContent := firstEdit.NewString
 
 	// Apply remaining edits to the content, tracking failures
-	var failedEdits []FailedEdit
-	for i := 1; i < len(params.Edits); i++ {
-		edit := params.Edits[i]
-		newContent, err := applyEditToContent(currentContent, edit)
-		if err != nil {
-			failedEdits = append(failedEdits, FailedEdit{
-				Index: i + 1,
-				Error: err.Error(),
-				Edit:  edit,
-			})
-			continue
-		}
-		currentContent = newContent
+	failedEdits := []FailedEdit(nil)
+	var err error
+	currentContent, failedEdits, err = applyMultiEditOperations(edit.ctx, currentContent, params.Edits, 1)
+	if err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	// Get session and message IDs
@@ -172,7 +178,10 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	}
 
 	// Check permissions
-	_, additions, removals := diff.GenerateDiff("", currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
+	additions, removals := editChangeCounts("", currentContent)
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	editsApplied := len(params.Edits) - len(failedEdits)
 	var description string
@@ -199,6 +208,9 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	}
 	if !p {
 		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	// Write the file
@@ -253,6 +265,9 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	if fileInfo.IsDir() {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("path is a directory, not a file: %s", params.FilePath)), nil
 	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	sessionID := GetSessionFromContext(edit.ctx)
 	if sessionID == "" {
@@ -273,6 +288,9 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 				params.FilePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339),
 			)), nil
 	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	// Read current file content
 	content, err := os.ReadFile(params.FilePath)
@@ -284,18 +302,9 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	currentContent := oldContent
 
 	// Apply all edits sequentially, tracking failures
-	var failedEdits []FailedEdit
-	for i, edit := range params.Edits {
-		newContent, err := applyEditToContent(currentContent, edit)
-		if err != nil {
-			failedEdits = append(failedEdits, FailedEdit{
-				Index: i + 1,
-				Error: err.Error(),
-				Edit:  edit,
-			})
-			continue
-		}
-		currentContent = newContent
+	currentContent, failedEdits, err := applyMultiEditOperations(edit.ctx, currentContent, params.Edits, 0)
+	if err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	// Check if content actually changed
@@ -314,7 +323,10 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	}
 
 	// Generate diff and check permissions
-	_, additions, removals := diff.GenerateDiff(oldContent, currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
+	additions, removals := editChangeCounts(oldContent, currentContent)
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
 
 	editsApplied := len(params.Edits) - len(failedEdits)
 	var description string
@@ -341,6 +353,9 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	}
 	if !p {
 		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	}
+	if err := edit.ctx.Err(); err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	if isCrlf {
@@ -395,6 +410,37 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 			EditsFailed:  failedEdits,
 		},
 	), nil
+}
+
+func applyMultiEditOperations(
+	ctx context.Context,
+	content string,
+	edits []MultiEditOperation,
+	startIndex int,
+) (string, []FailedEdit, error) {
+	currentContent := content
+	var failedEdits []FailedEdit
+	for i := startIndex; i < len(edits); i++ {
+		if err := ctx.Err(); err != nil {
+			return currentContent, failedEdits, err
+		}
+
+		edit := edits[i]
+		newContent, err := applyEditToContent(currentContent, edit)
+		if err != nil {
+			failedEdits = append(failedEdits, FailedEdit{
+				Index: i + 1,
+				Error: err.Error(),
+				Edit:  edit,
+			})
+			continue
+		}
+		currentContent = newContent
+	}
+	if err := ctx.Err(); err != nil {
+		return currentContent, failedEdits, err
+	}
+	return currentContent, failedEdits, nil
 }
 
 func applyEditToContent(content string, edit MultiEditOperation) (string, error) {

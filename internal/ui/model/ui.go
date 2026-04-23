@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -192,7 +193,8 @@ type UI struct {
 	// continueLastSession is set to continue the most recent session on startup.
 	continueLastSession bool
 
-	lastUserMessageTime int64
+	lastUserMessageTime  int64
+	lastUserMessageChars int
 
 	// The width and height of the terminal in cells.
 	width  int
@@ -768,11 +770,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch m.state {
 		case uiChat:
-			x, y := msg.X, msg.Y
-			// Adjust for chat area position
-			x -= m.layout.main.Min.X
-			y -= m.layout.main.Min.Y
-			if !image.Pt(msg.X, msg.Y).In(m.layout.sidebar) {
+			if x, y, ok := m.chatMousePosition(msg.X, msg.Y); ok {
 				if handled, cmd := m.chat.HandleMouseDown(x, y); handled {
 					m.lastClickTime = time.Now()
 					if cmd != nil {
@@ -852,30 +850,18 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Otherwise handle mouse wheel for chat.
 		switch m.state {
 		case uiChat:
+			if _, _, ok := m.chatMousePosition(msg.X, msg.Y); !ok {
+				break
+			}
+
 			switch msg.Button {
 			case tea.MouseWheelUp:
 				if cmd := m.chat.ScrollByAndAnimate(-MouseScrollThreshold); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				if !m.chat.SelectedItemInView() {
-					m.chat.SelectPrev()
-					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-				}
 			case tea.MouseWheelDown:
 				if cmd := m.chat.ScrollByAndAnimate(MouseScrollThreshold); cmd != nil {
 					cmds = append(cmds, cmd)
-				}
-				if !m.chat.SelectedItemInView() {
-					if m.chat.AtBottom() {
-						m.chat.SelectLast()
-					} else {
-						m.chat.SelectNext()
-					}
-					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
 				}
 			}
 		}
@@ -999,9 +985,12 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			m.lastUserMessageTime = msg.CreatedAt
+			m.lastUserMessageChars = messageLoadingUpChars(msg)
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			msgItems := chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)
+			setAssistantLoadingUpChars(msgItems, m.lastUserMessageChars)
+			items = append(items, msgItems...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 				items = append(items, infoItem)
@@ -1030,6 +1019,27 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	}
 	m.chat.SelectLast()
 	return tea.Sequence(cmds...)
+}
+
+func setAssistantLoadingUpChars(items []chat.MessageItem, chars int) {
+	for _, item := range items {
+		assistantItem, ok := item.(*chat.AssistantMessageItem)
+		if !ok {
+			continue
+		}
+		assistantItem.SetLoadingUpChars(chars)
+	}
+}
+
+func messageLoadingUpChars(msg *message.Message) int {
+	total := utf8.RuneCountInString(msg.Content().Text)
+	for _, content := range msg.BinaryContent() {
+		if !strings.HasPrefix(content.MIMEType, "text/") {
+			continue
+		}
+		total += utf8.RuneCount(content.Data)
+	}
+	return total
 }
 
 // loadNestedToolCalls recursively loads nested tool calls for agent/agentic_fetch tools.
@@ -1216,6 +1226,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 	switch msg.Role {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
+		m.lastUserMessageChars = messageLoadingUpChars(&msg)
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
@@ -1233,6 +1244,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 		}
 	case message.Assistant:
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
+		setAssistantLoadingUpChars(items, m.lastUserMessageChars)
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1278,12 +1290,21 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 	return tea.Sequence(cmds...)
 }
 
+func (m *UI) chatMousePosition(x, y int) (int, int, bool) {
+	if !image.Pt(x, y).In(m.layout.main) {
+		return 0, 0, false
+	}
+	return x - m.layout.main.Min.X, y - m.layout.main.Min.Y, true
+}
+
 func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 	switch {
 	case m.state != uiChat:
 		return nil
 	case image.Pt(msg.X, msg.Y).In(m.layout.sidebar):
 		return nil
+	case m.focus == uiFocusEditor && image.Pt(msg.X, msg.Y).In(m.layout.editor):
+		cmd = m.autoFollowOnEditorActivity()
 	case m.focus != uiFocusEditor && image.Pt(msg.X, msg.Y).In(m.layout.editor):
 		m.focus = uiFocusEditor
 		cmd = m.textarea.Focus()
@@ -1305,6 +1326,7 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
+			assistantItem.SetLoadingUpChars(m.lastUserMessageChars)
 			assistantItem.SetMessage(&msg)
 		}
 	}
@@ -1679,6 +1701,25 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				status = "enabled"
 			}
 			return util.NewInfoMsg("Transparent background " + status)
+		})
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionToggleAutoFollowOnFocus:
+		cmds = append(cmds, func() tea.Msg {
+			cfg := m.com.Config()
+			if cfg == nil || cfg.Options == nil || cfg.Options.TUI == nil {
+				return util.ReportError(errors.New("configuration not found"))()
+			}
+
+			newValue := !cfg.Options.TUI.AutoFollowOnFocusEnabled()
+			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.auto_follow_on_focus", newValue); err != nil {
+				return util.ReportError(err)()
+			}
+
+			status := "disabled"
+			if newValue {
+				status = "enabled"
+			}
+			return util.NewInfoMsg("Auto-follow on focus " + status)
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionQuit:
@@ -2162,6 +2203,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.textarea.InsertRune('\n')
 				m.closeCompletions()
 				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
+				if cmd := m.autoFollowOnEditorActivity(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			case key.Matches(msg, m.keyMap.Editor.HistoryPrev):
 				cmd := m.handleHistoryUp(msg)
 				if cmd != nil {
@@ -2218,6 +2262,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 				prevHeight := m.textarea.Height()
 				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
+				if m.textarea.Value() != curValue {
+					if cmd := m.autoFollowOnEditorActivity(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
 
 				// Any text modification becomes the current draft.
 				m.updateHistoryDraft(curValue)
@@ -2252,6 +2301,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.focus = uiFocusEditor
 				cmds = append(cmds, m.textarea.Focus())
 				m.chat.Blur()
+				if cfg := m.com.Config(); cfg != nil && cfg.Options != nil && cfg.Options.TUI.AutoFollowOnFocusEnabled() && !m.chat.Follow() {
+					if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -2807,6 +2861,16 @@ func (m *UI) handleTextareaHeightChange(prevHeight int) tea.Cmd {
 		return m.chat.ScrollToBottomAndAnimate()
 	}
 	return nil
+}
+
+func (m *UI) autoFollowOnEditorActivity() tea.Cmd {
+	if m.state != uiChat || m.chat == nil || m.chat.Follow() {
+		return nil
+	}
+	if cfg := m.com.Config(); cfg == nil || cfg.Options == nil || cfg.Options.TUI == nil || !cfg.Options.TUI.AutoFollowOnFocusEnabled() {
+		return nil
+	}
+	return m.chat.ScrollToBottomAndAnimate()
 }
 
 func (m *UI) clearPrompt() tea.Cmd {

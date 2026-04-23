@@ -98,6 +98,7 @@ func NewSnippets(com *common.Common, snippets []ScopedSnippet) *Snippets {
 		help:   h,
 		keyMap: defaultSnippetsKeyMap(),
 	}
+	s.list.Focus()
 	s.SetSnippets(snippets)
 	return s
 }
@@ -124,6 +125,7 @@ func (s *Snippets) HandleMsg(msg tea.Msg) Action {
 		case key.Matches(msg, s.keyMap.Close):
 			return ActionClose{}
 		case key.Matches(msg, s.keyMap.Up):
+			s.list.Focus()
 			if s.list.IsSelectedFirst() {
 				s.list.SelectLast()
 			} else {
@@ -131,6 +133,7 @@ func (s *Snippets) HandleMsg(msg tea.Msg) Action {
 			}
 			s.list.ScrollToSelected()
 		case key.Matches(msg, s.keyMap.Down):
+			s.list.Focus()
 			if s.list.IsSelectedLast() {
 				s.list.SelectFirst()
 			} else {

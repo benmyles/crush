@@ -95,15 +95,27 @@ func notifyLSPs(
 	if filepath == "" || manager == nil {
 		return
 	}
+	if err := ctx.Err(); err != nil {
+		return
+	}
 
 	manager.Start(ctx, filepath)
 
 	for client := range manager.Clients().Seq() {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		if !client.HandlesFile(filepath) {
 			continue
 		}
 		_ = client.OpenFileOnDemand(ctx, filepath)
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		_ = client.NotifyChange(ctx, filepath)
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		client.WaitForDiagnostics(ctx, 5*time.Second)
 	}
 }

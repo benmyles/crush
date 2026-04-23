@@ -298,13 +298,20 @@ type LSPConfig struct {
 }
 
 type TUIOptions struct {
-	CompactMode bool   `json:"compact_mode,omitempty" jsonschema:"description=Enable compact mode for the TUI interface,default=false"`
-	DiffMode    string `json:"diff_mode,omitempty" jsonschema:"description=Diff mode for the TUI interface,enum=unified,enum=split"`
+	CompactMode     bool   `json:"compact_mode,omitempty" jsonschema:"description=Enable compact mode for the TUI interface,default=false"`
+	DiffMode        string `json:"diff_mode,omitempty" jsonschema:"description=Diff mode for the TUI interface,enum=unified,enum=split"`
 	// Here we can add themes later or any TUI related options
 	//
 
-	Completions Completions `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
-	Transparent *bool       `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
+	Completions       Completions `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
+	Transparent       *bool       `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
+	AutoFollowOnFocus *bool       `json:"auto_follow_on_focus,omitempty" jsonschema:"description=Automatically follow new messages when focusing the prompt textarea,default=true"`
+}
+
+// AutoFollowOnFocusEnabled returns true when the AutoFollowOnFocus setting is
+// enabled. It defaults to true when the field is nil (not explicitly set).
+func (t *TUIOptions) AutoFollowOnFocusEnabled() bool {
+	return t == nil || t.AutoFollowOnFocus == nil || *t.AutoFollowOnFocus
 }
 
 type MorphCompactOptions struct {

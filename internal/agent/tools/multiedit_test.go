@@ -152,6 +152,38 @@ func TestMultiEditSequentialApplication(t *testing.T) {
 	require.NotContains(t, currentContent, "LINE 99")
 }
 
+func TestApplyMultiEditOperationsStopsOnCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	content := "line 1\nline 2\n"
+	newContent, failedEdits, err := applyMultiEditOperations(ctx, content, []MultiEditOperation{
+		{OldString: "line 1", NewString: "LINE 1"},
+	}, 0)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, content, newContent)
+	require.Empty(t, failedEdits)
+}
+
+func TestEditChangeCounts(t *testing.T) {
+	t.Parallel()
+
+	additions, removals := editChangeCounts("", "line 1\nline 2\n")
+	require.Equal(t, 2, additions)
+	require.Equal(t, 0, removals)
+
+	additions, removals = editChangeCounts("line 1\nline 2\n", "line 1\nline 2\nline 3\n")
+	require.Equal(t, 1, additions)
+	require.Equal(t, 0, removals)
+
+	additions, removals = editChangeCounts("line 1\nline 2\nline 3\n", "line 1\nLINE 2\nline 3\n")
+	require.Equal(t, 1, additions)
+	require.Equal(t, 1, removals)
+}
+
 func TestMultiEditAllEditsSucceed(t *testing.T) {
 	t.Parallel()
 

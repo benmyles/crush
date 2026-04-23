@@ -286,8 +286,11 @@ type Styles struct {
 		ContentLineNumber lipgloss.Style // Line numbers in code
 
 		// State message styles
-		StateWaiting   lipgloss.Style // "Waiting for tool response..."
-		StateCancelled lipgloss.Style // "Canceled."
+		StateWaiting    lipgloss.Style // "Waiting for tool response..."
+		StateCancelled  lipgloss.Style // "Canceled."
+		LoadingStats    lipgloss.Style // Up/down loading stats container
+		LoadingStatUp   lipgloss.Style // Outgoing character count
+		LoadingStatDown lipgloss.Style // Incoming character count
 
 		// Error styles
 		ErrorTag     lipgloss.Style // ERROR tag
@@ -1148,6 +1151,9 @@ func DefaultStyles() Styles {
 
 	s.Tool.StateWaiting = base.Foreground(fgSubtle)
 	s.Tool.StateCancelled = base.Foreground(fgSubtle)
+	s.Tool.LoadingStats = base.Foreground(fgMuted)
+	s.Tool.LoadingStatUp = base.Foreground(blueLight)
+	s.Tool.LoadingStatDown = base.Foreground(greenLight)
 
 	s.Tool.ErrorTag = base.Padding(0, 1).Background(red).Foreground(white)
 	s.Tool.ErrorMessage = base.Foreground(fgHalfMuted)
