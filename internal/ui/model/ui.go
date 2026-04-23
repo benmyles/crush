@@ -177,6 +177,12 @@ type (
 	sessionFilesUpdatesMsg struct {
 		sessionFiles []SessionFile
 	}
+	// sessionMessagesSyncedMsg is sent after reloading persisted messages for
+	// an active session.
+	sessionMessagesSyncedMsg struct {
+		sessionID string
+		messages  []message.Message
+	}
 )
 
 // UI represents the main user interface model.
@@ -581,6 +587,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			paths = append(paths, f.LatestVersion.Path)
 		}
 		cmds = append(cmds, m.startLSPs(paths))
+
+	case sessionMessagesSyncedMsg:
+		if m.session != nil && msg.sessionID == m.session.ID {
+			if cmd := m.reconcileSessionMessages(msg.messages); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			m.renderPills()
+		}
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessageWithOptions(msg.Content, workspace.AgentRunOptions{PlanMode: msg.PlanMode}, msg.Attachments...))
@@ -1021,6 +1035,46 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	return tea.Sequence(cmds...)
 }
 
+func (m *UI) syncSessionMessages(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		msgs, err := m.com.Workspace.ListMessages(context.Background(), sessionID)
+		if err != nil {
+			return util.NewErrorMsg(err)
+		}
+		return sessionMessagesSyncedMsg{
+			sessionID: sessionID,
+			messages:  msgs,
+		}
+	}
+}
+
+func (m *UI) reconcileSessionMessages(msgs []message.Message) tea.Cmd {
+	var cmds []tea.Cmd
+	for _, msg := range msgs {
+		switch msg.Role {
+		case message.User:
+			if m.chat.MessageItem(msg.ID) == nil {
+				m.lastUserMessageTime = msg.CreatedAt
+				m.lastUserMessageChars = messageLoadingUpChars(&msg)
+				cmds = append(cmds, m.appendSessionMessage(msg))
+			}
+		case message.Assistant:
+			if m.chat.MessageItem(msg.ID) == nil && len(msg.ToolCalls()) == 0 {
+				cmds = append(cmds, m.appendSessionMessage(msg))
+				continue
+			}
+			cmds = append(cmds, m.updateSessionMessage(msg))
+		case message.Tool:
+			cmds = append(cmds, m.appendSessionMessage(msg))
+		default:
+			if m.chat.MessageItem(msg.ID) == nil {
+				cmds = append(cmds, m.appendSessionMessage(msg))
+			}
+		}
+	}
+	return tea.Sequence(cmds...)
+}
+
 func setAssistantLoadingUpChars(items []chat.MessageItem, chars int) {
 	for _, item := range items {
 		assistantItem, ok := item.(*chat.AssistantMessageItem)
@@ -1329,6 +1383,12 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 			assistantItem.SetLoadingUpChars(m.lastUserMessageChars)
 			assistantItem.SetMessage(&msg)
 		}
+	} else if chat.ShouldRenderAssistantMessage(&msg) {
+		item := chat.NewAssistantMessageItem(m.com.Styles, &msg)
+		if assistantItem, ok := item.(*chat.AssistantMessageItem); ok {
+			assistantItem.SetLoadingUpChars(m.lastUserMessageChars)
+		}
+		m.chat.AppendMessages(item)
 	}
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
@@ -1351,6 +1411,7 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	for _, tc := range msg.ToolCalls() {
 		existingToolItem := m.chat.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
+			toolItem.SetParentFinishReason(msg.FinishReason())
 			existingToolCall := toolItem.ToolCall()
 			// only update if finished state changed or input changed
 			// to avoid clearing the cache
@@ -1359,7 +1420,15 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		if existingToolItem == nil {
-			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false))
+			item := chat.NewToolMessageItem(
+				m.com.Styles,
+				msg.ID,
+				tc,
+				nil,
+				msg.FinishReason() == message.FinishReasonCanceled,
+			)
+			item.SetParentFinishReason(msg.FinishReason())
+			items = append(items, item)
 		}
 	}
 
@@ -1432,6 +1501,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		found := false
 		for _, existingTool := range nestedTools {
 			if existingTool.ToolCall().ID == tc.ID {
+				existingTool.SetParentFinishReason(event.Payload.FinishReason())
 				existingTool.SetToolCall(tc)
 				found = true
 				break
@@ -1439,7 +1509,14 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		}
 		if !found {
 			// Create a new nested tool item.
-			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false)
+			nestedItem := chat.NewToolMessageItem(
+				m.com.Styles,
+				event.Payload.ID,
+				tc,
+				nil,
+				event.Payload.FinishReason() == message.FinishReasonCanceled,
+			)
+			nestedItem.SetParentFinishReason(event.Payload.FinishReason())
 			if simplifiable, ok := nestedItem.(chat.Compactable); ok {
 				simplifiable.SetCompact(true)
 			}
@@ -4370,10 +4447,17 @@ func (m *UI) handlePermissionNotification(notification permission.PermissionNoti
 func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 	switch n.Type {
 	case notify.TypeAgentFinished:
-		return m.sendNotification(notification.Notification{
+		var cmds []tea.Cmd
+		if cmd := m.sendNotification(notification.Notification{
 			Title:   "Crush is waiting...",
 			Message: fmt.Sprintf("Agent's turn completed in \"%s\"", n.SessionTitle),
-		})
+		}); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if m.session != nil && n.SessionID == m.session.ID {
+			cmds = append(cmds, m.syncSessionMessages(n.SessionID))
+		}
+		return tea.Batch(cmds...)
 	case notify.TypeReAuthenticate:
 		return m.handleReAuthenticate(n.ProviderID)
 	case notify.TypeCompactionStarted:

@@ -54,7 +54,7 @@ func NewAgentToolMessageItem(
 
 // Animate progresses the message animation if it should be spinning.
 func (a *AgentToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
-	if a.result != nil || a.Status() == ToolStatusCanceled {
+	if !a.isSpinning() {
 		return nil
 	}
 	if msg.ID == a.ID() {

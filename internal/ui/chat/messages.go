@@ -282,13 +282,15 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 			if tr, ok := toolResults[tc.ID]; ok {
 				result = &tr
 			}
-			items = append(items, NewToolMessageItem(
+			item := NewToolMessageItem(
 				sty,
 				msg.ID,
 				tc,
 				result,
 				msg.FinishReason() == message.FinishReasonCanceled,
-			))
+			)
+			item.SetParentFinishReason(msg.FinishReason())
+			items = append(items, item)
 		}
 		return items
 	}

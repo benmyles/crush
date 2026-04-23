@@ -780,6 +780,9 @@ type testWorkspace struct {
 	criticalInstructions        string
 	snippets                    map[config.Scope][]config.Snippet
 	session                     session.Session
+	messages                    []message.Message
+	listMessagesSessionID       string
+	listMessagesErr             error
 	events                      []string
 	agentCompactForPlanStrategy string
 	agentCompactForPlanErr      error
@@ -813,6 +816,12 @@ func (w *testWorkspace) SaveSession(ctx context.Context, current session.Session
 	w.events = append(w.events, "save-session")
 	w.session = current
 	return current, nil
+}
+
+func (w *testWorkspace) ListMessages(ctx context.Context, sessionID string) ([]message.Message, error) {
+	w.events = append(w.events, "list-messages")
+	w.listMessagesSessionID = sessionID
+	return slices.Clone(w.messages), w.listMessagesErr
 }
 
 func (w *testWorkspace) AgentRunWithOptions(ctx context.Context, sessionID, prompt string, options workspace.AgentRunOptions, attachments ...message.Attachment) error {

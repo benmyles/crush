@@ -50,6 +50,7 @@ type ToolMessageItem interface {
 	SetMessageID(id string)
 	SetStatus(status ToolStatus)
 	Status() ToolStatus
+	SetParentFinishReason(reason message.FinishReason)
 }
 
 // CommandOutputSettable is implemented by tool items that can render live
@@ -72,9 +73,10 @@ type Compactable interface {
 
 // SpinningState contains the state passed to SpinningFunc for custom spinning logic.
 type SpinningState struct {
-	ToolCall message.ToolCall
-	Result   *message.ToolResult
-	Status   ToolStatus
+	ToolCall           message.ToolCall
+	Result             *message.ToolResult
+	Status             ToolStatus
+	ParentFinishReason message.FinishReason
 }
 
 // IsCanceled returns true if the tool status is canceled.
@@ -157,6 +159,9 @@ type baseToolMessageItem struct {
 	messageID     string
 	status        ToolStatus
 	commandOutput *tools.CommandOutputEvent
+	// parentFinishReason is the finish reason of the assistant message that
+	// contains this tool call.
+	parentFinishReason message.FinishReason
 	// we use this so we can efficiently cache
 	// tools that have a capped width (e.x bash.. and others)
 	hasCappedWidth bool
@@ -372,6 +377,9 @@ func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
 // SetResult sets the tool result associated with this message item.
 func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.result = res
+	if res != nil && t.commandOutput != nil && !t.commandOutput.Background {
+		t.commandOutput = nil
+	}
 	t.clearCache()
 }
 
@@ -393,6 +401,9 @@ func (t *baseToolMessageItem) SetStatus(status ToolStatus) {
 
 // SetCommandOutput sets the latest live command output for this tool.
 func (t *baseToolMessageItem) SetCommandOutput(output *tools.CommandOutputEvent) {
+	if output != nil && t.result != nil && !output.Background {
+		return
+	}
 	t.commandOutput = output
 	t.clearCache()
 }
@@ -407,9 +418,16 @@ func (t *baseToolMessageItem) Status() ToolStatus {
 	return t.status
 }
 
+// SetParentFinishReason sets the finish reason for the assistant message that
+// contains this tool call.
+func (t *baseToolMessageItem) SetParentFinishReason(reason message.FinishReason) {
+	t.parentFinishReason = reason
+	t.clearCache()
+}
+
 // computeStatus computes the effective status considering the result.
 func (t *baseToolMessageItem) computeStatus() ToolStatus {
-	if t.commandOutput != nil {
+	if t.commandOutput != nil && (t.result == nil || t.commandOutput.Background) {
 		if !t.commandOutput.Done {
 			return ToolStatusRunning
 		}
@@ -417,6 +435,9 @@ func (t *baseToolMessageItem) computeStatus() ToolStatus {
 			return ToolStatusError
 		}
 		return ToolStatusSuccess
+	}
+	if t.isTerminalParentWithoutResult() {
+		return t.terminalParentStatus()
 	}
 	if t.result != nil {
 		if t.result.IsError {
@@ -429,18 +450,43 @@ func (t *baseToolMessageItem) computeStatus() ToolStatus {
 
 // isSpinning returns true if the tool should show animation.
 func (t *baseToolMessageItem) isSpinning() bool {
-	if t.commandOutput != nil && !t.commandOutput.Done {
+	if t.commandOutput != nil && (t.result == nil || t.commandOutput.Background) && !t.commandOutput.Done {
 		return true
+	}
+	if t.isTerminalParentWithoutResult() {
+		return false
 	}
 	if t.spinningFunc != nil {
 		return t.spinningFunc(SpinningState{
-			ToolCall: t.toolCall,
-			Result:   t.result,
-			Status:   t.status,
+			ToolCall:           t.toolCall,
+			Result:             t.result,
+			Status:             t.status,
+			ParentFinishReason: t.parentFinishReason,
 		})
 	}
 	status := t.computeStatus()
 	return t.result == nil && status != ToolStatusSuccess && status != ToolStatusError && status != ToolStatusCanceled
+}
+
+func (t *baseToolMessageItem) isTerminalParentWithoutResult() bool {
+	if t.result != nil {
+		return false
+	}
+	if t.toolCall.ProviderExecuted && t.toolCall.Finished {
+		return true
+	}
+	return t.parentFinishReason != "" && t.parentFinishReason != message.FinishReasonToolUse
+}
+
+func (t *baseToolMessageItem) terminalParentStatus() ToolStatus {
+	switch t.parentFinishReason {
+	case message.FinishReasonCanceled, message.FinishReasonPermissionDenied:
+		return ToolStatusCanceled
+	case message.FinishReasonError, message.FinishReasonMaxTokens:
+		return ToolStatusError
+	default:
+		return ToolStatusSuccess
+	}
 }
 
 // SetSpinningFunc sets a custom function to determine if the tool should spin.

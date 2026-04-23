@@ -86,3 +86,122 @@ func TestToolLoadingRenderCountsLiveOutput(t *testing.T) {
 	require.Contains(t, rendered, fmt.Sprintf("up %d", utf8.RuneCountInString(input)))
 	require.Contains(t, rendered, "down 5")
 }
+
+func TestForegroundCommandResultOverridesStaleLiveOutput(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles()
+	input := `{"command":"printf final"}`
+	item := NewToolMessageItem(&sty, "assistant-1", message.ToolCall{
+		ID:       "tool-1",
+		Name:     agenttools.BashToolName,
+		Input:    input,
+		Finished: true,
+	}, nil, false)
+
+	settable := item.(CommandOutputSettable)
+	settable.SetCommandOutput(&agenttools.CommandOutputEvent{
+		SessionID:  "session-1",
+		MessageID:  "assistant-1",
+		ToolCallID: "tool-1",
+		Command:    "printf final",
+		Output:     "partial output",
+	})
+
+	result := message.ToolResult{
+		ToolCallID: "tool-1",
+		Name:       agenttools.BashToolName,
+		Content:    "final output",
+	}
+	item.SetResult(&result)
+
+	rendered := ansi.Strip(item.Render(80))
+	require.Contains(t, rendered, "final output")
+	require.NotContains(t, rendered, "partial output")
+	require.NotContains(t, rendered, "Waiting for tool response")
+	require.NotContains(t, rendered, "down 0")
+
+	settable.SetCommandOutput(&agenttools.CommandOutputEvent{
+		SessionID:  "session-1",
+		MessageID:  "assistant-1",
+		ToolCallID: "tool-1",
+		Command:    "printf final",
+		Output:     "late partial output",
+	})
+
+	rendered = ansi.Strip(item.Render(80))
+	require.Contains(t, rendered, "final output")
+	require.NotContains(t, rendered, "late partial output")
+}
+
+func TestBackgroundCommandOutputSurvivesInitialResult(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles()
+	input := `{"command":"npm run dev","run_in_background":true}`
+	item := NewToolMessageItem(&sty, "assistant-1", message.ToolCall{
+		ID:       "tool-1",
+		Name:     agenttools.BashToolName,
+		Input:    input,
+		Finished: true,
+	}, nil, false)
+
+	item.(CommandOutputSettable).SetCommandOutput(&agenttools.CommandOutputEvent{
+		SessionID:  "session-1",
+		MessageID:  "assistant-1",
+		ToolCallID: "tool-1",
+		ShellID:    "123",
+		Command:    "npm run dev",
+		Output:     "server ready",
+		Background: true,
+	})
+	result := message.ToolResult{
+		ToolCallID: "tool-1",
+		Name:       agenttools.BashToolName,
+		Content:    "Command is running in the background.",
+	}
+	item.SetResult(&result)
+
+	rendered := ansi.Strip(item.Render(80))
+	require.Contains(t, rendered, "PID 123")
+	require.Contains(t, rendered, "Running: server ready")
+	require.NotContains(t, rendered, "Command is running in the background")
+}
+
+func TestTerminalParentFinishStopsNoResultToolSpinner(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles()
+	item := NewToolMessageItem(&sty, "assistant-1", message.ToolCall{
+		ID:       "tool-1",
+		Name:     "provider_tool",
+		Input:    `{"query":"done"}`,
+		Finished: true,
+	}, nil, false)
+	item.SetParentFinishReason(message.FinishReasonEndTurn)
+
+	rendered := ansi.Strip(item.Render(80))
+	require.Contains(t, rendered, "Provider Tool")
+	require.NotContains(t, rendered, "Waiting for tool response")
+	require.NotContains(t, rendered, "up ")
+	require.NotContains(t, rendered, "down ")
+}
+
+func TestToolUseParentKeepsNoResultToolSpinner(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles()
+	input := `{"query":"still waiting"}`
+	item := NewToolMessageItem(&sty, "assistant-1", message.ToolCall{
+		ID:       "tool-1",
+		Name:     "provider_tool",
+		Input:    input,
+		Finished: true,
+	}, nil, false)
+	item.SetParentFinishReason(message.FinishReasonToolUse)
+
+	rendered := ansi.Strip(item.Render(80))
+	require.Contains(t, rendered, "Waiting for tool response")
+	require.Contains(t, rendered, fmt.Sprintf("up %d", utf8.RuneCountInString(input)))
+	require.Contains(t, rendered, "down 0")
+}
