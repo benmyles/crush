@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -359,12 +360,13 @@ func TestPlanApprovalApprovalStopsPlanModeBeforeImplementation(t *testing.T) {
 
 	require.NotNil(t, cmd)
 	require.False(t, ui.planModeActive)
+	require.Equal(t, []string{"plan-respond"}, ws.events)
 
 	msg := cmd()
 	require.IsType(t, util.InfoMsg{}, msg)
 	require.Len(t, ws.planResponses, 1)
 	require.True(t, ws.planResponses[0].Approved)
-	require.Equal(t, []string{"busy-check", "plan-respond", "get-session", "save-session", "agent-run"}, ws.events)
+	require.Equal(t, []string{"plan-respond", "busy-check", "get-session", "save-session", "agent-run"}, ws.events)
 	require.Equal(t, []session.Todo{{
 		Content:    "Do the thing",
 		Status:     session.TodoStatusPending,
@@ -375,7 +377,7 @@ func TestPlanApprovalApprovalStopsPlanModeBeforeImplementation(t *testing.T) {
 	require.Contains(t, ws.agentRunPrompts[0], "Looks good.")
 }
 
-func TestPlanApprovalPlanRespondCalledAfterSessionIdle(t *testing.T) {
+func TestPlanApprovalApprovalRespondsBeforeWaitingForIdle(t *testing.T) {
 	t.Parallel()
 
 	ws := &testWorkspace{
@@ -410,13 +412,98 @@ func TestPlanApprovalPlanRespondCalledAfterSessionIdle(t *testing.T) {
 		Comment:  "Looks good.",
 	})
 
+	require.NotNil(t, cmd)
+	require.Equal(t, []string{"plan-respond"}, ws.events)
+	require.Len(t, ws.planResponses, 1)
+	require.True(t, ws.planResponses[0].Approved)
+
 	_ = cmd()
 
 	busyIdx := slices.Index(ws.events, "busy-check")
 	respondIdx := slices.Index(ws.events, "plan-respond")
 	require.GreaterOrEqual(t, busyIdx, 0, "expected busy-check event")
 	require.GreaterOrEqual(t, respondIdx, 0, "expected plan-respond event")
-	require.Less(t, busyIdx, respondIdx, "plan-respond should come after busy-check")
+	require.Less(t, respondIdx, busyIdx, "plan-respond must unblock submit_plan before waiting for idle")
+}
+
+func TestPlanApprovalCompactRunsBeforeImplementation(t *testing.T) {
+	t.Parallel()
+
+	strategy := config.PlanCompactStrategySummarizeThenMorph
+	ws := &testWorkspace{
+		cfg:     &config.Config{Options: &config.Options{PlanCompactStrategy: &strategy}},
+		session: session.Session{ID: "session-1"},
+	}
+	sty := styles.DefaultStyles()
+	ta := textarea.New()
+	ta.SetStyles(sty.TextArea)
+	ui := &UI{
+		com: &common.Common{
+			Workspace: ws,
+			Styles:    &sty,
+		},
+		session:            &session.Session{ID: "session-1"},
+		textarea:           ta,
+		readyPlaceholder:   "Ready",
+		workingPlaceholder: "Working",
+	}
+
+	cmd := ui.handlePlanApprovalResponse(dialog.ActionPlanApprovalResponse{
+		Submission: planning.Submission{
+			ID:        "plan-1",
+			SessionID: "session-1",
+		},
+		Approved:       true,
+		CompactHistory: true,
+	})
+
+	msg := cmd()
+	info, ok := msg.(util.InfoMsg)
+	require.True(t, ok)
+	require.Equal(t, util.InfoTypeInfo, info.Type)
+	require.Equal(t, "Plan approved", info.Msg)
+	require.Equal(t, strategy, ws.agentCompactForPlanStrategy)
+	require.Equal(t, []string{"plan-respond", "busy-check", "get-session", "save-session", "agent-compact-for-plan", "agent-run"}, ws.events)
+}
+
+func TestPlanApprovalCompactFailureWarnsAndContinues(t *testing.T) {
+	t.Parallel()
+
+	compactErr := errors.New("test compaction unavailable")
+	ws := &testWorkspace{
+		session:                session.Session{ID: "session-1"},
+		agentCompactForPlanErr: compactErr,
+	}
+	sty := styles.DefaultStyles()
+	ta := textarea.New()
+	ta.SetStyles(sty.TextArea)
+	ui := &UI{
+		com: &common.Common{
+			Workspace: ws,
+			Styles:    &sty,
+		},
+		session:            &session.Session{ID: "session-1"},
+		textarea:           ta,
+		readyPlaceholder:   "Ready",
+		workingPlaceholder: "Working",
+	}
+
+	cmd := ui.handlePlanApprovalResponse(dialog.ActionPlanApprovalResponse{
+		Submission: planning.Submission{
+			ID:        "plan-1",
+			SessionID: "session-1",
+		},
+		Approved:       true,
+		CompactHistory: true,
+	})
+
+	msg := cmd()
+	info, ok := msg.(util.InfoMsg)
+	require.True(t, ok)
+	require.Equal(t, util.InfoTypeWarn, info.Type)
+	require.Contains(t, info.Msg, "Plan approved, but compaction failed")
+	require.Contains(t, info.Msg, compactErr.Error())
+	require.Equal(t, []string{"plan-respond", "busy-check", "get-session", "save-session", "agent-compact-for-plan", "agent-run"}, ws.events)
 }
 
 func TestSaveCriticalInstructionsWritesSelectedScope(t *testing.T) {
@@ -681,22 +768,24 @@ func newCompactionTestUI(sessionID string) *UI {
 // testWorkspace is a minimal [workspace.Workspace] stub for unit tests.
 type testWorkspace struct {
 	workspace.Workspace
-	cfg                   *config.Config
-	skipRequests          bool
-	planResponses         []planning.Response
-	setConfigScope        config.Scope
-	setConfigKey          string
-	setConfigValue        any
-	removeConfigScope     config.Scope
-	removeConfigKey       string
-	updateAgentModelCalls int
-	criticalInstructions  string
-	snippets              map[config.Scope][]config.Snippet
-	session               session.Session
-	events                []string
-	agentRunOptions       []workspace.AgentRunOptions
-	agentRunPrompts       []string
-	agentReady            bool
+	cfg                         *config.Config
+	skipRequests                bool
+	planResponses               []planning.Response
+	setConfigScope              config.Scope
+	setConfigKey                string
+	setConfigValue              any
+	removeConfigScope           config.Scope
+	removeConfigKey             string
+	updateAgentModelCalls       int
+	criticalInstructions        string
+	snippets                    map[config.Scope][]config.Snippet
+	session                     session.Session
+	events                      []string
+	agentCompactForPlanStrategy string
+	agentCompactForPlanErr      error
+	agentRunOptions             []workspace.AgentRunOptions
+	agentRunPrompts             []string
+	agentReady                  bool
 }
 
 func (w *testWorkspace) Config() *config.Config {
@@ -731,6 +820,12 @@ func (w *testWorkspace) AgentRunWithOptions(ctx context.Context, sessionID, prom
 	w.agentRunOptions = append(w.agentRunOptions, options)
 	w.agentRunPrompts = append(w.agentRunPrompts, prompt)
 	return nil
+}
+
+func (w *testWorkspace) AgentCompactForPlan(ctx context.Context, sessionID, strategy string) error {
+	w.events = append(w.events, "agent-compact-for-plan")
+	w.agentCompactForPlanStrategy = strategy
+	return w.agentCompactForPlanErr
 }
 
 func (w *testWorkspace) AgentIsSessionBusy(sessionID string) bool {

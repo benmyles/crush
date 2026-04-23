@@ -83,6 +83,24 @@ func TestPlanApprovalCompactToggle(t *testing.T) {
 	require.True(t, r.CompactHistory)
 }
 
+func TestPlanApprovalCompactRenderShowsClearCheckboxStates(t *testing.T) {
+	t.Parallel()
+
+	plan := NewPlanApproval(common.DefaultCommon(nil), planning.Submission{
+		Markdown: "## Plan\n\nDo the thing.",
+	})
+
+	checked := xansi.Strip(plan.renderCompact(80))
+	require.Contains(t, checked, "[✓] Compact before starting")
+
+	plan.HandleMsg(keyCode(tea.KeyTab))
+	plan.HandleMsg(keyCode(tea.KeySpace))
+
+	unchecked := xansi.Strip(plan.renderCompact(80))
+	require.Contains(t, unchecked, "[ ] Compact before starting")
+	require.NotContains(t, unchecked, "[✓]")
+}
+
 func TestPlanApprovalCompactHistoryOnlyOnApproval(t *testing.T) {
 	t.Parallel()
 

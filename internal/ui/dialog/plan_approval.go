@@ -1,7 +1,6 @@
 package dialog
 
 import (
-	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -439,17 +438,15 @@ func (p *PlanApproval) renderComments(width int) string {
 
 func (p *PlanApproval) renderCompact(_ int) string {
 	t := p.com.Styles
-	checkbox := "○"
+	checkbox := t.Muted.Render("[ ]")
 	if p.compactHistory {
-		checkbox = "●"
+		checkbox = t.Base.Foreground(t.Green).Render("[" + styles.CheckIcon + "]")
 	}
-	label := fmt.Sprintf("%s %s", checkbox, p.compactLabel)
+	label := t.Muted.Render(p.compactLabel)
 	if p.focus == planApprovalFocusCompact {
-		label = t.Base.Render(label)
-	} else {
-		label = t.Muted.Render(label)
+		label = t.Base.Render(p.compactLabel)
 	}
-	return label
+	return checkbox + " " + label
 }
 
 func (p *PlanApproval) renderButtons() string {

@@ -4139,6 +4139,12 @@ func (m *UI) openUserQuestionDialog(request userquestion.Request) {
 func (m *UI) handlePlanApprovalResponse(response dialog.ActionPlanApprovalResponse) tea.Cmd {
 	if response.Approved {
 		m.setPlanModeActive(false)
+		m.com.Workspace.PlanRespond(planning.Response{
+			SubmissionID:   response.Submission.ID,
+			Approved:       true,
+			Comment:        response.Comment,
+			CompactHistory: response.CompactHistory,
+		})
 		return m.approvePlan(response.Submission, response.Comment, response.CompactHistory)
 	}
 	m.setPlanModeActive(true)
@@ -4157,13 +4163,6 @@ func (m *UI) approvePlan(submission planning.Submission, comment string, compact
 			return util.ReportError(err)()
 		}
 
-		m.com.Workspace.PlanRespond(planning.Response{
-			SubmissionID:   submission.ID,
-			Approved:       true,
-			Comment:        comment,
-			CompactHistory: compactHistory,
-		})
-
 		current, err := m.com.Workspace.GetSession(ctx, submission.SessionID)
 		if err != nil {
 			return util.ReportError(err)()
@@ -4177,6 +4176,7 @@ func (m *UI) approvePlan(submission planning.Submission, comment string, compact
 			m.session = &saved
 		}
 
+		var compactErr error
 		if compactHistory {
 			strategy := config.PlanCompactStrategySummarize
 			if cfg := m.com.Config(); cfg != nil && cfg.Options != nil {
@@ -4184,6 +4184,7 @@ func (m *UI) approvePlan(submission planning.Submission, comment string, compact
 			}
 			if strategy != config.PlanCompactStrategyDisabled {
 				if err := m.com.Workspace.AgentCompactForPlan(ctx, submission.SessionID, strategy); err != nil {
+					compactErr = err
 					slog.Warn("Failed to compact session before plan implementation", "error", err, "strategy", strategy)
 				}
 			}
@@ -4192,6 +4193,9 @@ func (m *UI) approvePlan(submission planning.Submission, comment string, compact
 		prompt := approvedPlanPrompt(submission, comment)
 		if err := m.com.Workspace.AgentRunWithOptions(ctx, submission.SessionID, prompt, workspace.AgentRunOptions{}); err != nil {
 			return util.ReportError(err)()
+		}
+		if compactErr != nil {
+			return util.NewWarnMsg(fmt.Sprintf("Plan approved, but compaction failed: %v", compactErr))
 		}
 		return util.NewInfoMsg("Plan approved")
 	}
