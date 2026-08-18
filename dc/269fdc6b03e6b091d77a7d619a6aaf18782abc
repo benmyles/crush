@@ -1,0 +1,60 @@
+internal/agent/tools/crush_info.go
+  s_f55a852310ca7b::t_d42808b82017fc 104,107-109
+internal/config/load.go
+  s_f55a852310ca7b::t_69dad82d0158c2 146,780-834,960
+docs/compaction-plan.md
+  s_f55a852310ca7b::t_a3ac2cbf0befe8 35,343-352,721-725
+schema.json
+  s_f55a852310ca7b::t_a3ac2cbf0befe8 145
+internal/swagger/docs.go
+  s_f55a852310ca7b::t_c4c59d05851bb9 3525-3526,3530-3531,3640
+internal/agent/coordinator.go
+  s_f55a852310ca7b::t_343fbff269f7f8 633,642-643,848-851,854,858,863,868,873,878,896,900,916,920,933-991,1313,1318,1352-1360
+internal/agent/agentic_fetch_tool.go
+  s_f55a852310ca7b::t_343fbff269f7f8 150
+internal/config/config.go
+  s_f55a852310ca7b::t_4ba6bf6bff3ee5 57-60,648-650,791-794
+  s_f55a852310ca7b::t_b6da43d11c1624 795-800
+internal/config/compaction_model_test.go
+  s_f55a852310ca7b::t_563e352a31aa4f 1-99
+internal/agent/compaction_support_test.go
+  s_f55a852310ca7b::t_0f54043b29f0c8 211-266
+internal/swagger/swagger.json
+  s_f55a852310ca7b::t_c4c59d05851bb9 3518-3519,3523-3524,3633
+internal/skills/builtin/crush-config/SKILL.md
+  s_f55a852310ca7b::t_634017b8ad1b57 95,104-107,112-114,354
+internal/config/store.go
+  s_f55a852310ca7b::t_69dad82d0158c2 1272
+internal/agent/coordinator_test.go
+  s_f55a852310ca7b::t_343fbff269f7f8 37
+internal/shellconfig/model.go
+  s_f55a852310ca7b::t_c50f831e6e3f77 26,29-33,40,48,51,144-145
+docs/config/README.md
+  s_f55a852310ca7b::t_634017b8ad1b57 240,242-247,253,269,564-566,641
+  s_f55a852310ca7b::t_57228bc5dc9702 642
+internal/shellconfig/model_test.go
+  s_f55a852310ca7b::t_b333afb6f7f0f9 195-215
+internal/swagger/swagger.yaml
+  s_f55a852310ca7b::t_c4c59d05851bb9 332,337,411-413
+internal/agent/agent.go
+  s_f55a852310ca7b::t_343fbff269f7f8 185-186,194-196
+  s_f55a852310ca7b::t_74855b8684b0b7 188-189,291,2586-2599,2601,2608-2609
+  s_f55a852310ca7b::t_b09ceb0c08b707 142-145,187,190-193,270-282,292,1584-1590,1634-1639,1641,1653-1662,1737-1752,1837-1843,1845-1852,1866-1867,1870-1871,1903-1904,2600,2602-2607,2610-2612
+  s_f55a852310ca7b::t_913624b1da8bc0 2613
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "dc269fdc6b03e6b091d77a7d619a6aaf18782abc",
+  "prompts": {},
+  "sessions": {
+    "s_f55a852310ca7b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe9b6d4d-b015-4850-9702-f35b0fc82990",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
