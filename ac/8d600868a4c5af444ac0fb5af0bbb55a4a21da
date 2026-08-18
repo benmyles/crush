@@ -1,0 +1,19 @@
+internal/agent/agent.go
+  s_b49145118e9070::t_3e1aa6e8509373 1540,1549-1550,1553-1554,1556-1562,1569-1571,1574-1575,1577
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "ac8d600868a4c5af444ac0fb5af0bbb55a4a21da",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
