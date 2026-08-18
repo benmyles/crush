@@ -1,6 +1,9 @@
 package compaction
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/crush/internal/message"
@@ -256,14 +259,40 @@ func TestDeterministicFallback_Converges(t *testing.T) {
 
 func TestRunWithEscalation_FallsBackWhenModelWontCompress(t *testing.T) {
 	t.Parallel()
-	// A completer that always returns more tokens than the input.
-	complete := func(_ interface{ Done() <-chan struct{} }, _ EscalationLevel, input string, _ int64) (string, string, error) {
-		// Return something longer than the input to force escalation.
-		return input + input, "stop", nil
+	// A completer that always returns more tokens than the input: both model
+	// levels fail to converge, so the engine falls back to deterministic.
+	input := strings.Repeat("this is a line of transcript. ", 200) // ~7k chars
+	complete := func(_ context.Context, _ EscalationLevel, in string, _ int64) (string, string, error) {
+		return in + in + in, "stop", nil // 3x input -> never converges
 	}
-	// RunWithEscalation takes a context; use a background context.
-	// We can't easily call it without the right signature here, so test the
-	// fallback directly.
-	_ = complete
-	// The deterministic fallback is the convergence guarantee; tested above.
+	inputTokens := int64(EstimateTokens(len(input)))
+	in := EscalationInput{TargetTokens: 100, InputTokens: inputTokens, MaxOutputTokens: 4000}
+	res, err := RunWithEscalation(context.Background(), in, input, complete, "ledger text", "recent text")
+	require.NoError(t, err, "non-converging model must fall back, not error")
+	require.Equal(t, LevelDeterministic, res.Level, "must fall back to deterministic when both model levels fail to converge")
+}
+
+func TestRunWithEscalation_FailsClosedOnModelError(t *testing.T) {
+	t.Parallel()
+	// A completer that returns a transient error must propagate, not silently
+	// fall back to the deterministic level.
+	complete := func(_ context.Context, _ EscalationLevel, _ string, _ int64) (string, string, error) {
+		return "", "", fmt.Errorf("500 internal server error")
+	}
+	in := EscalationInput{TargetTokens: 100, InputTokens: 500, MaxOutputTokens: 4000}
+	_, err := RunWithEscalation(context.Background(), in, "short input", complete, "ledger", "recent")
+	require.Error(t, err, "transient model error must propagate (fail closed)")
+	require.Contains(t, err.Error(), "checkpoint level 1 failed")
+}
+
+func TestRunWithEscalation_FailsClosedOnCancel(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel so the first call fails with context.Canceled
+	complete := func(_ context.Context, _ EscalationLevel, _ string, _ int64) (string, string, error) {
+		return "", "", ctx.Err()
+	}
+	in := EscalationInput{TargetTokens: 100, InputTokens: 500, MaxOutputTokens: 4000}
+	_, err := RunWithEscalation(ctx, in, "short input", complete, "ledger", "recent")
+	require.Error(t, err, "cancelled context must propagate, not fall back")
 }

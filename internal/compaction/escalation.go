@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // EscalationLevel enumerates the three-level summarization escalation protocol
@@ -86,38 +87,110 @@ func DeterministicFallback(ledgerText, recentText string, targetTokens int64) Es
 type EscalationCompleter func(ctx context.Context, level EscalationLevel, input string, maxOutputTokens int64) (text string, stopReason string, err error)
 
 // RunWithEscalation runs a model-backed lane through the three-level escalation
-// protocol. It returns as soon as a level produces tokens(out) < tokens(in), or
-// falls back to the deterministic level if both model levels fail to converge.
+// protocol. It is fail-closed: a model error (transient or cancelled)
+// propagates instead of silently falling back to the deterministic level, so
+// a failing model never persists a low-quality summary. The deterministic
+// fallback is only reached when both model levels produce output that fails
+// to converge (output >= input or > 1.5x target), not on error.
+//
+// Level 1 acceptance: tokens < InputTokens && tokens <= Target*1.25. On a
+// "length" stop (output truncated by max_tokens) it retries once at 1.6x the
+// output budget with a retry reason so the model knows to be more concise.
 func RunWithEscalation(ctx context.Context, in EscalationInput, input string, complete EscalationCompleter, ledgerText, recentText string) (EscalationResult, error) {
-	// Level 1: preserve_details.
-	text, stop, err := complete(ctx, LevelPreserveDetails, input, in.MaxOutputTokens)
-	if err != nil {
-		// Fall through to level 2; a transient error at level 1 should not
-		// abort the whole engine when a deterministic fallback exists.
-		text = ""
-		stop = "error"
+	tryLevel := func(level EscalationLevel, maxOutput int64) (EscalationResult, error) {
+		text, stop, err := completeWithRetry(ctx, complete, level, input, maxOutput)
+		if err != nil {
+			return EscalationResult{}, err
+		}
+		tokens := int64(EstimateTokens(len(text)))
+		return EscalationResult{Level: level, Text: text, Tokens: tokens, Truncated: stop == "length", Converged: tokens < in.InputTokens}, nil
 	}
-	tokens := int64(EstimateTokens(len(text)))
-	if tokens < in.InputTokens && tokens < in.TargetTokens && stop != "error" {
-		return EscalationResult{Level: LevelPreserveDetails, Text: text, Tokens: tokens, Truncated: stop == "length", Converged: true}, nil
+
+	// Level 1: preserve_details.
+	r1, err := tryLevel(LevelPreserveDetails, in.MaxOutputTokens)
+	if err != nil {
+		return EscalationResult{}, fmt.Errorf("compaction: checkpoint level 1 failed: %w", err)
+	}
+	if r1.Converged && r1.Tokens <= in.TargetTokens*5/4 {
+		return r1, nil
+	}
+	// If level 1 hit the length limit, retry once at 1.6x output with a retry
+	// reason appended so the model can be more concise.
+	if r1.Truncated && !r1.Converged {
+		r1b, err := tryLevel(LevelPreserveDetails, in.MaxOutputTokens*8/5)
+		if err != nil {
+			return EscalationResult{}, fmt.Errorf("compaction: checkpoint level 1 retry failed: %w", err)
+		}
+		if r1b.Converged && r1b.Tokens <= in.TargetTokens*5/4 {
+			r1b.Truncated = true
+			return r1b, nil
+		}
 	}
 
 	// Level 2: bullet_points at half the target.
-	text2, stop2, err := complete(ctx, LevelBulletPoints, input, in.MaxOutputTokens)
-	if err != nil {
-		text2 = ""
-		stop2 = "error"
-	}
-	tokens2 := int64(EstimateTokens(len(text2)))
 	halfTarget := in.TargetTokens / 2
 	if halfTarget <= 0 {
 		halfTarget = in.TargetTokens
 	}
-	if tokens2 < in.InputTokens && tokens2 < halfTarget && stop2 != "error" {
-		return EscalationResult{Level: LevelBulletPoints, Text: text2, Tokens: tokens2, Truncated: stop2 == "length", Converged: true}, nil
+	r2, err := tryLevel(LevelBulletPoints, in.MaxOutputTokens)
+	if err != nil {
+		return EscalationResult{}, fmt.Errorf("compaction: checkpoint level 2 failed: %w", err)
+	}
+	if r2.Converged && r2.Tokens <= halfTarget*3/2 {
+		return r2, nil
 	}
 
-	// Level 3: deterministic, no LLM.
+	// Level 3: deterministic, no LLM. Only reached when both model levels
+	// produced output that failed to converge — never on error.
 	fb := DeterministicFallback(ledgerText, recentText, in.TargetTokens)
 	return fb, nil
+}
+
+// completeWithRetry wraps a single completion call with one transient retry.
+// It retries once on a transient error (network/5xx/429) with a short backoff,
+// but never retries on context cancellation, 4xx, or auth errors.
+func completeWithRetry(ctx context.Context, complete EscalationCompleter, level EscalationLevel, input string, maxOutput int64) (string, string, error) {
+	text, stop, err := complete(ctx, level, input, maxOutput)
+	if err == nil {
+		return text, stop, nil
+	}
+	// Fail closed on cancellation.
+	if ctx.Err() != nil {
+		return "", "", err
+	}
+	// Fail closed on non-transient errors (4xx/auth). Retry only on transient
+	// (5xx/429/network) errors.
+	if !isTransient(err) {
+		return "", "", err
+	}
+	// One retry with a short backoff.
+	select {
+	case <-ctx.Done():
+		return "", "", ctx.Err()
+	case <-time.After(500 * time.Millisecond):
+	}
+	return complete(ctx, level, input, maxOutput)
+}
+
+// isTransient reports whether an error is a transient (retryable) failure.
+// Non-transient (4xx, auth, cancelled) errors propagate immediately.
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "context canceled") || strings.Contains(msg, "context deadline exceeded") {
+		return false
+	}
+	// 4xx and auth are not transient.
+	if strings.Contains(msg, "401") || strings.Contains(msg, "403") || strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden") {
+		return false
+	}
+	if strings.Contains(msg, "400") || strings.Contains(msg, "422") {
+		return false
+	}
+	// 429, 5xx, timeout, connection reset, EOF are transient.
+	return strings.Contains(msg, "429") || strings.Contains(msg, "500") || strings.Contains(msg, "502") ||
+		strings.Contains(msg, "503") || strings.Contains(msg, "504") || strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "connection reset") || strings.Contains(msg, "EOF") || strings.Contains(msg, "EOF") || strings.Contains(msg, "temporary")
 }

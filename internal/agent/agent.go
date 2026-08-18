@@ -1666,6 +1666,8 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 		SummarizerMaxOutputTokens: int64(largeModel.CatwalkCfg.DefaultMaxTokens),
 		KeepRecentTokens:          keepRecent,
 		ReserveTokens:             reserve,
+		ModelProvider:             largeModel.ModelCfg.Provider,
+		ModelID:                   largeModel.ModelCfg.Model,
 		Cfg:                       cfg,
 	}
 	result, err := a.compaction.Run(genCtx, req)

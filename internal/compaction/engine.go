@@ -50,7 +50,11 @@ type CompactionRequest struct {
 	// KeepRecentTokens / ReserveTokens come from the session/host settings.
 	KeepRecentTokens int64
 	ReserveTokens    int64
-	Cfg              config.CompactionConfig
+	// ModelProvider/ModelID record which model produced the summary, for
+	// provenance and debugging. Set by the caller from the active model.
+	ModelProvider string
+	ModelID       string
+	Cfg           config.CompactionConfig
 }
 
 // CompactionResult is the outcome of a successful compaction.
@@ -160,7 +164,7 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 			history = par.Summary
 		}
 	}
-	esc, err := e.runCheckpointLane(ctx, plan, previousCheckpoint, history, turnPrefix, historyTurns, req)
+	esc, err := e.runCheckpointLane(ctx, plan, previousCheckpoint, history, turnPrefix, historyTurns, req, ledgerText)
 	if err != nil {
 		return nil, fmt.Errorf("compaction: checkpoint lane failed: %w", err)
 	}
@@ -297,7 +301,7 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	return result, nil
 }
 
-func (e *Engine) runCheckpointLane(ctx context.Context, plan BudgetPlan, previousCheckpoint, history, turnPrefix string, historyTurns int, req CompactionRequest) (EscalationResult, error) {
+func (e *Engine) runCheckpointLane(ctx context.Context, plan BudgetPlan, previousCheckpoint, history, turnPrefix string, historyTurns int, req CompactionRequest, ledgerText string) (EscalationResult, error) {
 	promptInput := CheckpointPromptInput{
 		PreviousCheckpoint: previousCheckpoint,
 		History:            history,
@@ -327,10 +331,9 @@ func (e *Engine) runCheckpointLane(ctx context.Context, plan BudgetPlan, previou
 	if recentText == "" && len(req.History) > 0 {
 		recentText = history
 	}
-	ledgerText := ""
-	// The fallback uses the ledger text we already rendered; pass it via the
-	// closure by re-rendering a small slice. We don't have it here directly, so
-	// rebuild a minimal recent slice.
+	// ledgerText is the rendered deterministic ledger passed from Run; the
+	// deterministic fallback uses it so the no-LLM summary is not an empty
+	// shell.
 	esc, err := RunWithEscalation(ctx, EscalationInput{
 		TargetTokens:    plan.Checkpoint.TargetTokens,
 		InputTokens:     inputTokens,
@@ -469,8 +472,8 @@ func (e *Engine) persist(ctx context.Context, req CompactionRequest, result *Com
 	coveredIDsJSON := mustJSON(result.CoveredMessageIDs)
 	kind := "leaf"
 	level := int64(result.Level)
-	modelProvider := sql.NullString{}
-	modelID := sql.NullString{}
+	modelProvider := sql.NullString{String: req.ModelProvider, Valid: req.ModelProvider != ""}
+	modelID := sql.NullString{String: req.ModelID, Valid: req.ModelID != ""}
 	reasoning := sql.NullString{String: req.Cfg.SummaryReasoning, Valid: req.Cfg.SummaryReasoning != ""}
 	coveredStart := sql.NullInt64{}
 	coveredEnd := sql.NullInt64{}
