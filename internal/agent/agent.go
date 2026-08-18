@@ -1654,7 +1654,9 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 		keepRecent = 20000
 	}
 	history, turnPrefix, firstRetainedIdx := splitForCompaction(msgs, keepRecent)
-	if len(history) == 0 {
+	if firstRetainedIdx == -1 || len(history) == 0 {
+		// Nothing to compact (the whole session fits in keep-recent). This is
+		// a no-op, not an error.
 		return nil
 	}
 	firstRetainedID := ""
@@ -1676,7 +1678,7 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 	}
 	tokensBefore := int64(0)
 	for _, msg := range msgs {
-		tokensBefore += approxTokenCount(msg.Content().Text)
+		tokensBefore += estimateStoredMessageTokens(msg)
 	}
 
 	req := compaction.CompactionRequest{
@@ -1742,33 +1744,72 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 	return qErr
 }
 
+// estimateStoredMessageTokens sums the approximate token cost of all parts
+// of a message (text, reasoning, tool-call input, tool-result content, shell
+// command + output), not just the first text part. Without this, tool-heavy
+// turns cost 0 and the retained tail can be far larger than keepRecentTokens.
+func estimateStoredMessageTokens(msg message.Message) int64 {
+	var total int64
+	for _, part := range msg.Parts {
+		switch p := part.(type) {
+		case message.TextContent:
+			total += approxTokenCount(p.Text)
+		case message.ReasoningContent:
+			total += approxTokenCount(p.String())
+		case message.ToolCall:
+			total += approxTokenCount(p.Name + " " + p.Input)
+		case message.ToolResult:
+			total += approxTokenCount(p.Content + " " + p.Data)
+		case message.ShellCommand:
+			total += approxTokenCount(p.Command + "\n" + p.Output)
+		case message.BinaryContent:
+			total += approxTokenCount(p.Path + " " + p.MIMEType)
+		}
+	}
+	return total
+}
+
 // splitForCompaction divides messages into the history to compact and a
 // retained tail kept verbatim. It keeps the most recent messages whose
-// approximate token count fits the keepRecent budget. Returns the history, the
-// turn-prefix (empty unless the split lands mid-turn), and the index of the
-// first retained message.
+// estimated stored token count fits the keepRecent budget, summing all parts
+// (text, reasoning, tool calls, tool results, shell commands) so tool-heavy
+// turns are not undercounted. Returns the history, the turn-prefix (non-empty
+// when the split lands mid-turn), and the index of the first retained message.
 func splitForCompaction(msgs []message.Message, keepRecentTokens int64) (history, turnPrefix []message.Message, firstRetainedIdx int) {
 	if len(msgs) == 0 {
 		return nil, nil, 0
 	}
 	var budget int64
-	idx := len(msgs)
+	budgetIdx := len(msgs)
 	for i := len(msgs) - 1; i >= 0; i-- {
-		cost := approxTokenCount(msgs[i].Content().Text)
+		cost := estimateStoredMessageTokens(msgs[i])
 		if budget+cost > keepRecentTokens && i < len(msgs)-1 {
 			break
 		}
 		budget += cost
-		idx = i
+		budgetIdx = i
 	}
-	if idx <= 0 {
-		return nil, nil, 0
+	if budgetIdx <= 0 {
+		// The entire session fits in the keep-recent budget: nothing to
+		// compact. Return a sentinel so the caller can distinguish a no-op
+		// (return nil) from a real empty history.
+		return nil, nil, -1
 	}
-	// Don't split mid-turn if avoidable: if the first retained message is an
-	// assistant continuation, keep the whole last turn together by including
-	// prior messages until a user message.
-	for idx > 0 && msgs[idx-1].Role != message.User && idx < len(msgs) {
+	// Align the retained tail to start at a user message so we don't split
+	// mid-turn: if the retained tail starts with an assistant/tool message,
+	// walk backward to include the preceding user message in the retained
+	// tail (keeping the whole turn together in the retained part, not in the
+	// compacted history). The previous code walked the wrong direction,
+	// compacting the user prompt and retaining only the assistant reply.
+	idx := budgetIdx
+	for idx > 0 && msgs[idx].Role != message.User {
 		idx--
+	}
+	// If walking back to a user boundary would compact nothing (idx == 0),
+	// fall back to the budget-computed index so the oldest material is still
+	// compacted rather than retaining the entire session.
+	if idx <= 0 {
+		idx = budgetIdx
 	}
 	return msgs[:idx], nil, idx
 }
