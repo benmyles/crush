@@ -1,0 +1,71 @@
+internal/agent/agent.go
+  s_e82c6b847451e1::t_682ec44dfc4524 155-156,158-161,319,324-340,1308,1452-1467,1827-1840,1944,2589-2594,2599,2601-2630
+internal/agent/coordinator.go
+  s_9829ab33b248cf::t_379f76cfacb8a1 111-113,1346-1364,1381-1382,1384-1394
+internal/agent/coordinator_test.go
+  s_9829ab33b248cf::t_c41a27a22f5547 52-55
+internal/agent/tools/recall.go
+  s_e82c6b847451e1::t_4cf739f4f1ffd2 276-278,364-366,368,374,376,384
+internal/compaction/checkpoint.go
+  s_e82c6b847451e1::t_278cec077f8d8d 209-312
+internal/compaction/checkpoint_test.go
+  s_e82c6b847451e1::t_91d3c6a91da46d 1-101
+internal/compaction/engine.go
+  s_e82c6b847451e1::t_a34f7ace680147 73-79,98-100,116-139,149-166,179-191,304-309,328-333,340,343-347,360-362,419-420,423-437
+internal/compaction/escalation.go
+  s_e82c6b847451e1::t_1ba0d8bdcfcd6c 6,184-190,201-203,206-212,214-215
+internal/compaction/progress_test.go
+  s_9829ab33b248cf::t_cf0929727c00e7 1-120
+internal/config/store.go
+  s_9829ab33b248cf::t_1de56dc8d3506d 458-585
+internal/message/compaction_content_test.go
+  s_9829ab33b248cf::t_3c59fa91dbb403 1-91
+internal/message/message.go
+  s_9829ab33b248cf::t_f2d3488f3573c0 539,570-571,652-657
+internal/server/agent_cancel_test.go
+  s_e82c6b847451e1::t_a153ab1d8a7769 82
+internal/server/sessions_isbusy_test.go
+  s_e82c6b847451e1::t_85fbe3ccefb9c6 53
+internal/ui/chat/compaction.go
+  s_e82c6b847451e1::t_7e06940d5272e5 1-165
+internal/ui/chat/compaction_test.go
+  s_9829ab33b248cf::t_6800b0fe491281 1-136
+internal/ui/dialog/actions.go
+  s_e82c6b847451e1::t_885420201e6e93 90-93
+internal/ui/dialog/commands.go
+  s_e82c6b847451e1::t_6cd6bcc2c167fb 453,455-458
+internal/ui/model/pill_border_test.go
+  s_9829ab33b248cf::t_b6bbe30594e690 102-170
+internal/ui/model/ui.go
+  s_e82c6b847451e1::t_c58aa1aa110c27 368-380,432-436,466,1262-1270,1944-1956,2080,4716-4734
+internal/workspace/app_workspace.go
+  s_9829ab33b248cf::t_6d05a34841cbca 229-235,373-376
+internal/workspace/client_workspace.go
+  s_9829ab33b248cf::t_615447946ea0d9 317-322,569-574
+internal/workspace/workspace.go
+  s_9829ab33b248cf::t_22f29eb43a59bd 157-160,213-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "ec94888a388fc252ac10936364a852e0af10d55a",
+  "prompts": {},
+  "sessions": {
+    "s_9829ab33b248cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e82ef020-5527-4337-9925-d675c6f720a7",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
