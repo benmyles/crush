@@ -1,0 +1,35 @@
+internal/compaction/span.go
+  s_b49145118e9070::t_7cfa186ab1d98d 274-279,283-285,293
+  s_b49145118e9070::t_1bc668e33a43ba 508-512
+internal/agent/agent.go
+  s_b49145118e9070::t_5b557bc2ea27eb 1635-1637,1660
+  s_b49145118e9070::t_39ed9bdc5986e5 1586-1592,1594-1602
+internal/compaction/engine_test.go
+  s_b49145118e9070::t_d085f79ab7e42e 1-4,6-14,17-21,24-25,28,31,33-41,43-44,46-49,51-54,58-68,72-79,83-85,98-114,116,122-126,168
+  s_b49145118e9070::t_efb1781a8e4ef4 5,15-16,22-23,26-27,29-30,32,42,45,50,55-57,69-71,80,86-97,115,117-121,127-149,152-167
+  s_b49145118e9070::t_98fbada77c65b8 81-82,150-151
+internal/compaction/engine.go
+  s_b49145118e9070::t_d43c47a050f961 97-100
+  s_b49145118e9070::t_f4ae359c98eac1 35-39
+  s_b49145118e9070::t_3031a9739b305a 503-509,519-532,535-541,543
+  s_b49145118e9070::t_d38505eedf24d5 456-459
+  s_b49145118e9070::t_f40419bf9c2b4b 32-34
+  s_b49145118e9070::t_def5a7f85bb551 453-455
+  s_b49145118e9070::t_d1dcfc0b71d019 460-462
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "95975b6337bfec12cadf4cd9acf62d484ab47b15",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
