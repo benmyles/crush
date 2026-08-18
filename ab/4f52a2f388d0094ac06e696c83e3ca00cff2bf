@@ -1,0 +1,45 @@
+internal/config/compaction.go
+  s_b49145118e9070::t_5810d969262b65 218-220
+  s_b49145118e9070::t_5aac59362caae6 137-142,151-169
+  s_b49145118e9070::t_0bb9c1ec48c73a 101,110-111,119-120,136,176-185,244
+  s_b49145118e9070::t_ab23ee2e3d8cf2 133
+  s_b49145118e9070::t_701e7a55755219 30-34,72-74,77,88-89,93
+  s_b49145118e9070::t_8de56447ef9722 134-135
+  s_b49145118e9070::t_5418eaa36ca9fe 170-171
+internal/agent/tools/crush_info.go
+  s_b49145118e9070::t_085f2748531bbb 401
+internal/config/compaction_test.go
+  s_b49145118e9070::t_1999553204541f 1-99
+internal/compaction/engine.go
+  s_b49145118e9070::t_46b968322444f1 111-112,114-115,124,129
+internal/agent/agent.go
+  s_b49145118e9070::t_7243cf61472193 1102
+internal/compaction/doc.go
+  s_b49145118e9070::t_30333bad6acefb 27-32
+schema.json
+  s_9829ab33b248cf::t_880790e6a8933b 117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "ab4f52a2f388d0094ac06e696c83e3ca00cff2bf",
+  "prompts": {},
+  "sessions": {
+    "s_9829ab33b248cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e82ef020-5527-4337-9925-d675c6f720a7",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
