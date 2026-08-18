@@ -2,6 +2,7 @@ package compaction
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -295,4 +296,40 @@ func TestRunWithEscalation_FailsClosedOnCancel(t *testing.T) {
 	in := EscalationInput{TargetTokens: 100, InputTokens: 500, MaxOutputTokens: 4000}
 	_, err := RunWithEscalation(ctx, in, "short input", complete, "ledger", "recent")
 	require.Error(t, err, "cancelled context must propagate, not fall back")
+}
+
+func TestRunWithEscalation_RetriesOnceWithNoteWhenTruncated(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	var inputs []string
+	var maxOutputs []int64
+	complete := func(_ context.Context, level EscalationLevel, input string, maxOutput int64) (string, string, error) {
+		calls++
+		inputs = append(inputs, input)
+		maxOutputs = append(maxOutputs, maxOutput)
+		if calls == 1 {
+			// First attempt hits the output cap.
+			return strings.Repeat("partial ", 50), "length", nil
+		}
+		return "## Goal & User Intent\ng\n## Progress\n- p\n## Next Action\n1. n\n", "stop", nil
+	}
+	in := EscalationInput{TargetTokens: 3000, InputTokens: 100000, MaxOutputTokens: 9000}
+	res, err := RunWithEscalation(context.Background(), in, "transcript", complete, "", "")
+	require.NoError(t, err)
+	require.Equal(t, 2, calls, "one retry after a truncated first attempt")
+	require.Equal(t, LevelPreserveDetails, res.Level, "the retry is still level 1")
+	require.False(t, res.Truncated, "a completed retry is not marked truncated")
+	require.Contains(t, inputs[1], TruncationRetryNote, "the retry carries the retry note")
+	require.NotContains(t, inputs[0], TruncationRetryNote)
+	require.Equal(t, int64(9000*8/5), maxOutputs[1], "the retry runs at 1.6x the output budget")
+}
+
+func TestIsTransient(t *testing.T) {
+	t.Parallel()
+	require.True(t, isTransient(errors.New("unexpected EOF")))
+	require.True(t, isTransient(errors.New("HTTP 503 Service Unavailable")))
+	require.True(t, isTransient(errors.New("rate limit exceeded (429)")))
+	require.False(t, isTransient(errors.New("HTTP 401 Unauthorized")))
+	require.False(t, isTransient(errors.New("context canceled")))
+	require.False(t, isTransient(nil))
 }

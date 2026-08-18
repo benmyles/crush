@@ -647,6 +647,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		Sessions:             c.sessions,
 		Messages:             c.messages,
 		Querier:              c.querier,
+		DB:                   c.dbConn,
 		Config:               c.cfg,
 		Tools:                nil,
 		Notify:               c.notify,
@@ -778,17 +779,13 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	// receive them.
 	if c.dbConn != nil && c.querier != nil {
 		compactionAgent, mapCompleter := compactionResolver()
-		sessionResolver := func() string {
-			if compactionAgent != nil {
-				return compactionAgent.CurrentSessionID()
-			}
-			return ""
-		}
 		allTools = append(allTools,
-			tools.NewRecallGrepTool(c.dbConn, c.querier, sessionResolver),
+			tools.NewRecallGrepTool(c.dbConn, c.querier),
 			tools.NewRecallDescribeTool(c.querier),
 		)
-		if compactionAgent != nil {
+		// compact_context only makes sense with the engine enabled; with the
+		// legacy summarizer the request would just interrupt the run.
+		if compactionAgent != nil && config.CompactionEnabled(c.cfg.Config()) {
 			allTools = append(allTools, tools.NewCompactContextTool(func() tools.CompactContextAgent { return compactionAgent }))
 		}
 		if mapCompleter != nil {
@@ -797,7 +794,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 			}
 		}
 		if isSubAgent {
-			allTools = append(allTools, tools.NewRecallExpandTool(c.dbConn, c.querier, sessionResolver))
+			allTools = append(allTools, tools.NewRecallExpandTool(c.dbConn, c.querier))
 		}
 	}
 

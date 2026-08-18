@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -84,11 +85,31 @@ type Engine struct {
 	q         db.Querier
 	completer Completer
 	now       func() int64
+	// txDB, when set, is used to persist each summary node (summary row,
+	// causality edges, session pointer) in a single transaction.
+	txDB *sql.DB
+}
+
+// EngineOption configures an Engine.
+type EngineOption func(*Engine)
+
+// WithTxDB makes persistence transactional using the given connection. A nil
+// db is ignored (persistence then runs statement by statement).
+func WithTxDB(conn *sql.DB) EngineOption {
+	return func(e *Engine) {
+		if conn != nil {
+			e.txDB = conn
+		}
+	}
 }
 
 // NewEngine creates an Engine backed by the given querier and completer.
-func NewEngine(q db.Querier, completer Completer) *Engine {
-	return &Engine{q: q, completer: completer, now: func() int64 { return time.Now().Unix() }}
+func NewEngine(q db.Querier, completer Completer, opts ...EngineOption) *Engine {
+	e := &Engine{q: q, completer: completer, now: func() int64 { return time.Now().Unix() }}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // Run executes one compaction and persists the result. It is fail-closed: any
@@ -103,11 +124,29 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	// tools all reference the same ordinal space across compactions.
 	span := BuildSpanModel(SpanInput{History: req.History, TurnPrefix: req.TurnPrefix, SeqOffset: req.SeqOffset})
 
+	// Load the previous active summary once: it provides the previous
+	// checkpoint (monotonic merge), the older extracts lane, and the DAG
+	// parent link.
+	prev, err := e.activeSummary(ctx, req.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("compaction: load active summary: %w", err)
+	}
+	previousCheckpoint := ""
+	if prev != nil && prev.Checkpoint.Valid {
+		previousCheckpoint = prev.Checkpoint.String
+	}
+	olderExtracts := extractsFromSummary(prev)
+
+	// The summary id is generated up front so the recovery note can cite it
+	// (recall_expand / recall_describe take this id).
+	summaryID := uuid.New().String()
+
 	// 2. Budget.
 	restoreEnabled := req.Cfg.WorkingSetFiles > 0
-	extractsEnabled := req.Cfg.ExtractsDecay >= 0
+	extractsDecay := req.Cfg.ExtractsDecayValue()
+	extractsEnabled := extractsDecay >= 0
 	// The older lane needs a previous extracts span to re-compress.
-	olderLaneEnabled := extractsEnabled && req.Cfg.ExtractsDecay > 0 && e.hasOlderExtracts(ctx, req.SessionID)
+	olderLaneEnabled := extractsEnabled && extractsDecay > 0 && olderExtracts != ""
 	ledgerEnabled := boolVal(req.Cfg.Ledger)
 	mapEnabled := boolVal(req.Cfg.TranscriptMap)
 	plan := PlanBudget(BudgetInputFromConfig(req.Cfg, req.ConsumerContextWindow, req.SystemPromptTokens, req.SummarizerContextWindow, req.SummarizerMaxOutputTokens, req.KeepRecentTokens, req.ReserveTokens, BudgetFeatures{
@@ -130,13 +169,8 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 		mapText = RenderTranscriptMap(tmap, plan.Map.MaxChars)
 	}
 
-	// 4. Previous checkpoint (for monotonic merge).
-	previousCheckpoint, err := e.previousCheckpoint(ctx, req.SessionID)
-	if err != nil {
-		slog.Debug("compaction: could not load previous checkpoint", "error", err)
-	}
-
-	// 5. Checkpoint lane with escalation.
+	// 4./5. Checkpoint lane with escalation (the previous checkpoint feeds
+	// the monotonic merge).
 	history, turnPrefix, _, _ := RenderSpanForCheckpointWithinBudget(span, plan.Checkpoint.InputCharBudget, CheckpointRenderBudget)
 	historyTurns := 0
 	for _, t := range span.Turns {
@@ -183,11 +217,18 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	}
 
 	// Monotonic ID merge.
-	var drift CheckpointDrift
 	if esc.Level < LevelDeterministic && strings.TrimSpace(previousCheckpoint) != "" {
+		var drift CheckpointDrift
 		checkpointText, drift = MergeCheckpoints(previousCheckpoint, checkpointText)
+		if len(drift.CarriedForward) > 0 || len(drift.Resolved) > 0 || len(drift.NewIDs) > 0 {
+			slog.Info("compaction: checkpoint merge",
+				"session", req.SessionID,
+				"previous_ids", drift.PreviousIDs,
+				"carried_forward", len(drift.CarriedForward),
+				"resolved", len(drift.Resolved),
+				"new_ids", len(drift.NewIDs))
+		}
 	}
-	_ = drift
 
 	// 6. Coverage audit (judge mode), if enabled and not the deterministic
 	// fallback.
@@ -196,9 +237,10 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	}
 
 	// 7. Transcript recovery reference.
-	ref := e.buildTranscriptReference(span, req)
+	ref := e.buildTranscriptReference(span, req, summaryID)
 
-	// 7b. Extracts lane (byte-exact, line-anchored, golden spans).
+	// 7b. Extracts lane (byte-exact, line-anchored, golden spans), bounded by
+	// the budget governor's extracts allotment.
 	var extractsText, olderExtractsText string
 	if extractsEnabled {
 		query := BuildExtractsQuery(
@@ -207,16 +249,17 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 			req.CustomInstructions,
 		)
 		extractReq := BuildExtractsLaneRequest(span, query, ExtractsRenderBudget, true)
+		extractReq.TotalCharBudget = int(plan.Extracts.TargetTokens) * CharsPerToken
 		extractResult := RunExtractsLane(extractReq)
-		extractsText = ExtractsHeading + " (verbatim lines kept by the extractive lane; speaker labels and transcript seq pointers added)\n## This span\n" + extractResult.Text
+		if strings.TrimSpace(extractResult.Text) != "" {
+			extractsText = ExtractsHeading + " (verbatim lines kept by the extractive lane; speaker labels and transcript seq pointers added)\n## This span\n" + extractResult.Text
+		}
 		if olderLaneEnabled {
-			if prev := e.olderExtracts(ctx, req.SessionID); prev != "" {
-				maxIn := int(plan.Extracts.OlderLaneTokens) * CharsPerToken
-				if maxIn <= 0 || len(prev) < maxIn {
-					maxIn = len(prev)
-				}
-				olderExtractsText = "## Older history (re-compressed from the previous compaction)\n" + RenderOlderLane(prev, maxIn)
+			maxIn := int(plan.Extracts.OlderLaneTokens) * CharsPerToken
+			if maxIn <= 0 || len(olderExtracts) < maxIn {
+				maxIn = len(olderExtracts)
 			}
+			olderExtractsText = "## Older history (re-compressed from the previous compaction)\n" + RenderOlderLane(olderExtracts, maxIn)
 		}
 	}
 
@@ -287,10 +330,11 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 		slog.Debug("compaction: convergence guard dropped optional parts", "dropped_to_tokens", composedTokens, "span_tokens", spanTokens)
 	}
 
-	// 9. Persist the summary DAG node + causality edges.
-	coveredIDs := coveredMessageIDs(req.History)
+	// 9. Persist the summary DAG node + causality edges. Both the history and
+	// the compacted turn prefix leave the active context, so both are covered.
+	coveredIDs := coveredMessageIDs(append(append([]message.Message{}, req.History...), req.TurnPrefix...))
 	result := &CompactionResult{
-		SummaryID:         uuid.New().String(),
+		SummaryID:         summaryID,
 		SummaryText:       composed,
 		Checkpoint:        checkpointText,
 		Layout:            layout,
@@ -301,7 +345,11 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 		Map:               tmap,
 		CoveredMessageIDs: coveredIDs,
 	}
-	if err := e.persist(ctx, req, result); err != nil {
+	parentID := ""
+	if prev != nil {
+		parentID = prev.ID
+	}
+	if err := e.persist(ctx, req, result, parentID); err != nil {
 		return nil, fmt.Errorf("compaction: persist failed: %w", err)
 	}
 	return result, nil
@@ -369,11 +417,13 @@ func (e *Engine) runVerification(ctx context.Context, checkpoint string, ledger 
 	return ApplyVerificationPatch(checkpoint, probes, missing)
 }
 
-func (e *Engine) buildTranscriptReference(span SpanModel, req CompactionRequest) TranscriptReference {
+func (e *Engine) buildTranscriptReference(span SpanModel, req CompactionRequest, summaryID string) TranscriptReference {
 	var seqs []int
 	var ids []string
+	// Every block in the span (history and compacted turn prefix) leaves the
+	// active context, so all of them are "just compacted" records.
 	for _, b := range span.Blocks {
-		if b.Segment == SegmentHistory && b.Seq != 0 {
+		if b.Seq != 0 {
 			seqs = append(seqs, b.Seq)
 			if b.MessageID != "" && !contains(ids, b.MessageID) {
 				ids = append(ids, b.MessageID)
@@ -385,6 +435,7 @@ func (e *Engine) buildTranscriptReference(span SpanModel, req CompactionRequest)
 	ranges := CoalesceSeqRanges(seqs)
 	ref := TranscriptReference{
 		SessionID:           req.SessionID,
+		SummaryID:           summaryID,
 		SeqRanges:           ranges,
 		CompactedMessageIDs: ids,
 		FirstRetainedSeq:    req.FirstRetainedSeq,
@@ -399,31 +450,23 @@ func (e *Engine) buildTranscriptReference(span SpanModel, req CompactionRequest)
 	return ref
 }
 
-func (e *Engine) previousCheckpoint(ctx context.Context, sessionID string) (string, error) {
+// activeSummary loads the session's active summary row, or nil when the
+// session has not been compacted yet.
+func (e *Engine) activeSummary(ctx context.Context, sessionID string) (*db.CompactionSummary, error) {
 	prev, err := e.q.GetActiveCompactionSummary(ctx, sessionID)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
 		}
-		return "", err
+		return nil, err
 	}
-	if prev.Checkpoint.Valid {
-		return prev.Checkpoint.String, nil
-	}
-	return "", nil
+	return &prev, nil
 }
 
-// hasOlderExtracts reports whether a previous compaction entry has an extracts
-// section that can be re-compressed into the older lane.
-func (e *Engine) hasOlderExtracts(ctx context.Context, sessionID string) bool {
-	return e.olderExtracts(ctx, sessionID) != ""
-}
-
-// olderExtracts returns the previous compaction's extracts section text, sliced
-// from the persisted summary using the recorded layout offsets.
-func (e *Engine) olderExtracts(ctx context.Context, sessionID string) string {
-	prev, err := e.q.GetActiveCompactionSummary(ctx, sessionID)
-	if err != nil {
+// extractsFromSummary returns a summary's extracts section text, sliced from
+// the persisted summary using the recorded layout offsets, or "".
+func extractsFromSummary(prev *db.CompactionSummary) string {
+	if prev == nil {
 		return ""
 	}
 	var layout map[string][2]int
@@ -434,7 +477,7 @@ func (e *Engine) olderExtracts(ctx context.Context, sessionID string) string {
 	if !ok {
 		return ""
 	}
-	if bounds[1] <= bounds[0] || bounds[1] > len(prev.SummaryText) {
+	if bounds[0] < 0 || bounds[1] <= bounds[0] || bounds[1] > len(prev.SummaryText) {
 		return ""
 	}
 	return strings.TrimSpace(prev.SummaryText[bounds[0]:bounds[1]])
@@ -468,19 +511,28 @@ func spanUserMessages(span SpanModel) []string {
 	return out
 }
 
-func (e *Engine) persist(ctx context.Context, req CompactionRequest, result *CompactionResult) error {
+func (e *Engine) persist(ctx context.Context, req CompactionRequest, result *CompactionResult, parentID string) error {
+	if e.txDB == nil {
+		return e.persistWith(ctx, e.q, req, result, parentID)
+	}
+	tx, err := e.txDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := e.persistWith(ctx, db.New(tx), req, result, parentID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func (e *Engine) persistWith(ctx context.Context, q db.Querier, req CompactionRequest, result *CompactionResult, parentID string) error {
 	parentIDs := "[]"
-	// Link to the previous active summary as the DAG parent.
-	if prev, err := e.q.GetActiveCompactionSummary(ctx, req.SessionID); err == nil && prev.ID != "" {
-		parentIDs = mustJSON([]string{prev.ID})
+	if parentID != "" {
+		parentIDs = mustJSON([]string{parentID})
 	}
 	layoutJSON := mustJSON(result.Layout)
 	coveredIDsJSON := mustJSON(result.CoveredMessageIDs)
-	kind := "leaf"
-	level := int64(result.Level)
-	modelProvider := sql.NullString{String: req.ModelProvider, Valid: req.ModelProvider != ""}
-	modelID := sql.NullString{String: req.ModelID, Valid: req.ModelID != ""}
-	reasoning := sql.NullString{String: req.Cfg.SummaryReasoning, Valid: req.Cfg.SummaryReasoning != ""}
 	coveredStart := sql.NullInt64{}
 	coveredEnd := sql.NullInt64{}
 	if result.Transcript.CompactedStartSeq != 0 {
@@ -489,33 +541,31 @@ func (e *Engine) persist(ctx context.Context, req CompactionRequest, result *Com
 	if result.Transcript.CompactedEndSeq != 0 {
 		coveredEnd = sql.NullInt64{Int64: int64(result.Transcript.CompactedEndSeq), Valid: true}
 	}
-	_, err := e.q.CreateCompactionSummary(ctx, db.CreateCompactionSummaryParams{
+	now := e.now()
+	if _, err := q.CreateCompactionSummary(ctx, db.CreateCompactionSummaryParams{
 		ID:                     result.SummaryID,
 		SessionID:              req.SessionID,
 		ParentIds:              parentIDs,
 		CoveredStart:           coveredStart,
 		CoveredEnd:             coveredEnd,
 		FirstRetainedMessageID: sql.NullString{String: req.FirstRetainedID, Valid: req.FirstRetainedID != ""},
-		Kind:                   kind,
-		Level:                  level,
+		Kind:                   "leaf",
+		Level:                  int64(result.Level),
 		SummaryText:            result.SummaryText,
 		Layout:                 layoutJSON,
 		Checkpoint:             sql.NullString{String: result.Checkpoint, Valid: result.Checkpoint != ""},
 		TokenCount:             result.TokenCount,
-		ModelProvider:          modelProvider,
-		ModelID:                modelID,
-		Reasoning:              reasoning,
+		ModelProvider:          sql.NullString{String: req.ModelProvider, Valid: req.ModelProvider != ""},
+		ModelID:                sql.NullString{String: req.ModelID, Valid: req.ModelID != ""},
 		CoveredMessageIds:      coveredIDsJSON,
-		CreatedAt:              e.now(),
-	})
-	if err != nil {
+		CreatedAt:              now,
+	}); err != nil {
 		return err
 	}
 
 	// Persist causality edges.
 	for _, edge := range result.Ledger.Causality {
-		filesJSON := mustJSON(edge.FilesChanged)
-		_ = e.q.CreateCompactionCausality(ctx, db.CreateCompactionCausalityParams{
+		if err := q.CreateCompactionCausality(ctx, db.CreateCompactionCausalityParams{
 			SummaryID:    sql.NullString{String: result.SummaryID, Valid: true},
 			SessionID:    req.SessionID,
 			Turn:         int64(edge.Turn),
@@ -523,17 +573,17 @@ func (e *Engine) persist(ctx context.Context, req CompactionRequest, result *Com
 			Tool:         edge.Tool,
 			ArgsHash:     sql.NullString{String: edge.ArgsHash, Valid: edge.ArgsHash != ""},
 			IsError:      boolToInt64(edge.IsError),
-			FilesChanged: filesJSON,
-			CreatedAt:    e.now(),
-		})
+			FilesChanged: mustJSON(edge.FilesChanged),
+			CreatedAt:    now,
+		}); err != nil {
+			return err
+		}
 	}
 
 	// Point the session at the new active summary.
-	return e.q.UpdateSessionCompaction(ctx, db.UpdateSessionCompactionParams{
-		ActiveSummaryID:  sql.NullString{String: result.SummaryID, Valid: true},
-		ReserveTokens:    req.ReserveTokens,
-		KeepRecentTokens: req.KeepRecentTokens,
-		ID:               req.SessionID,
+	return q.UpdateSessionCompaction(ctx, db.UpdateSessionCompactionParams{
+		ActiveSummaryID: sql.NullString{String: result.SummaryID, Valid: true},
+		ID:              req.SessionID,
 	})
 }
 
@@ -568,8 +618,24 @@ func (e *Engine) ActiveContext(ctx context.Context, sessionID string, allMessage
 		}
 	}
 	if cutIdx < 0 && active.CoveredEnd.Valid {
-		// Fallback: covered_end is a session-absolute 1-based ordinal.
-		cutIdx = int(active.CoveredEnd.Int64)
+		// Fallback: covered_end is a session-absolute 1-based ordinal in the
+		// summary-free message list, so count non-summary messages.
+		ordinal := 0
+		cutIdx = len(allMessages)
+		for i, msg := range allMessages {
+			if msg.IsSummaryMessage {
+				continue
+			}
+			ordinal++
+			if int64(ordinal) > active.CoveredEnd.Int64 {
+				cutIdx = i
+				break
+			}
+		}
+	}
+	if cutIdx < 0 {
+		// Neither anchor available: retain everything rather than guess.
+		cutIdx = 0
 	}
 	for i, msg := range allMessages {
 		if i < cutIdx {

@@ -86,6 +86,11 @@ func DeterministicFallback(ledgerText, recentText string, targetTokens int64) Es
 // reason. Implementations map the level onto the appropriate prompt mode.
 type EscalationCompleter func(ctx context.Context, level EscalationLevel, input string, maxOutputTokens int64) (text string, stopReason string, err error)
 
+// TruncationRetryNote is appended to the level-1 input when the first attempt
+// stopped at the output cap, so the model produces a complete (shorter)
+// checkpoint on the retry.
+const TruncationRetryNote = "\n\n[retry: the previous attempt stopped at the output token cap before finishing. Produce the complete checkpoint; if you must save space, shorten Critical Context and Environment & How-To rather than omitting Next Action.]"
+
 // RunWithEscalation runs a model-backed lane through the three-level escalation
 // protocol. It is fail-closed: a model error (transient or cancelled)
 // propagates instead of silently falling back to the deterministic level, so
@@ -95,34 +100,37 @@ type EscalationCompleter func(ctx context.Context, level EscalationLevel, input 
 //
 // Level 1 acceptance: tokens < InputTokens && tokens <= Target*1.25. On a
 // "length" stop (output truncated by max_tokens) it retries once at 1.6x the
-// output budget with a retry reason so the model knows to be more concise.
+// output budget with a retry note appended so the model knows to be more
+// concise and to finish.
 func RunWithEscalation(ctx context.Context, in EscalationInput, input string, complete EscalationCompleter, ledgerText, recentText string) (EscalationResult, error) {
-	tryLevel := func(level EscalationLevel, maxOutput int64) (EscalationResult, error) {
-		text, stop, err := completeWithRetry(ctx, complete, level, input, maxOutput)
+	tryLevel := func(level EscalationLevel, levelInput string, maxOutput int64) (EscalationResult, error) {
+		text, stop, err := completeWithRetry(ctx, complete, level, levelInput, maxOutput)
 		if err != nil {
 			return EscalationResult{}, err
 		}
 		tokens := int64(EstimateTokens(len(text)))
 		return EscalationResult{Level: level, Text: text, Tokens: tokens, Truncated: stop == "length", Converged: tokens < in.InputTokens}, nil
 	}
+	accept := func(r EscalationResult, target int64) bool {
+		return r.Converged && !r.Truncated && r.Tokens <= target
+	}
 
 	// Level 1: preserve_details.
-	r1, err := tryLevel(LevelPreserveDetails, in.MaxOutputTokens)
+	r1, err := tryLevel(LevelPreserveDetails, input, in.MaxOutputTokens)
 	if err != nil {
 		return EscalationResult{}, fmt.Errorf("compaction: checkpoint level 1 failed: %w", err)
 	}
-	if r1.Converged && r1.Tokens <= in.TargetTokens*5/4 {
+	if accept(r1, in.TargetTokens*5/4) {
 		return r1, nil
 	}
-	// If level 1 hit the length limit, retry once at 1.6x output with a retry
-	// reason appended so the model can be more concise.
-	if r1.Truncated && !r1.Converged {
-		r1b, err := tryLevel(LevelPreserveDetails, in.MaxOutputTokens*8/5)
+	// If level 1 hit the output cap, retry once at 1.6x output with a retry
+	// note appended so the model can finish and be more concise.
+	if r1.Truncated {
+		r1b, err := tryLevel(LevelPreserveDetails, input+TruncationRetryNote, in.MaxOutputTokens*8/5)
 		if err != nil {
 			return EscalationResult{}, fmt.Errorf("compaction: checkpoint level 1 retry failed: %w", err)
 		}
-		if r1b.Converged && r1b.Tokens <= in.TargetTokens*5/4 {
-			r1b.Truncated = true
+		if accept(r1b, in.TargetTokens*5/4) {
 			return r1b, nil
 		}
 	}
@@ -132,11 +140,11 @@ func RunWithEscalation(ctx context.Context, in EscalationInput, input string, co
 	if halfTarget <= 0 {
 		halfTarget = in.TargetTokens
 	}
-	r2, err := tryLevel(LevelBulletPoints, in.MaxOutputTokens)
+	r2, err := tryLevel(LevelBulletPoints, input, in.MaxOutputTokens)
 	if err != nil {
 		return EscalationResult{}, fmt.Errorf("compaction: checkpoint level 2 failed: %w", err)
 	}
-	if r2.Converged && r2.Tokens <= halfTarget*3/2 {
+	if accept(r2, halfTarget*3/2) {
 		return r2, nil
 	}
 
@@ -189,8 +197,12 @@ func isTransient(err error) bool {
 	if strings.Contains(msg, "400") || strings.Contains(msg, "422") {
 		return false
 	}
-	// 429, 5xx, timeout, connection reset, EOF are transient.
-	return strings.Contains(msg, "429") || strings.Contains(msg, "500") || strings.Contains(msg, "502") ||
-		strings.Contains(msg, "503") || strings.Contains(msg, "504") || strings.Contains(msg, "timeout") ||
-		strings.Contains(msg, "connection reset") || strings.Contains(msg, "EOF") || strings.Contains(msg, "EOF") || strings.Contains(msg, "temporary")
+	// 429, 5xx, timeout, connection reset, EOF are transient. msg is
+	// lowercased above, so match lowercase tokens.
+	for _, needle := range []string{"429", "500", "502", "503", "504", "timeout", "connection reset", "eof", "temporary", "overloaded", "rate limit"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }

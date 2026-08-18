@@ -39,13 +39,13 @@ When to use it:
 - When recall_grep found a hit inside a summary and you need the surrounding raw turns.
 - When a checkpoint references a decision whose rationale was compacted away.`
 
-const recallDescribeDescription = `Describe a compaction summary or file reference by id.
+const recallDescribeDescription = `Describe a compaction summary by id.
 
-Returns metadata for an id from recall_grep or recall_expand: kind (leaf/condensed summary or file reference), token count, covered message range, parent summaries, and (for summaries) the checkpoint text. Use this to decide whether to expand a node before spending the context.`
+Returns metadata for a summary id from recall_grep or the compaction notice: kind (leaf/condensed), token count, covered seq range, parent summaries, and the checkpoint text. Use this to decide whether to expand a node before spending the context.`
 
 // RecallGrepParams are the params for recall_grep.
 type RecallGrepParams struct {
-	Pattern   string `json:"pattern" description:"The search pattern (FTS5 query syntax: words, phrases, OR, NEAR, *)"`
+	Pattern   string `json:"pattern" description:"Literal text to search for (a word, phrase, path, or error fragment). Matched as a phrase, case-insensitively; not a regex."`
 	SessionID string `json:"session_id,omitempty" description:"Restrict to a session. Defaults to the active session."`
 	Limit     int    `json:"limit,omitempty" description:"Max results (default 20)"`
 }
@@ -58,7 +58,7 @@ type RecallExpandParams struct {
 
 // RecallDescribeParams are the params for recall_describe.
 type RecallDescribeParams struct {
-	ID string `json:"id" description:"The summary or file-ref id to describe"`
+	ID string `json:"id" description:"The compaction summary id to describe"`
 }
 
 // MapCompleterProvider provides the stateless completion function for llm_map.
@@ -74,8 +74,21 @@ type ftsHit struct {
 	Role      string
 	Parts     string
 	CreatedAt int64
-	Rowid     int64
+	// Seq is the message's session-absolute 1-based ordinal in the
+	// summary-free message list (created_at, rowid order) — the same
+	// numbering the compaction ledger, transcript map, and recovery note use.
+	Seq       int64
+	IsSummary bool
 }
+
+// seqExpr computes a message's seq: its 1-based ordinal among the session's
+// non-summary messages ordered by (created_at, rowid), which is exactly the
+// order message.Service.List returns and the ordinal the compaction engine
+// assigns. Summary messages get the ordinal of the non-summary message that
+// precedes them (they are labeled separately).
+const seqExpr = `(SELECT COUNT(*) FROM messages m2
+   WHERE m2.session_id = m.session_id AND m2.is_summary_message = 0
+     AND (m2.created_at < m.created_at OR (m2.created_at = m.created_at AND m2.rowid <= m.rowid)))`
 
 // searchMessagesFTS runs an FTS5 MATCH query against messages_fts via raw SQL,
 // since sqlc cannot introspect virtual tables. It scopes to a session when
@@ -103,7 +116,7 @@ func ftsQuery(ctx context.Context, dbx db.DBTX, quotedPattern, sessionID string,
 	)
 	if sessionID == "" {
 		rows, err = dbx.QueryContext(ctx,
-			`SELECT m.id, m.session_id, m.role, m.parts, m.created_at, m.rowid
+			`SELECT m.id, m.session_id, m.role, m.parts, m.created_at, m.is_summary_message, `+seqExpr+`
 			 FROM messages_fts
 			 JOIN messages m ON m.rowid = messages_fts.rowid
 			 WHERE messages_fts MATCH ?
@@ -111,7 +124,7 @@ func ftsQuery(ctx context.Context, dbx db.DBTX, quotedPattern, sessionID string,
 			 LIMIT ?`, quotedPattern, limit)
 	} else {
 		rows, err = dbx.QueryContext(ctx,
-			`SELECT m.id, m.session_id, m.role, m.parts, m.created_at, m.rowid
+			`SELECT m.id, m.session_id, m.role, m.parts, m.created_at, m.is_summary_message, `+seqExpr+`
 			 FROM messages_fts
 			 JOIN messages m ON m.rowid = messages_fts.rowid
 			 WHERE messages_fts MATCH ? AND m.session_id = ?
@@ -122,12 +135,18 @@ func ftsQuery(ctx context.Context, dbx db.DBTX, quotedPattern, sessionID string,
 		return nil, fmt.Errorf("recall_grep: search failed: %w", err)
 	}
 	defer rows.Close()
+	return scanHits(rows)
+}
+
+func scanHits(rows *sql.Rows) ([]ftsHit, error) {
 	var hits []ftsHit
 	for rows.Next() {
 		var h ftsHit
-		if err := rows.Scan(&h.ID, &h.SessionID, &h.Role, &h.Parts, &h.CreatedAt, &h.Rowid); err != nil {
+		var isSummary int64
+		if err := rows.Scan(&h.ID, &h.SessionID, &h.Role, &h.Parts, &h.CreatedAt, &isSummary, &h.Seq); err != nil {
 			return nil, fmt.Errorf("recall_grep: scan failed: %w", err)
 		}
+		h.IsSummary = isSummary != 0
 		hits = append(hits, h)
 	}
 	return hits, rows.Err()
@@ -143,32 +162,24 @@ func likeSearch(ctx context.Context, dbx db.DBTX, pattern, sessionID string, lim
 	)
 	if sessionID == "" {
 		rows, err = dbx.QueryContext(ctx,
-			`SELECT id, session_id, role, parts, created_at, rowid
-			 FROM messages
-			 WHERE parts LIKE ?
-			 ORDER BY created_at ASC
+			`SELECT m.id, m.session_id, m.role, m.parts, m.created_at, m.is_summary_message, `+seqExpr+`
+			 FROM messages m
+			 WHERE m.parts LIKE ?
+			 ORDER BY m.created_at ASC, m.rowid ASC
 			 LIMIT ?`, like, limit)
 	} else {
 		rows, err = dbx.QueryContext(ctx,
-			`SELECT id, session_id, role, parts, created_at, rowid
-			 FROM messages
-			 WHERE session_id = ? AND parts LIKE ?
-			 ORDER BY created_at ASC
+			`SELECT m.id, m.session_id, m.role, m.parts, m.created_at, m.is_summary_message, `+seqExpr+`
+			 FROM messages m
+			 WHERE m.session_id = ? AND m.parts LIKE ?
+			 ORDER BY m.created_at ASC, m.rowid ASC
 			 LIMIT ?`, sessionID, like, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("recall_grep: fallback search failed: %w", err)
 	}
 	defer rows.Close()
-	var hits []ftsHit
-	for rows.Next() {
-		var h ftsHit
-		if err := rows.Scan(&h.ID, &h.SessionID, &h.Role, &h.Parts, &h.CreatedAt, &h.Rowid); err != nil {
-			return nil, fmt.Errorf("recall_grep: scan failed: %w", err)
-		}
-		hits = append(hits, h)
-	}
-	return hits, rows.Err()
+	return scanHits(rows)
 }
 
 // snippetFromParts extracts a short text snippet from a message's JSON
@@ -248,9 +259,9 @@ func quoteFTSPattern(pattern string) string {
 	return `"` + escaped + `"`
 }
 
-// NewRecallGrepTool creates the recall_grep tool. sessionResolver returns the
-// active session id when the params omit one.
-func NewRecallGrepTool(dbx db.DBTX, q db.Querier, sessionResolver func() string) fantasy.AgentTool {
+// NewRecallGrepTool creates the recall_grep tool. The active session id comes
+// from the tool-call context when the params omit one.
+func NewRecallGrepTool(dbx db.DBTX, q db.Querier) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		RecallGrepToolName,
 		recallGrepDescription,
@@ -261,9 +272,6 @@ func NewRecallGrepTool(dbx db.DBTX, q db.Querier, sessionResolver func() string)
 			sessionID := params.SessionID
 			if sessionID == "" {
 				sessionID = GetSessionFromContext(ctx)
-			}
-			if sessionID == "" && sessionResolver != nil {
-				sessionID = sessionResolver()
 			}
 			hits, err := searchMessagesFTS(ctx, dbx, params.Pattern, sessionID, params.Limit)
 			if err != nil {
@@ -285,7 +293,11 @@ func NewRecallGrepTool(dbx db.DBTX, q db.Querier, sessionResolver func() string)
 				if covered {
 					coverNote = fmt.Sprintf("covered by summary %s", summaryID)
 				}
-				fmt.Fprintf(&sb, "- [seq %d] %s · role=%s · %s\n  %s\n", h.Rowid, h.ID, h.Role, coverNote, snippet)
+				anchor := fmt.Sprintf("seq %d", h.Seq)
+				if h.IsSummary {
+					anchor = "compaction summary message"
+				}
+				fmt.Fprintf(&sb, "- [%s] %s · role=%s · %s\n  %s\n", anchor, h.ID, h.Role, coverNote, snippet)
 			}
 			sb.WriteString("\nUse recall_expand with a covering summary id to recover the full raw turns, or recall_describe for metadata.")
 			return fantasy.NewTextResponse(sb.String()), nil
@@ -318,7 +330,7 @@ func buildCoveringSummaryIndex(ctx context.Context, q db.Querier, sessionID stri
 
 // NewRecallExpandTool creates the recall_expand tool. Only sub-agents should
 // receive it; the coordinator gates registration on isSubAgent.
-func NewRecallExpandTool(dbx db.DBTX, q db.Querier, sessionResolver func() string) fantasy.AgentTool {
+func NewRecallExpandTool(dbx db.DBTX, q db.Querier) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		RecallExpandToolName,
 		recallExpandDescription,
@@ -345,7 +357,6 @@ func NewRecallExpandTool(dbx db.DBTX, q db.Querier, sessionResolver func() strin
 				return fantasy.NewTextResponse("This summary has no covered message ids recorded; it may be a condensed node. Use recall_expand on its leaf children instead."), nil
 			}
 			sessionID := summary.SessionID
-			_ = sessionResolver // sessionID comes from the summary row
 			// Fetch the covered messages via raw SQL on messages by id set.
 			placeholders := make([]string, len(coveredIDs))
 			args := make([]any, 0, len(coveredIDs)+1)
@@ -400,7 +411,6 @@ func NewRecallDescribeTool(q db.Querier) fantasy.AgentTool {
 			if strings.TrimSpace(params.ID) == "" {
 				return fantasy.NewTextErrorResponse("id is required"), nil
 			}
-			// Try a compaction summary first, then a file ref.
 			summary, err := q.GetCompactionSummary(ctx, params.ID)
 			if err == nil {
 				var sb strings.Builder
@@ -423,23 +433,7 @@ func NewRecallDescribeTool(q db.Querier) fantasy.AgentTool {
 				}
 				return fantasy.NewTextResponse(sb.String()), nil
 			}
-			fileRef, err := q.GetCompactionFileRef(ctx, params.ID)
-			if err == nil {
-				var sb strings.Builder
-				fmt.Fprintf(&sb, "File reference %s\n", fileRef.ID)
-				fmt.Fprintf(&sb, "- path: %s\n", fileRef.Path)
-				if fileRef.Mime.Valid {
-					fmt.Fprintf(&sb, "- mime: %s\n", fileRef.Mime.String)
-				}
-				if fileRef.TokenCount.Valid {
-					fmt.Fprintf(&sb, "- token count: %d\n", fileRef.TokenCount.Int64)
-				}
-				if fileRef.Exploration.Valid {
-					fmt.Fprintf(&sb, "\nExploration summary:\n%s\n", fileRef.Exploration.String)
-				}
-				return fantasy.NewTextResponse(sb.String()), nil
-			}
-			return fantasy.NewTextResponse("No summary or file reference found with that id."), nil
+			return fantasy.NewTextResponse("No summary found with that id."), nil
 		},
 	)
 }

@@ -465,8 +465,9 @@ Usage:
   option [command]
 
 Available Commands:
-  reset     Clear every value from a list option
-  ui        Configure terminal UI behavior
+  reset       Clear every value from a list option
+  ui          Configure terminal UI behavior
+  compaction  Configure the context compaction engine
 
 Boolean Keys:
   debug                          enable debug logging
@@ -474,7 +475,9 @@ Boolean Keys:
   auto-lsp                       automatically configure language servers
   progress                       show progress indicators
   metrics                        send anonymous usage metrics
-  auto-summarize                 automatically summarize long conversations
+  auto-summarize                 automatically compact long conversations
+                                 (legacy toggle; prefer option compaction
+                                 enabled)
   provider-auto-update           update the provider catalog automatically
   default-providers              include built-in providers
   attribution-generated-with     add the Generated with Crush line
@@ -541,6 +544,54 @@ option ui transparent true
 option ui scrollbar always
 option ui completions-max-depth 4
 option ui completions-max-items 200
+```
+
+#### `option compaction`
+
+Configure the context compaction engine. When a conversation approaches the
+model's context window, Crush compacts the older part of it into a structured
+checkpoint plus a deterministic ledger (user instructions, files, commands,
+errors), a transcript map, budgeted verbatim extracts, a working-set snapshot,
+and an exact-recovery note. Raw messages are never deleted: the agent can
+search them with `recall_grep` and expand a summary with `recall_expand`, and it
+can compact early at a milestone with `compact_context`. These keys map onto
+`options.compaction` in `crush.json`.
+
+```text
+Usage:
+  option compaction <key> <value>
+
+Available Keys:
+  enabled bool                       run the compaction engine (default true);
+                                     false falls back to the legacy summary
+  reserve-tokens int                 headroom kept free before a blocking
+                                     compaction (default 16384)
+  keep-recent-tokens int             recent tokens kept verbatim (default 20000)
+  soft-threshold-fraction number     window fraction where the structure-aware
+                                     trigger may compact early (default 0.7)
+  budget-fraction number             window fraction the compaction entry may
+                                     use (default 0.15)
+  max-summary-tokens int             hard cap on the entry size (default 48000)
+  min-summary-tokens int             floor for the entry size (default 6000)
+  verify judge|checks|off            checkpoint coverage audit (default judge)
+  ledger bool                        deterministic session ledger (default true)
+  transcript-map bool                per-turn transcript map (default true)
+  working-set-files int              recently modified files snapshotted;
+                                     0 disables (default 3)
+  working-set-max-chars-per-file int per-file cap for the snapshot (default
+                                     12000)
+  extracts-decay number              ratio for re-compressing prior extracts;
+                                     0 disables the older lane, negative
+                                     disables extracts (default 0.5)
+  parallel-block-threshold int       span size in tokens above which the
+                                     checkpoint lane parallelizes; 0 disables
+```
+
+```bash
+option compaction reserve-tokens 32768
+option compaction keep-recent-tokens 30000
+option compaction verify checks
+option compaction extracts-decay 0
 ```
 
 > [!IMPORTANT]

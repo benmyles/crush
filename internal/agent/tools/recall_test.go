@@ -79,19 +79,28 @@ func TestRecallGrep_FindsTextAndGroupsBySummary(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, q.UpdateSessionCompaction(ctx, db.UpdateSessionCompactionParams{
-		ActiveSummaryID:  sql.NullString{String: "sum1", Valid: true},
-		ReserveTokens:    16384,
-		KeepRecentTokens: 20000,
-		ID:               "s1",
+		ActiveSummaryID: sql.NullString{String: "sum1", Valid: true},
+		ID:              "s1",
 	}))
 
-	tool := NewRecallGrepTool(conn, q, func() string { return "s1" })
+	tool := NewRecallGrepTool(conn, q)
 	input, err := json.Marshal(RecallGrepParams{Pattern: "auth.go", SessionID: "s1"})
 	require.NoError(t, err)
 	resp, err := tool.Run(ctx, fantasyToolCall(RecallGrepToolName, string(input)))
 	require.NoError(t, err)
 	require.Contains(t, resp.Content, "add JWT middleware")
 	require.Contains(t, resp.Content, "covered by summary sum1")
+	// The seq anchor is the session-absolute ordinal (m1 is the first
+	// non-summary message), matching the ledger/recovery-note numbering.
+	require.Contains(t, resp.Content, "[seq 1] m1")
+
+	// The session id defaults to the tool-call context when omitted.
+	ctxWithSession := context.WithValue(ctx, SessionIDContextKey, "s1")
+	input, err = json.Marshal(RecallGrepParams{Pattern: "done"})
+	require.NoError(t, err)
+	resp, err = tool.Run(ctxWithSession, fantasyToolCall(RecallGrepToolName, string(input)))
+	require.NoError(t, err)
+	require.Contains(t, resp.Content, "[seq 2] m2")
 }
 
 func TestRecallGrep_FTSQuotingHandlesPunctuation(t *testing.T) {
@@ -103,7 +112,7 @@ func TestRecallGrep_FTSQuotingHandlesPunctuation(t *testing.T) {
 	addRecallMessage(t, q, "s2", "m1", "user",
 		`[{"type":"text","data":{"text":"edit internal/x/y.go"}}]`)
 
-	tool := NewRecallGrepTool(conn, q, func() string { return "s2" })
+	tool := NewRecallGrepTool(conn, q)
 	// A path with slashes/dots would break raw FTS5; quoting + LIKE fallback
 	// must still find it.
 	input, err := json.Marshal(RecallGrepParams{Pattern: "internal/x/y.go", SessionID: "s2"})

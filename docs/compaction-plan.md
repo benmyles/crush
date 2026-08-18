@@ -5,11 +5,43 @@ A plan for a new compaction engine for Crush that takes the best of **LCM**
 engine, and the **2026 research literature**, grounded in Crush's existing
 Go / SQLite / fantasy / pubsub architecture.
 
-Status: design proposal, not yet implemented.
+Status: **implemented** in `internal/compaction` (Phases 1–3 and the retrieval /
+operator parts of Phase 4). See "Implementation status" below for what shipped,
+where the implementation deliberately deviates from this design, and what is
+deferred. Sections marked *Status:* further down record the per-feature outcome.
+
+---
+
+## Implementation status
+
+| Area | Status |
+| --- | --- |
+| Immutable store + summary DAG (`compaction_summaries`, `parent_ids`, `covered_message_ids`, `first_retained_message_id`) | Shipped. Nodes are `leaf`; each new node parents the previous active node (a chain), and each compaction covers only the span since the previous node's retained cut (incremental). Condensed nodes are not built. |
+| Span model, budget governor, deterministic ledger + causality index, transcript map, exact-recovery note | Shipped (`span.go`, `budget.go`, `ledger.go`, `transcript.go`). Anchors are **session-absolute ordinals** in the summary-free message list (not rowids); `recall_grep` prints the same ordinal. |
+| Checkpoint lane with monotonic ID merge, validation, coverage audit (judge) | Shipped (`checkpoint.go`, `engine.go`). Verify modes: `judge` (model audit) or `checks`/`off` (structural validation only). |
+| Three-level escalation guard | Shipped (`escalation.go`) with a twist: model **errors fail closed** (one transient retry, then abort); the deterministic level is reached only when both model levels fail to *converge*. Truncated level-1 output is retried once at 1.6× with a retry note. |
+| Extractive lane (golden spans, line anchors, older-lane decay) | Shipped as a **deterministic local compressor** bounded by the budget governor's extracts allotment; no LLM relevance pass. |
+| Working-set snapshot | Shipped (`workingset.go`, cwd-bounded, secret-like names skipped). Git snapshot: **not shipped**. |
+| Fail-closed pipeline | Shipped for the engine. If the engine fails, `Summarize` falls back to the legacy single-shot summary (logged) rather than aborting the turn. |
+| Trigger: hard threshold `window − reserve`, soft threshold + structure-aware rubric | Shipped (`trigger.go`, `agent.go`). Compaction is **synchronous** at a step boundary in all cases (no async swap-in yet); `keep_recent`/`reserve` are clamped to the window for small models. |
+| Agent-initiated `compact_context` | Shipped as a request flag honored at the next step boundary. |
+| Parallel block compaction | Shipped (`parallel.go`), fail-closed, off by default (`parallel_block_threshold: 0`). |
+| `recall_grep`, `recall_expand` (sub-agents only), `recall_describe` | Shipped. `recall_grep` phrase-quotes the pattern (FTS5) with a `LIKE` fallback and groups hits by covering summary. |
+| `llm_map` | Shipped (permission-gated output write, cwd-relative paths). `agentic_map`: **not shipped**. |
+| Scope-reduction invariant for nested sub-agents | **Not shipped** (the task agent does not receive the `agent` tool, so the check would be dead code). |
+| Optional embedding index + `recall_query` | **Deferred** (no schema, no tool). |
+| Large-file references + exploration summaries | **Deferred** (no schema). |
+| Pubsub compaction lifecycle events / TUI footer | **Deferred**. The composed summary is stored as a summary message so the chat renders it. |
+| Configurable summarizer model / reasoning | **Deferred**; the active large model is used. |
+| Config (`options.compaction`, `option compaction …` in crushrc) | Shipped; see §6.4. |
 
 ---
 
 ## 1. Where Crush is today
+
+*(This section describes Crush before the engine landed. The single-shot path
+described here still exists as the fallback used when the engine is disabled
+or fails.)*
 
 Crush's current compaction is a single-shot LLM summarization in
 `internal/agent/agent.go` (`Summarize`):
@@ -324,6 +356,13 @@ keeps the byte-exact, line-anchored, golden-span design without an external
 service dependency. The LLM-assisted pass is itself wrapped by the escalation
 guard.
 
+*Status:* shipped as the deterministic compressor only. Golden spans are kept
+first (per-block and total caps), then the remaining character budget
+(`plan.Extracts.TargetTokens`) is allocated over non-golden blocks with recency
+weighting; blocks that do not fit are dropped. The older lane re-truncates the
+previous compaction's extracts to `OlderLaneTokens` (a quarter of the extracts
+allotment) so older history decays instead of nesting. No LLM relevance pass.
+
 ### 4.8 Escalation guard (from LCM)
 
 `internal/compaction/escalation.go`: wraps any LLM lane.
@@ -337,6 +376,14 @@ level 3: deterministic     → Go truncation, 512 tokens, no LLM (only if level 
 Returns as soon as a level produces `tokens(out) < tokens(in)`. Level 3 guarantees
 the engine never gets stuck on a model that won't compress.
 
+*Status:* shipped with stricter fail-closed semantics: a model *error*
+(including cancellation, auth, 4xx) aborts the compaction after at most one
+transient retry — it never falls through to level 3. Level 1 accepts output that
+is smaller than the input, not truncated, and within 1.25× the target; a
+truncated attempt is retried once at 1.6× the output budget with a retry note.
+Level 2 accepts within 0.75× the target. Level 3 (deterministic) is used only
+when both model levels fail to converge, and it receives the rendered ledger.
+
 ### 4.9 Deterministic ledger + causality graph (from ShiftUp + AMA-Bench)
 
 `internal/compaction/ledger.go`: extract in Go — user instructions verbatim,
@@ -349,6 +396,10 @@ record `(callId, tool, args-hash, resultError, filesChanged)` edges. Stored in a
 `compaction_causality` table and surfaced in the ledger as "T4 bash → changed
 foo.go; T7 edit foo.go → error: …". This is the structured memory that
 similarity-only RAG misses, and it's cheap to build deterministically.
+
+*Status:* shipped except the git snapshot (deferred). Tracked file operations
+are `view` (read), `edit`/`multiedit`/`lsp_rename`/`lsp_replace_symbol` (edit),
+`write` (write); commands come from `bash`.
 
 ### 4.10 Retrieval tools (from LCM + ACM, read-only, agent-callable)
 
@@ -371,6 +422,18 @@ read-only so they skip permission prompts for trusted repos:
 Each tool's `.md` description tells the model *when* to use it (e.g. "before
 asking the user to repeat prior context, `recall_grep` the transcript").
 
+*Status:* `recall_grep`, `recall_expand`, `recall_describe`, and
+`compact_context` shipped. `recall_grep` phrase-quotes the pattern for FTS5
+(paths and punctuation are safe) and falls back to `LIKE`; each hit shows the
+message's seq (the same session ordinal used in the ledger and recovery note)
+and the summary that covers it, so `recall_expand` has a discoverable input.
+`recall_query` is deferred with the embedding index. All four are registered
+through the normal tool plumbing (`allToolNames`, allow-lists, hooks); the
+recall tools are read-only, `compact_context` and `llm_map` are not given to
+read-only sub-agents. `compact_context` sets a per-session request flag that the
+run honors at the next step boundary (calling the summarizer from inside a tool
+call would collide with the in-flight run).
+
 ### 4.11 Adaptive, structure-aware trigger (from SelfCompact + LCM)
 
 `internal/compaction/trigger.go`:
@@ -390,6 +453,16 @@ asking the user to repeat prior context, `recall_grep` the transcript").
 This addresses the research finding that *when* to compact matters as much as
 *how*, and that fixed thresholds discard partial results mid-derivation.
 
+*Status:* shipped with the deterministic rubric. The hard threshold is
+`window − reserve_tokens` when the engine is enabled (legacy constants
+otherwise); the rubric is consulted only above the soft threshold. Compaction
+is currently synchronous at a step boundary in every case — the "async between
+turns" swap-in is deferred. `keep_recent_tokens` and `reserve_tokens` are
+clamped to `window/4` and `window/8` so small-window models cannot end up
+with nothing to compact while over threshold; when a single turn exceeds the
+retained budget it is split (its prefix is compacted as the In-Flight Turn, the
+suffix stays in context, aligned so tool calls and results stay paired).
+
 ### 4.12 Optional embedding index (from AgentMemBench EKV)
 
 `internal/compaction/embeddings.go` (gated behind config, off by default):
@@ -401,6 +474,8 @@ AgentMemBench showed is the only thing that scales to long-range recall. Keep it
 optional — regex + DAG traversal is the default and is sufficient for most
 sessions.
 
+*Status:* deferred (no schema, no config key, no tool).
+
 ### 4.13 Large-file handling (from LCM)
 
 `internal/compaction/files.go`: when a tool result includes file content above a
@@ -410,6 +485,8 @@ active context. Exploration summaries are produced by a type-aware dispatcher:
 structured (JSON/CSV/SQL) → schema/shape; code → signatures/hierarchies (reuse
 the LSP manager Crush already has); text → short LLM summary. File IDs propagate
 through the summary DAG so the model never loses awareness of a file it saw.
+
+*Status:* deferred (no schema, no config key).
 
 ### 4.14 Operator-level recursion (from LCM)
 
@@ -427,6 +504,10 @@ parent context). The scope-reduction invariant (§4.15) guards delegation.
 These directly address Crush's long-context aggregation cases (e.g. "refactor
 every handler in this dir") that today would overflow one context.
 
+*Status:* `llm_map` shipped (worker pool, best-effort schema check with one
+retry, JSONL in/out resolved against the working directory, output write gated
+by the permission service). `agentic_map` deferred.
+
 ### 4.15 Scope-reduction invariant for sub-agents (from LCM)
 
 In the coordinator's sub-agent dispatch (`internal/agent/coordinator.go`), when a
@@ -435,6 +516,10 @@ In the coordinator's sub-agent dispatch (`internal/agent/coordinator.go`), when 
 instruct it to do the work directly. Read-only exploration agents and parallel
 `sibling` tasks are exempt. This gives well-founded recursion without an arbitrary
 depth limit, reusing the coordinator that already exists.
+
+*Status:* not shipped. Crush's task agent does not receive the `agent` tool, so
+nested delegation cannot happen today and the check would be dead code; revisit
+if sub-agents gain the ability to spawn sub-agents.
 
 ### 4.16 Exact transcript recovery (from ShiftUp)
 
@@ -447,6 +532,15 @@ summary) gives the session id, exact rowid ranges, entry ids, and ready-to-run
 rather than a JSONL file, the "line numbers" are rowids, but the principle is
 identical.
 
+*Status:* shipped with one change: the anchor ("seq") is the message's
+**session-absolute 1-based ordinal in the summary-free message list** (ordered
+by `created_at, rowid`), not the raw rowid, so it is stable, human-readable,
+and identical in the ledger, transcript map, recovery note, `recall_grep`, and
+`recall_describe`. The authoritative cut for the active context is the
+`first_retained_message_id` stored on the summary node; ordinals are labels.
+The recovery note lists the session id, the summary id, exact seq ranges,
+first/last compacted message ids, and the recall tools (no shell snippets).
+
 ### 4.17 Fail-closed + retry (from ShiftUp)
 
 `internal/compaction/pipeline.go` orchestrates the lanes. Every mandatory lane
@@ -457,6 +551,13 @@ errors (quota, 4xx) not retried. Aborts propagate immediately. Sanitized,
 actionable error notices via `pubsub` (reusing the existing event bus) and the
 notify package.
 
+*Status:* the engine (`engine.go`) is fail-closed with a single short transient
+retry per model call; there is no `pipeline.go` and no long backoff schedule.
+If the engine fails, `sessionAgent.Summarize` logs the error and falls back to
+the legacy single-shot summary so the turn still recovers. Persistence of a
+summary node (row, causality edges, session pointer) is transactional. No
+pubsub notices yet.
+
 ### 4.18 Parallel block compaction (from Parallel Context Compaction)
 
 For very large spans (e.g. overflow recovery where a single tool result blew past
@@ -466,76 +567,71 @@ merge/condense pass. This gives predictable summary volume (block count is the
 knob) and higher throughput, addressing the finding that single-pass
 summarization attends poorly over 96k+ tokens. Gated by a span-size threshold.
 
+*Status:* shipped (`parallel.go`), fail-closed (any block error aborts), history
+blocks only; off by default (`parallel_block_threshold: 0`).
+
 ---
 
 ## 5. Schema changes (SQLite migrations)
 
-New migrations in `internal/db/migrations/`, queries in `internal/db/sql/`,
-generated via sqlc:
+As shipped in `internal/db/migrations/20260818000000_add_compaction_engine.sql`
+(queries in `internal/db/sql/compaction.sql`, generated via sqlc):
 
 ```sql
--- compaction_summaries: the summary DAG
+-- compaction_summaries: the summary DAG (one node per compaction)
 CREATE TABLE compaction_summaries (
-  id              TEXT PRIMARY KEY,          -- uuid
-  session_id      TEXT NOT NULL REFERENCES sessions(id),
-  parent_ids      TEXT NOT NULL DEFAULT '[]', -- JSON array of summary ids (DAG)
-  covered_start   INTEGER,                    -- message rowid range (leaf) or
-  covered_end     INTEGER,                    -- child summary range (condensed)
-  kind            TEXT NOT NULL,              -- 'leaf' | 'condensed'
-  level           INTEGER NOT NULL DEFAULT 0, -- escalation level that produced it
-  summary_text    TEXT NOT NULL,
-  layout          TEXT NOT NULL DEFAULT '{}', -- JSON char offsets per part
-  checkpoint      TEXT,                       -- isolated structured checkpoint
-  token_count     INTEGER NOT NULL,
-  model_provider  TEXT,
-  model_id        TEXT,
-  reasoning       TEXT,
-  created_at      INTEGER NOT NULL,
-  -- provenance / retrievability
-  covered_message_ids TEXT NOT NULL DEFAULT '[]' -- JSON: raw message ids
+  id                        TEXT PRIMARY KEY,           -- uuid, cited in the recovery note
+  session_id                TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  parent_ids                TEXT NOT NULL DEFAULT '[]', -- JSON array: the previous active node
+  covered_start             INTEGER,                    -- first compacted seq (session ordinal)
+  covered_end               INTEGER,                    -- last compacted seq (session ordinal)
+  first_retained_message_id TEXT,                       -- authoritative cut for the active context
+  kind                      TEXT NOT NULL CHECK (kind IN ('leaf', 'condensed')),
+  level                     INTEGER NOT NULL DEFAULT 0, -- escalation level that produced it
+  summary_text              TEXT NOT NULL,              -- the composed five-form entry
+  layout                    TEXT NOT NULL DEFAULT '{}', -- JSON char offsets per part
+  checkpoint                TEXT,                       -- isolated structured checkpoint
+  token_count               INTEGER NOT NULL DEFAULT 0,
+  model_provider            TEXT,
+  model_id                  TEXT,
+  reasoning                 TEXT,
+  covered_message_ids       TEXT NOT NULL DEFAULT '[]', -- JSON: raw message ids this node replaces
+  created_at                INTEGER NOT NULL
 );
-CREATE INDEX idx_compaction_session ON compaction_summaries(session_id, created_at);
+CREATE INDEX idx_compaction_summaries_session ON compaction_summaries(session_id, created_at);
 
 -- compaction_causality: action → result → state edges (deterministic)
 CREATE TABLE compaction_causality (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  summary_id   TEXT REFERENCES compaction_summaries(id),
-  turn         INTEGER,
-  tool_call_id TEXT,
-  tool         TEXT,
-  args_hash    TEXT,
-  is_error     INTEGER,
-  files_changed TEXT NOT NULL DEFAULT '[]'   -- JSON
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  summary_id    TEXT REFERENCES compaction_summaries(id) ON DELETE SET NULL,
+  session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  turn          INTEGER NOT NULL,
+  tool_call_id  TEXT,
+  tool          TEXT NOT NULL,
+  args_hash     TEXT,
+  is_error      INTEGER NOT NULL DEFAULT 0,
+  files_changed TEXT NOT NULL DEFAULT '[]',              -- JSON array of paths
+  created_at    INTEGER NOT NULL
 );
 
--- compaction_file_refs: large-file references + exploration summaries
-CREATE TABLE compaction_file_refs (
-  id            TEXT PRIMARY KEY,
-  session_id    TEXT NOT NULL REFERENCES sessions(id),
-  path          TEXT NOT NULL,
-  mime          TEXT,
-  token_count   INTEGER,
-  exploration   TEXT,                         -- type-aware summary
-  first_seen_at INTEGER NOT NULL
-);
-
--- compaction_embeddings: optional dense retrieval (off by default)
-CREATE TABLE compaction_embeddings (
-  message_id  TEXT PRIMARY KEY REFERENCES messages(id),
-  summary_id  TEXT REFERENCES compaction_summaries(id),
-  embedding   BLOB                            -- vector; use sqlite-vec if available
-);
-
--- FTS5 over the immutable message store for recall_grep
+-- FTS5 over the immutable message store for recall_grep. External-content
+-- table: the FTS column MUST be named `parts` to match messages.parts; the
+-- index is backfilled with the 'rebuild' command and kept in sync by
+-- insert/update/delete triggers.
 CREATE VIRTUAL TABLE messages_fts USING fts5(
-  message_id UNINDEXED, text, content='messages', content_rowid='rowid'
+  parts, content='messages', content_rowid='rowid', tokenize='unicode61'
 );
+INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');
 ```
 
-`sessions` gains: `reserve_tokens`, `keep_recent_tokens` (compaction settings),
-and `active_summary_id` (replaces the single `summary_message_id` with the DAG
-leaf currently in context). `messages.is_summary_message` stays for back-compat;
-new summaries also get a `compaction_summaries` row.
+`sessions` gains `active_summary_id` (the DAG node currently in context).
+`messages.is_summary_message` stays for back-compat and for the chat UI: every
+compaction also stores the composed entry as a summary *message*, which
+`ActiveContext` excludes from the retained tail. `ListMessagesBySession` orders
+by `(created_at, rowid)` so session ordinals are deterministic.
+
+Not shipped (see status table): `compaction_file_refs`, `compaction_embeddings`,
+per-session `reserve_tokens`/`keep_recent_tokens` columns.
 
 ---
 
@@ -553,12 +649,21 @@ testable module split.
 
 `internal/agent/agent.go`:
 
-- The token-threshold check at line ~1039 calls the new `compaction.Engine`
-  instead of `a.Summarize`.
+- The token-threshold check calls the new `compaction.Engine` instead of
+  `a.Summarize`.
 - `Summarize` becomes a thin wrapper / is deprecated; the engine owns prompt
   construction, validation, retry, and composition.
 - `getSessionMessages` changes from "slice from `SummaryMessageID`" to "build
   active context from the summary DAG + retained tail" (§6.3).
+
+*Status:* shipped. `sessionAgent.Summarize` runs `compactWithEngine` when the
+engine is enabled and falls back to the legacy summary if the engine fails.
+`compactWithEngine` builds the span from the raw (summary-free) message list,
+starting at the previous node's `first_retained_message_id`, and splits the
+retained tail at a turn boundary (or mid-turn with a turn prefix when the last
+turn is oversized). The compaction's own model calls carry the session's
+provider options, auth refresh, and headers, and are accounted against the
+session's usage/cost.
 
 ### 6.3 Active-context assembly
 
@@ -568,35 +673,43 @@ tail of raw messages (rowid > `covered_end` of the newest summary, up to
 `keepRecentTokens`). Return them as `fantasy.Message`s for `preparePrompt`. This
 is the Active Context view.
 
+*Status:* shipped as `Engine.ActiveContext` (`engine.go`): the active node's
+`summary_text` (as a synthetic user message) followed by every raw non-summary
+message from `first_retained_message_id` onward (falling back to the
+`covered_end` ordinal for rows without the id).
+
 ### 6.4 Config
 
-`internal/config/`: add a `Compaction` struct to the config (mirroring the crushrc
-`options` builtin):
+`internal/config/compaction.go` — `Options.Compaction *CompactionConfig`
+(`options.compaction` in `crush.json`, `option compaction <key> <value>` in
+`crushrc`), as shipped:
 
 ```go
 type CompactionConfig struct {
-    Enabled             bool     // default true
-    ReserveTokens       int64    // default 16384
-    KeepRecentTokens    int64    // default 20000
-    SoftThresholdFraction float64 // default 0.7
-    BudgetFraction      float64  // default 0.15
-    MaxSummaryTokens    int64    // default 48000
-    MinSummaryTokens    int64    // default 6000
-    SummaryModel        string   // "" = follow active; "provider/model-id" = fixed
-    SummaryReasoning    string   // "max" | "high" | ... 
-    Verify              string   // "judge" | "checks" | "off"
-    Ledger              bool     // default true
-    TranscriptMap       bool     // default true
-    GitSnapshot         bool     // default true
-    WorkingSetFiles     int      // default 3
-    Embeddings          bool     // default false (optional dense retrieval)
-    LargeFileThreshold  int64    // default 25000 tokens
+    Enabled                   *bool    // default true; false = legacy single-shot summary
+    ReserveTokens             int64    // default 16384 (hard threshold = window − reserve)
+    KeepRecentTokens          int64    // default 20000 (retained verbatim)
+    SoftThresholdFraction     float64  // default 0.7 (rubric consulted above this)
+    BudgetFraction            float64  // default 0.15
+    MaxSummaryTokens          int64    // default 48000
+    MinSummaryTokens          int64    // default 6000
+    Verify                    string   // "judge" | "checks" | "off", default "judge"
+    Ledger                    *bool    // default true
+    TranscriptMap             *bool    // default true
+    WorkingSetFiles           int      // default 3; 0 disables
+    WorkingSetMaxCharsPerFile int      // default 12000
+    ExtractsDecay             *float64 // default 0.5; 0 = no older lane; <0 = no extracts
+    ParallelBlockThreshold    int64    // default 0 (disabled)
 }
 ```
 
-Wired into the `options` crushrc builtin (`internal/shellconfig/`) and
-`crush.json` loading, validated in `internal/config/load.go`. `disable_auto_summarize`
-becomes `compaction.enabled = false`.
+Booleans and `extracts_decay` are pointers so a partial block does not
+silently disable a feature (`nil` = default, explicit `false`/`0` respected).
+`disable_auto_summarize` still works and is honored only when no
+`options.compaction` block is present; an explicit `enabled` wins.
+`keep_recent_tokens` and `reserve_tokens` are clamped to `window/4` and
+`window/8` at runtime. Not shipped: `summary_model`, `summary_reasoning`,
+`git_snapshot`, `embeddings`, `large_file_threshold`.
 
 ### 6.5 Tools
 
@@ -605,11 +718,18 @@ becomes `compaction.enabled = false`.
 `internal/agent/tools/llmmap/` — `map.go` (`llm_map`), `agentic_map.go`. Registered
 through the existing tool registry; permissions set read-only where applicable.
 
+*Status:* shipped as `internal/agent/tools/recall.go`, `compact_context.go`, and
+`map.go` (descriptions inline), built inside `coordinator.buildTools` so
+`allowed_tools`/`disabled_tools`, hooks, and the read-only sub-agent list
+apply. `recall_query` and `agentic_map` are deferred.
+
 ### 6.6 Coordinator
 
 `internal/agent/coordinator.go`: enforce the scope-reduction invariant on
 non-root sub-agent spawn (require `delegated_scope`/`kept_work` on the task tool's
 args when the caller is itself a sub-agent).
+
+*Status:* not shipped (see §4.15).
 
 ### 6.7 Pubsub / UI
 
@@ -617,6 +737,10 @@ Publish compaction lifecycle events on the existing `pubsub` broker (`compaction
 {phase: requested|started|finished, outcome, lane?}`) so the TUI can show a
 compaction footer (like ShiftUp's `🧠⬆️` cycle) and so other components (e.g. a
 future goal extension) can coordinate around the abort/continue boundary.
+
+*Status:* deferred. Today the composed entry is stored as a summary message
+(rendered by the chat like the legacy summary) and merge/escalation outcomes are
+logged.
 
 ### 6.8 DB / sqlc
 
@@ -662,6 +786,10 @@ Migrations are additive and safe (no rewrite of existing message data).
 Each phase is independently shippable and independently testable. Phase 1 is the
 priority.
 
+*Status:* Phases 1–3 shipped. Phase 4: `llm_map` shipped; `agentic_map`, the
+scope-reduction invariant, the embedding index + `recall_query`, and large-file
+handling are deferred (see the status table at the top).
+
 ---
 
 ## 8. Testing strategy
@@ -681,6 +809,12 @@ priority.
   survey's least-measured failure). Reuse a synthetic long session, compact N
   times, assert recall of early facts via `recall_grep`. This is the test that
   would catch the super-linear error growth the literature warns about.
+
+*Status:* pure-module tests, engine tests against a real SQLite store (happy
+path, fail-closed, second compaction anchors, extracts budget), a
+`compactWithEngine`-level two-compaction test, trigger-threshold tests, split
+tests, recall-tool tests, config-resolution tests, and a populated-DB migration
+test are in place. Golden files and the repeated-compaction bench are not.
 
 ---
 

@@ -77,10 +77,8 @@ func TestActiveContext_SecondCompactionAnchorsByID(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, q.UpdateSessionCompaction(ctx, db.UpdateSessionCompactionParams{
-		ActiveSummaryID:  sql.NullString{String: "sum2", Valid: true},
-		ReserveTokens:    16384,
-		KeepRecentTokens: 20000,
-		ID:               "sess1",
+		ActiveSummaryID: sql.NullString{String: "sum2", Valid: true},
+		ID:              "sess1",
 	}))
 
 	// All raw messages in created_at order, as the agent loads them. Includes
@@ -146,10 +144,8 @@ func TestActiveContext_FallbackToCoveredEndWhenNoID(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, q.UpdateSessionCompaction(ctx, db.UpdateSessionCompactionParams{
-		ActiveSummaryID:  sql.NullString{String: "sumA", Valid: true},
-		ReserveTokens:    16384,
-		KeepRecentTokens: 20000,
-		ID:               "sess2",
+		ActiveSummaryID: sql.NullString{String: "sumA", Valid: true},
+		ID:              "sess2",
 	}))
 	all := []message.Message{
 		mkMsg("m1", message.User, false),

@@ -66,22 +66,6 @@
           "description": "Floor for the compaction entry size",
           "default": 6000
         },
-        "summary_model": {
-          "type": "string",
-          "description": "Fixed provider/model-id for the checkpoint lane; empty follows the active model"
-        },
-        "summary_reasoning": {
-          "type": "string",
-          "enum": [
-            "off",
-            "low",
-            "medium",
-            "high",
-            "max"
-          ],
-          "description": "Reasoning level for the checkpoint request",
-          "default": "max"
-        },
         "verify": {
           "type": "string",
           "enum": [
@@ -114,7 +98,7 @@
         },
         "extracts_decay": {
           "type": "number",
-          "description": "Ratio multiplier for re-compressing prior extracts; \u003c=0 disables",
+          "description": "Ratio multiplier for re-compressing prior extracts; 0 disables the older lane; negative disables extracts",
           "default": 0.5
         },
         "parallel_block_threshold": {

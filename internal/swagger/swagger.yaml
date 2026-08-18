@@ -56,6 +56,83 @@ definitions:
       trailer_style:
         $ref: '#/definitions/config.TrailerStyle'
     type: object
+  config.CompactionConfig:
+    properties:
+      budget_fraction:
+        description: |-
+          BudgetFraction is the fraction of the consumer model's context window
+          the whole compaction entry may use. Defaults to 0.15.
+        type: number
+      enabled:
+        description: |-
+          Enabled controls whether the compaction engine runs. When nil/false,
+          Crush uses the legacy Summarize path. Defaults to true. Uses *bool so
+          a partial config block (only reserve_tokens) does not silently disable
+          the engine.
+        type: boolean
+      extracts_decay:
+        description: |-
+          ExtractsDecay is the ratio multiplier for re-compressing the previous
+          compaction's extracts. 0 disables the older lane; a negative value
+          disables the extracts lane entirely. *float64 so an unset value (nil)
+          takes the default (0.5) while an explicit 0 is respected.
+        type: number
+      keep_recent_tokens:
+        description: |-
+          KeepRecentTokens is the number of recent tokens retained verbatim
+          outside the compacted span. Defaults to 20000.
+        type: integer
+      ledger:
+        description: |-
+          Ledger enables the deterministic session ledger. *bool so a partial
+          block does not silently disable it. Defaults to true.
+        type: boolean
+      max_summary_tokens:
+        description: |-
+          MaxSummaryTokens is the hard cap on the compaction entry size.
+          Defaults to 48000.
+        type: integer
+      min_summary_tokens:
+        description: |-
+          MinSummaryTokens is the floor for the compaction entry size.
+          Defaults to 6000.
+        type: integer
+      parallel_block_threshold:
+        description: |-
+          ParallelBlockThreshold is the span size (in tokens) above which the
+          checkpoint lane splits into parallel block summaries. 0 disables
+          parallel compaction. Defaults to 0.
+        type: integer
+      reserve_tokens:
+        description: |-
+          ReserveTokens is the hard-context headroom kept free before
+          triggering a blocking compaction. Defaults to 16384.
+        type: integer
+      soft_threshold_fraction:
+        description: |-
+          SoftThresholdFraction is the fraction of the context window at which
+          an asynchronous compaction is triggered between turns. Defaults to 0.7.
+        type: number
+      transcript_map:
+        description: TranscriptMap enables the per-turn transcript map. Defaults to
+          true.
+        type: boolean
+      verify:
+        description: |-
+          Verify selects the checkpoint coverage audit mode.
+          Defaults to "judge".
+        type: string
+      working_set_files:
+        description: |-
+          WorkingSetFiles is the number of recently-modified files snapshotted
+          after compaction. 0 disables the snapshot. Defaults to 3.
+        type: integer
+      working_set_max_chars_per_file:
+        description: |-
+          WorkingSetMaxCharsPerFile is the per-file cap for the working-set
+          snapshot. Defaults to 12000.
+        type: integer
+    type: object
   config.Completions:
     properties:
       max_depth:
@@ -355,6 +432,8 @@ definitions:
         $ref: '#/definitions/config.Attribution'
       auto_lsp:
         type: boolean
+      compaction:
+        $ref: '#/definitions/config.CompactionConfig'
       context_paths:
         items:
           type: string
@@ -417,6 +496,8 @@ definitions:
         type: integer
       id:
         type: string
+      is_summary_message:
+        type: boolean
       model:
         type: string
       parts:
@@ -657,6 +738,14 @@ definitions:
       path:
         type: string
     type: object
+  proto.MCPAuthResponse:
+    properties:
+      auth_url:
+        description: |-
+          AuthURL is the OAuth authorization URL the user must visit, when
+          the flow is still in progress.
+        type: string
+    type: object
   proto.MCPClientInfo:
     properties:
       connected_at:
@@ -692,6 +781,13 @@ definitions:
   proto.MCPNameRequest:
     properties:
       name:
+        type: string
+    type: object
+  proto.MCPPendingAuthServer:
+    properties:
+      name:
+        type: string
+      url:
         type: string
     type: object
   proto.MCPPrompt:
@@ -2063,6 +2159,71 @@ paths:
       summary: Stop all LSP servers
       tags:
       - lsp
+  /workspaces/{id}/mcp/auth:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: MCP name request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/proto.MCPNameRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/proto.MCPAuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Authenticate an MCP server
+      tags:
+      - mcp
+  /workspaces/{id}/mcp/auth-url:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: MCP server name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/proto.MCPAuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Get MCP OAuth authorization URL
+      tags:
+      - mcp
   /workspaces/{id}/mcp/docker/disable:
     post:
       parameters:
@@ -2143,6 +2304,34 @@ paths:
           schema:
             $ref: '#/definitions/proto.Error'
       summary: Get MCP prompt
+      tags:
+      - mcp
+  /workspaces/{id}/mcp/pending-auth:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/proto.MCPPendingAuthServer'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Get MCP servers pending OAuth
       tags:
       - mcp
   /workspaces/{id}/mcp/prompts:

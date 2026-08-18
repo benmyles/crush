@@ -10,6 +10,7 @@ package agent
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -150,9 +151,6 @@ type SessionAgent interface {
 	Summarize(context.Context, string, fantasy.ProviderOptions, func(context.Context, *fantasy.ProviderError) error) error
 	Model() Model
 	GenerateTitle(ctx context.Context, sessionID, userPrompt string)
-	// CurrentSessionID returns the session id of the in-flight Run, or "".
-	// Used by the recall tools to scope searches to the active session.
-	CurrentSessionID() string
 	// MapCompleter returns a stateless completion function for llm_map, or
 	// nil if no model/engine is configured. Used by the operator tools.
 	MapCompleter() func(ctx context.Context, prompt string) (string, error)
@@ -194,7 +192,6 @@ type sessionAgent struct {
 	querier              db.Querier
 	cfg                  *config.ConfigStore
 	compaction           *compaction.Engine
-	currentSessionID     string
 	notify               pubsub.Publisher[notify.Notification]
 	runComplete          pubsub.Publisher[notify.RunComplete]
 
@@ -205,7 +202,7 @@ type sessionAgent struct {
 	// the compact_context tool. The tool sets a flag (with optional
 	// instructions) instead of calling Summarize directly (which would return
 	// ErrSessionBusy from inside a running tool call); the StopWhen condition
-	// checks the flag and compactWithEngine consumes it.
+	// checks the flag and Summarize consumes it (on every path).
 	compactionRequested *csync.Map[string, string]
 
 	// dispatchMu holds a per-session mutex that serializes the
@@ -257,10 +254,13 @@ type SessionAgentOptions struct {
 	Sessions             session.Service
 	Messages             message.Service
 	Querier              db.Querier
-	Config               *config.ConfigStore
-	Tools                []fantasy.AgentTool
-	Notify               pubsub.Publisher[notify.Notification]
-	RunComplete          pubsub.Publisher[notify.RunComplete]
+	// DB is the underlying connection; when set, the compaction engine
+	// persists each summary node atomically in a transaction.
+	DB          *sql.DB
+	Config      *config.ConfigStore
+	Tools       []fantasy.AgentTool
+	Notify      pubsub.Publisher[notify.Notification]
+	RunComplete pubsub.Publisher[notify.RunComplete]
 }
 
 func NewSessionAgent(
@@ -289,7 +289,7 @@ func NewSessionAgent(
 		cancelMark:           csync.NewMap[string, uint64](),
 	}
 	if opts.Querier != nil {
-		a.compaction = compaction.NewEngine(opts.Querier, a.fantasyCompleter)
+		a.compaction = compaction.NewEngine(opts.Querier, a.fantasyCompleter, compaction.WithTxDB(opts.DB))
 	}
 	return a
 }
@@ -600,7 +600,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	if err := ValidateCall(call); err != nil {
 		return nil, err
 	}
-	a.currentSessionID = call.SessionID
 
 	// genCtx/cancel are the run context and its cancel func, created under
 	// the per-session dispatch mutex below so a concurrent Cancel can observe
@@ -1079,43 +1078,34 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				cw := int64(largeModel.CatwalkCfg.ContextWindow)
 				// If context window is unknown (0), skip auto-summarize
 				// to avoid immediately truncating custom/local models.
-				if cw == 0 {
+				if cw == 0 || a.disableAutoSummarize {
 					return false
 				}
 				tokens := currentSession.CompletionTokens + currentSession.PromptTokens
-				remaining := cw - tokens
 
-				// Single source of truth for the hard threshold: window - reserve.
-				// Fall back to the legacy constants when the compaction config is
-				// not enabled or reserve is unset.
-				var hardThreshold int64
+				// Single source of truth for the hard threshold (in usage
+				// tokens): window - reserve with the engine enabled, else the
+				// legacy constants. See hardCompactionThreshold.
+				engineEnabled := a.compactionEngineEnabled()
 				var compactionCfg config.CompactionConfig
-				compactionEnabled := a.compaction != nil && a.cfg != nil && !a.disableAutoSummarize && config.CompactionEnabled(a.cfg.Config())
-				if compactionEnabled {
+				if engineEnabled {
 					compactionCfg = config.ResolveCompactionConfig(a.cfg.Config())
-					hardThreshold = cw - compactionCfg.ReserveTokens
-				} else if cw > largeContextWindowThreshold {
-					hardThreshold = cw - largeContextWindowBuffer
-				} else {
-					hardThreshold = cw - int64(float64(cw)*smallContextWindowRatio)
 				}
-				if remaining <= hardThreshold && !a.disableAutoSummarize {
+				if tokens >= hardCompactionThreshold(cw, engineEnabled, compactionCfg) {
 					shouldSummarize = true
 					return true
 				}
 				// Structure-aware trigger: only consult the rubric when above the
-				// soft threshold, and use in-memory step messages (not a full DB
-				// read on every step) to avoid unnecessary I/O below the soft
-				// threshold.
-				if compactionEnabled {
+				// soft threshold, so no DB read happens below it.
+				if engineEnabled {
 					softThreshold := int64(float64(cw) * compactionCfg.SoftThresholdFraction)
 					if tokens >= softThreshold {
-						// Only read messages when above the soft threshold, not on every step.
+						_, reserve := compactionLimits(compactionCfg, cw)
 						recentMsgs, _ := a.messages.List(ctx, call.SessionID)
 						decision := compaction.DecideTrigger(compaction.TriggerInput{
 							UsageTokens:           tokens,
 							ContextWindow:         cw,
-							ReserveTokens:         compactionCfg.ReserveTokens,
+							ReserveTokens:         reserve,
 							SoftThresholdFraction: compactionCfg.SoftThresholdFraction,
 							Messages:              recentMsgs,
 						})
@@ -1398,12 +1388,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 }
 
 func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error {
+	// Consume any pending agent-initiated request up front, whichever path
+	// runs below. Leaving it set would make the StopWhen condition stop every
+	// subsequent step (see HasCompactionRequest).
+	instructions := a.ConsumeCompactionRequest(sessionID)
+
 	// When the compaction engine is available and enabled, use it instead of
 	// the legacy single-shot summary. The engine produces a lossless,
 	// checkpoint + ledger + recovery-note summary and persists a summary DAG
 	// node; the legacy streaming UI path is kept for the fallback.
-	if a.compaction != nil && a.cfg != nil && config.CompactionEnabled(a.cfg.Config()) {
-		if err := a.compactWithEngine(ctx, sessionID, opts, onAuthRefresh); err != nil {
+	if a.compactionEngineEnabled() {
+		if err := a.compactWithEngine(ctx, sessionID, instructions, opts, onAuthRefresh); err != nil {
 			slog.Error("Compaction engine failed; falling back to legacy summarize", "error", err)
 		} else {
 			return nil
@@ -1560,14 +1555,59 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	return qErr
 }
 
+// compactionCallHooks carries per-compaction plumbing (provider options,
+// auth refresh, usage accumulation) from compactWithEngine to the completer
+// through the request context. The engine's Completer signature is
+// deliberately narrow, so the hooks travel on ctx rather than as arguments.
+type compactionCallHooks struct {
+	opts          fantasy.ProviderOptions
+	onAuthRefresh func(context.Context, *fantasy.ProviderError) error
+	sessionID     string
+
+	mu    sync.Mutex
+	usage fantasy.Usage
+	cost  *float64
+}
+
+type compactionHooksKey struct{}
+
+func withCompactionCallHooks(ctx context.Context, h *compactionCallHooks) context.Context {
+	return context.WithValue(ctx, compactionHooksKey{}, h)
+}
+
+func compactionCallHooksFrom(ctx context.Context) *compactionCallHooks {
+	h, _ := ctx.Value(compactionHooksKey{}).(*compactionCallHooks)
+	return h
+}
+
+func (h *compactionCallHooks) add(usage fantasy.Usage, cost *float64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.usage.InputTokens += usage.InputTokens
+	h.usage.OutputTokens += usage.OutputTokens
+	h.usage.TotalTokens += usage.TotalTokens
+	h.usage.ReasoningTokens += usage.ReasoningTokens
+	h.usage.CacheCreationTokens += usage.CacheCreationTokens
+	h.usage.CacheReadTokens += usage.CacheReadTokens
+	if cost != nil {
+		total := *cost
+		if h.cost != nil {
+			total += *h.cost
+		}
+		h.cost = &total
+	}
+}
+
 // fantasyCompleter bridges the compaction.Engine's Completer signature to a
 // stateless fantasy completion. It builds a one-shot agent with the given
 // system prompt, streams a single user turn, and returns the accumulated text
-// and a stop reason in the engine's vocabulary ("stop", "length", "error",
-// "aborted").
+// and a stop reason in the engine's vocabulary ("stop", "length", "error").
+// Provider options, auth refresh, session headers, and usage accounting are
+// taken from the compactionCallHooks on ctx when present.
 func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userText string, maxOutputTokens int64) (string, string, error) {
 	largeModel := a.largeModel.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
+	hooks := compactionCallHooksFrom(ctx)
 	agent := fantasy.NewAgent(
 		largeModel.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
@@ -1575,14 +1615,13 @@ func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userT
 	)
 	var sb strings.Builder
 	maxTokens := maxOutputTokens
-	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
+	call := fantasy.AgentStreamCall{
 		// Send the prompt once. Setting both Prompt and Messages would
 		// duplicate it (fantasy's createPrompt appends both).
 		Prompt:          userText,
 		MaxOutputTokens: &maxTokens,
-		Headers:         sessionHeaders(a.currentSessionID),
 		ProviderOptions: a.getCacheControlOptions(),
-		ModelProvider:   func() fantasy.LanguageModel { return largeModel.Model },
+		ModelProvider:   func() fantasy.LanguageModel { return a.largeModel.Get().Model },
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
 			if systemPromptPrefix != "" {
@@ -1594,11 +1633,37 @@ func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userT
 			sb.WriteString(text)
 			return nil
 		},
-	})
+	}
+	if hooks != nil {
+		if hooks.sessionID != "" {
+			call.Headers = sessionHeaders(hooks.sessionID)
+		}
+		if len(hooks.opts) > 0 {
+			call.ProviderOptions = hooks.opts
+		}
+		call.OnAuthRefresh = hooks.onAuthRefresh
+	} else if sessionID := tools.GetSessionFromContext(ctx); sessionID != "" {
+		call.Headers = sessionHeaders(sessionID)
+	}
+	resp, err := agent.Stream(ctx, call)
 	if err != nil {
 		// Fail closed: a cancelled context propagates as an error, never as
 		// "aborted, nil" (the escalation guard depends on this).
 		return sb.String(), string(fantasy.FinishReasonError), err
+	}
+	if hooks != nil {
+		var cost *float64
+		for _, step := range resp.Steps {
+			if stepCost := a.openrouterCost(step.ProviderMetadata); stepCost != nil {
+				c := *stepCost
+				if cost != nil {
+					c += *cost
+				}
+				cost = &c
+			}
+			extractHyperCredits(step.ProviderMetadata)
+		}
+		hooks.add(resp.TotalUsage, cost)
 	}
 	stopReason := "stop"
 	switch resp.Response.FinishReason {
@@ -1610,11 +1675,23 @@ func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userT
 	return sb.String(), stopReason, nil
 }
 
+// compactionEngineEnabled reports whether the compaction engine is wired and
+// enabled by config for this agent.
+func (a *sessionAgent) compactionEngineEnabled() bool {
+	return a.compaction != nil && a.cfg != nil && config.CompactionEnabled(a.cfg.Config())
+}
+
 // compactWithEngine runs the compaction engine for the session and records the
 // resulting summary as a summary message, mirroring the legacy Summarize tail
 // (session update, active-request release, queued-message drain) so the UI and
 // queue behavior stay intact.
-func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error {
+//
+// The compacted span is incremental: it starts at the previous active
+// summary's first retained message (or the session start) and ends at the new
+// retained cut, so each compaction covers only what the previous checkpoint
+// does not, and seq anchors are session-absolute ordinals in the summary-free
+// message list.
+func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instructions string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error {
 	if a.IsSessionBusy(sessionID) {
 		return ErrSessionBusy
 	}
@@ -1623,17 +1700,16 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
-	// Build the history from the RAW message list, not getSessionMessages.
-	// getSessionMessages returns a synthetic compaction-summary user message
-	// + retained tail; feeding that into the engine would classify the
-	// previous checkpoint as a user instruction, pollute the ledger/extracts,
-	// and put the fake "compaction-summary" id into covered_message_ids.
-	// The previous checkpoint is injected via previousCheckpoint instead.
+	// Build the history from the RAW message list, not getSessionMessages:
+	// the synthetic compaction-summary message must never become source
+	// material (it would be classified as a user instruction and pollute the
+	// ledger/extracts). The previous checkpoint is injected by the engine.
 	rawMsgs, err := a.messages.List(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to list messages: %w", err)
 	}
 	// Drop summary messages: they are derived views, not source material.
+	// Ordinals (seq) are positions in this summary-free list.
 	msgs := make([]message.Message, 0, len(rawMsgs))
 	for _, m := range rawMsgs {
 		if m.IsSummaryMessage {
@@ -1656,42 +1732,56 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 		}
 	}()
 
-	// Split the message list into history (to compact) and a retained tail
-	// (kept verbatim). The retained tail is the most recent messages up to
-	// the configured keep-recent token budget.
 	cfg := config.ResolveCompactionConfig(a.cfg.Config())
-	keepRecent := cfg.KeepRecentTokens
-	if keepRecent <= 0 {
-		keepRecent = 20000
-	}
-	history, turnPrefix, firstRetainedIdx := splitForCompaction(msgs, keepRecent)
-	if firstRetainedIdx == -1 || len(history) == 0 {
-		// Nothing to compact (the whole session fits in keep-recent). This is
-		// a no-op, not an error.
-		return nil
-	}
-	firstRetainedID := ""
-	if firstRetainedIdx < len(msgs) {
-		firstRetainedID = msgs[firstRetainedIdx].ID
-	}
-	// History always starts at msgs[0] (we compact the older prefix and keep
-	// the recent tail), so the session-absolute seq of History[0] is 1.
-	seqOffset := 1
-
-	// Build the compaction request from the active model's context window.
 	window := int64(largeModel.CatwalkCfg.ContextWindow)
 	if window <= 0 {
 		window = 200000
 	}
-	reserve := cfg.ReserveTokens
-	if reserve <= 0 {
-		reserve = 16384
+	keepRecent, reserve := compactionLimits(cfg, window)
+
+	// Incremental span: start where the previous compaction stopped.
+	start := 0
+	prevSummaryTokens := int64(0)
+	if prev, err := a.querier.GetActiveCompactionSummary(ctx, sessionID); err == nil {
+		prevSummaryTokens = prev.TokenCount
+		if prev.FirstRetainedMessageID.Valid {
+			for i, m := range msgs {
+				if m.ID == prev.FirstRetainedMessageID.String {
+					start = i
+					break
+				}
+			}
+		}
 	}
-	tokensBefore := int64(0)
-	for _, msg := range msgs {
+	window0 := msgs[start:]
+	history, turnPrefix, idx := splitForCompaction(window0, keepRecent)
+	if idx < 0 {
+		// The whole span fits in keep-recent, yet compaction was requested
+		// (context over threshold or agent-initiated). Compact the older half
+		// so every compaction makes progress instead of looping as a no-op.
+		total := int64(0)
+		for _, m := range window0 {
+			total += estimateStoredMessageTokens(m)
+		}
+		history, turnPrefix, idx = splitForCompaction(window0, total/2)
+	}
+	if idx < 0 || (len(history) == 0 && len(turnPrefix) == 0) {
+		// Nothing to compact (e.g. a single message). This is a no-op, not an
+		// error.
+		return nil
+	}
+	firstRetainedIdx := start + idx
+	firstRetainedID := ""
+	if firstRetainedIdx < len(msgs) {
+		firstRetainedID = msgs[firstRetainedIdx].ID
+	}
+	tokensBefore := prevSummaryTokens
+	for _, msg := range window0 {
 		tokensBefore += estimateStoredMessageTokens(msg)
 	}
 
+	hooks := &compactionCallHooks{opts: opts, onAuthRefresh: onAuthRefresh, sessionID: sessionID}
+	runCtx := withCompactionCallHooks(genCtx, hooks)
 	req := compaction.CompactionRequest{
 		SessionID:                 sessionID,
 		Cwd:                       a.cfg.WorkingDir(),
@@ -1699,9 +1789,9 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 		TurnPrefix:                turnPrefix,
 		FirstRetainedSeq:          firstRetainedIdx + 1,
 		FirstRetainedID:           firstRetainedID,
-		SeqOffset:                 seqOffset,
+		SeqOffset:                 start + 1,
 		SplitTurn:                 len(turnPrefix) > 0,
-		CustomInstructions:        a.ConsumeCompactionRequest(sessionID),
+		CustomInstructions:        instructions,
 		TokensBefore:              tokensBefore,
 		ConsumerContextWindow:     window,
 		SystemPromptTokens:        8000,
@@ -1713,13 +1803,13 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 		ModelID:                   largeModel.ModelCfg.Model,
 		Cfg:                       cfg,
 	}
-	result, err := a.compaction.Run(genCtx, req)
+	result, err := a.compaction.Run(runCtx, req)
 	if err != nil {
 		return err
 	}
 
 	// Record the summary as a summary message so the UI renders it like the
-	// legacy path.
+	// legacy path. It is excluded from the active context by ActiveContext.
 	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:             message.Assistant,
 		Model:            largeModel.ModelCfg.Model,
@@ -1735,6 +1825,15 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 		return err
 	}
 
+	// Account the compaction's own model calls (checkpoint, retries,
+	// verification) against the session, then reset the context counters to
+	// the new active-context size like the legacy path.
+	hooks.mu.Lock()
+	compactionUsage, compactionCost := hooks.usage, hooks.cost
+	hooks.mu.Unlock()
+	if !usageIsZero(compactionUsage) {
+		a.updateSessionUsage(largeModel, &currentSession, compactionUsage, compactionCost, false)
+	}
 	currentSession.SummaryMessageID = summaryMessage.ID
 	currentSession.CompletionTokens = approxTokenCount(result.SummaryText)
 	currentSession.PromptTokens = 0
@@ -1753,76 +1852,6 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 	a.messageQueue.Set(sessionID, queuedMessages[1:])
 	_, qErr := a.Run(ctx, firstQueuedMessage)
 	return qErr
-}
-
-// estimateStoredMessageTokens sums the approximate token cost of all parts
-// of a message (text, reasoning, tool-call input, tool-result content, shell
-// command + output), not just the first text part. Without this, tool-heavy
-// turns cost 0 and the retained tail can be far larger than keepRecentTokens.
-func estimateStoredMessageTokens(msg message.Message) int64 {
-	var total int64
-	for _, part := range msg.Parts {
-		switch p := part.(type) {
-		case message.TextContent:
-			total += approxTokenCount(p.Text)
-		case message.ReasoningContent:
-			total += approxTokenCount(p.String())
-		case message.ToolCall:
-			total += approxTokenCount(p.Name + " " + p.Input)
-		case message.ToolResult:
-			total += approxTokenCount(p.Content + " " + p.Data)
-		case message.ShellCommand:
-			total += approxTokenCount(p.Command + "\n" + p.Output)
-		case message.BinaryContent:
-			total += approxTokenCount(p.Path + " " + p.MIMEType)
-		}
-	}
-	return total
-}
-
-// splitForCompaction divides messages into the history to compact and a
-// retained tail kept verbatim. It keeps the most recent messages whose
-// estimated stored token count fits the keepRecent budget, summing all parts
-// (text, reasoning, tool calls, tool results, shell commands) so tool-heavy
-// turns are not undercounted. Returns the history, the turn-prefix (non-empty
-// when the split lands mid-turn), and the index of the first retained message.
-func splitForCompaction(msgs []message.Message, keepRecentTokens int64) (history, turnPrefix []message.Message, firstRetainedIdx int) {
-	if len(msgs) == 0 {
-		return nil, nil, 0
-	}
-	var budget int64
-	budgetIdx := len(msgs)
-	for i := len(msgs) - 1; i >= 0; i-- {
-		cost := estimateStoredMessageTokens(msgs[i])
-		if budget+cost > keepRecentTokens && i < len(msgs)-1 {
-			break
-		}
-		budget += cost
-		budgetIdx = i
-	}
-	if budgetIdx <= 0 {
-		// The entire session fits in the keep-recent budget: nothing to
-		// compact. Return a sentinel so the caller can distinguish a no-op
-		// (return nil) from a real empty history.
-		return nil, nil, -1
-	}
-	// Align the retained tail to start at a user message so we don't split
-	// mid-turn: if the retained tail starts with an assistant/tool message,
-	// walk backward to include the preceding user message in the retained
-	// tail (keeping the whole turn together in the retained part, not in the
-	// compacted history). The previous code walked the wrong direction,
-	// compacting the user prompt and retaining only the assistant reply.
-	idx := budgetIdx
-	for idx > 0 && msgs[idx].Role != message.User {
-		idx--
-	}
-	// If walking back to a user boundary would compact nothing (idx == 0),
-	// fall back to the budget-computed index so the oldest material is still
-	// compacted rather than retaining the entire session.
-	if idx <= 0 {
-		idx = budgetIdx
-	}
-	return msgs[:idx], nil, idx
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
@@ -2403,20 +2432,17 @@ func (a *sessionAgent) CancelAll() {
 	}
 }
 
-func (a *sessionAgent) CurrentSessionID() string {
-	return a.currentSessionID
-}
-
 // RequestCompaction sets a per-session flag requesting compaction at the next
 // step boundary, with optional operator instructions. The compact_context
 // tool calls this instead of Summarize directly (which would return
-// ErrSessionBusy from inside a running tool call).
+// ErrSessionBusy from inside a running tool call). Summarize consumes the
+// flag on every path so a request can never stop more than one step.
 func (a *sessionAgent) RequestCompaction(sessionID, instructions string) {
 	a.compactionRequested.Set(sessionID, instructions)
 }
 
 // ConsumeCompactionRequest returns and clears a pending compaction request's
-// instructions, or "" if none is pending. Called by compactWithEngine.
+// instructions, or "" if none is pending. Called by Summarize.
 func (a *sessionAgent) ConsumeCompactionRequest(sessionID string) string {
 	instructions, ok := a.compactionRequested.Get(sessionID)
 	if !ok {

@@ -71,17 +71,21 @@ func TestResolveCompactionConfig_NilCompactionFallsBackToLegacy(t *testing.T) {
 
 func TestResolveCompactionConfig_ExtractsDecayZeroDisables(t *testing.T) {
 	t.Parallel()
-	// ExtractsDecay: 0 is a valid "disable" value, not re-defaulted to 0.5.
+	// An explicit 0 disables the older lane and must not be re-defaulted to
+	// 0.5; an unset value (nil) takes the default even in a partial block.
 	cfg := &Config{
 		Options: &Options{
 			Compaction: &CompactionConfig{
-				ExtractsDecay: 0,
+				ExtractsDecay: ptrFloat(0),
 				ReserveTokens: 16384, // non-zero so the block isn't "empty"
 			},
 		},
 	}
 	resolved := ResolveCompactionConfig(cfg)
-	require.Equal(t, float64(0), resolved.ExtractsDecay, "explicit 0 must disable the older lane, not be re-defaulted to 0.5")
+	require.Equal(t, float64(0), resolved.ExtractsDecayValue(), "explicit 0 must disable the older lane, not be re-defaulted to 0.5")
+
+	partial := &Config{Options: &Options{Compaction: &CompactionConfig{ReserveTokens: 16384}}}
+	require.Equal(t, 0.5, ResolveCompactionConfig(partial).ExtractsDecayValue(), "unset decay in a partial block must take the default")
 }
 
 func TestCompactionEnabled(t *testing.T) {

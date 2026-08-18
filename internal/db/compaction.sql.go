@@ -53,89 +53,6 @@ func (q *Queries) CreateCompactionCausality(ctx context.Context, arg CreateCompa
 	return err
 }
 
-const createCompactionEmbedding = `-- name: CreateCompactionEmbedding :exec
-INSERT INTO compaction_embeddings (
-    message_id,
-    summary_id,
-    session_id,
-    embedding,
-    created_at
-) VALUES (
-    ?, ?, ?, ?, ?
-)
-ON CONFLICT(message_id) DO UPDATE SET
-    summary_id = excluded.summary_id,
-    embedding = excluded.embedding,
-    created_at = excluded.created_at
-`
-
-type CreateCompactionEmbeddingParams struct {
-	MessageID string         `json:"message_id"`
-	SummaryID sql.NullString `json:"summary_id"`
-	SessionID string         `json:"session_id"`
-	Embedding []byte         `json:"embedding"`
-	CreatedAt int64          `json:"created_at"`
-}
-
-func (q *Queries) CreateCompactionEmbedding(ctx context.Context, arg CreateCompactionEmbeddingParams) error {
-	_, err := q.exec(ctx, q.createCompactionEmbeddingStmt, createCompactionEmbedding,
-		arg.MessageID,
-		arg.SummaryID,
-		arg.SessionID,
-		arg.Embedding,
-		arg.CreatedAt,
-	)
-	return err
-}
-
-const createCompactionFileRef = `-- name: CreateCompactionFileRef :one
-INSERT INTO compaction_file_refs (
-    id,
-    session_id,
-    path,
-    mime,
-    token_count,
-    exploration,
-    first_seen_at
-) VALUES (
-    ?, ?, ?, ?, ?, ?, ?
-)
-RETURNING id, session_id, path, mime, token_count, exploration, first_seen_at
-`
-
-type CreateCompactionFileRefParams struct {
-	ID          string         `json:"id"`
-	SessionID   string         `json:"session_id"`
-	Path        string         `json:"path"`
-	Mime        sql.NullString `json:"mime"`
-	TokenCount  sql.NullInt64  `json:"token_count"`
-	Exploration sql.NullString `json:"exploration"`
-	FirstSeenAt int64          `json:"first_seen_at"`
-}
-
-func (q *Queries) CreateCompactionFileRef(ctx context.Context, arg CreateCompactionFileRefParams) (CompactionFileRef, error) {
-	row := q.queryRow(ctx, q.createCompactionFileRefStmt, createCompactionFileRef,
-		arg.ID,
-		arg.SessionID,
-		arg.Path,
-		arg.Mime,
-		arg.TokenCount,
-		arg.Exploration,
-		arg.FirstSeenAt,
-	)
-	var i CompactionFileRef
-	err := row.Scan(
-		&i.ID,
-		&i.SessionID,
-		&i.Path,
-		&i.Mime,
-		&i.TokenCount,
-		&i.Exploration,
-		&i.FirstSeenAt,
-	)
-	return i, err
-}
-
 const createCompactionSummary = `-- name: CreateCompactionSummary :one
 INSERT INTO compaction_summaries (
     id,
@@ -224,16 +141,6 @@ func (q *Queries) CreateCompactionSummary(ctx context.Context, arg CreateCompact
 	return i, err
 }
 
-const deleteCompactionSummary = `-- name: DeleteCompactionSummary :exec
-DELETE FROM compaction_summaries
-WHERE id = ?
-`
-
-func (q *Queries) DeleteCompactionSummary(ctx context.Context, id string) error {
-	_, err := q.exec(ctx, q.deleteCompactionSummaryStmt, deleteCompactionSummary, id)
-	return err
-}
-
 const getActiveCompactionSummary = `-- name: GetActiveCompactionSummary :one
 SELECT s.id, s.session_id, s.parent_ids, s.covered_start, s.covered_end, s.first_retained_message_id, s.kind, s.level, s.summary_text, s.layout, s.checkpoint, s.token_count, s.model_provider, s.model_id, s.reasoning, s.covered_message_ids, s.created_at
 FROM compaction_summaries s
@@ -264,55 +171,6 @@ func (q *Queries) GetActiveCompactionSummary(ctx context.Context, sessionID stri
 		&i.Reasoning,
 		&i.CoveredMessageIds,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const getCompactionFileRef = `-- name: GetCompactionFileRef :one
-SELECT id, session_id, path, mime, token_count, exploration, first_seen_at
-FROM compaction_file_refs
-WHERE id = ? LIMIT 1
-`
-
-func (q *Queries) GetCompactionFileRef(ctx context.Context, id string) (CompactionFileRef, error) {
-	row := q.queryRow(ctx, q.getCompactionFileRefStmt, getCompactionFileRef, id)
-	var i CompactionFileRef
-	err := row.Scan(
-		&i.ID,
-		&i.SessionID,
-		&i.Path,
-		&i.Mime,
-		&i.TokenCount,
-		&i.Exploration,
-		&i.FirstSeenAt,
-	)
-	return i, err
-}
-
-const getCompactionFileRefByPath = `-- name: GetCompactionFileRefByPath :one
-SELECT id, session_id, path, mime, token_count, exploration, first_seen_at
-FROM compaction_file_refs
-WHERE session_id = ? AND path = ?
-ORDER BY first_seen_at DESC
-LIMIT 1
-`
-
-type GetCompactionFileRefByPathParams struct {
-	SessionID string `json:"session_id"`
-	Path      string `json:"path"`
-}
-
-func (q *Queries) GetCompactionFileRefByPath(ctx context.Context, arg GetCompactionFileRefByPathParams) (CompactionFileRef, error) {
-	row := q.queryRow(ctx, q.getCompactionFileRefByPathStmt, getCompactionFileRefByPath, arg.SessionID, arg.Path)
-	var i CompactionFileRef
-	err := row.Scan(
-		&i.ID,
-		&i.SessionID,
-		&i.Path,
-		&i.Mime,
-		&i.TokenCount,
-		&i.Exploration,
-		&i.FirstSeenAt,
 	)
 	return i, err
 }
@@ -348,132 +206,6 @@ func (q *Queries) GetCompactionSummary(ctx context.Context, id string) (Compacti
 	return i, err
 }
 
-const getMessageByID = `-- name: GetMessageByID :one
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message
-FROM messages
-WHERE id = ? LIMIT 1
-`
-
-func (q *Queries) GetMessageByID(ctx context.Context, id string) (Message, error) {
-	row := q.queryRow(ctx, q.getMessageByIDStmt, getMessageByID, id)
-	var i Message
-	err := row.Scan(
-		&i.ID,
-		&i.SessionID,
-		&i.Role,
-		&i.Parts,
-		&i.Model,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.FinishedAt,
-		&i.Provider,
-		&i.IsSummaryMessage,
-	)
-	return i, err
-}
-
-const getMessagesByCreatedRange = `-- name: GetMessagesByCreatedRange :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message
-FROM messages
-WHERE session_id = ?
-  AND created_at >= ? AND created_at <= ?
-ORDER BY created_at ASC
-`
-
-type GetMessagesByCreatedRangeParams struct {
-	SessionID   string `json:"session_id"`
-	CreatedAt   int64  `json:"created_at"`
-	CreatedAt_2 int64  `json:"created_at_2"`
-}
-
-func (q *Queries) GetMessagesByCreatedRange(ctx context.Context, arg GetMessagesByCreatedRangeParams) ([]Message, error) {
-	rows, err := q.query(ctx, q.getMessagesByCreatedRangeStmt, getMessagesByCreatedRange, arg.SessionID, arg.CreatedAt, arg.CreatedAt_2)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Message{}
-	for rows.Next() {
-		var i Message
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.Role,
-			&i.Parts,
-			&i.Model,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.FinishedAt,
-			&i.Provider,
-			&i.IsSummaryMessage,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listChildCompactionSummaries = `-- name: ListChildCompactionSummaries :many
-SELECT id, session_id, parent_ids, covered_start, covered_end, first_retained_message_id, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
-FROM compaction_summaries
-WHERE session_id = ?
-  AND id IN (?2)
-ORDER BY created_at ASC
-`
-
-type ListChildCompactionSummariesParams struct {
-	SessionID string `json:"session_id"`
-	ParentIds string `json:"parent_ids"`
-}
-
-func (q *Queries) ListChildCompactionSummaries(ctx context.Context, arg ListChildCompactionSummariesParams) ([]CompactionSummary, error) {
-	rows, err := q.query(ctx, q.listChildCompactionSummariesStmt, listChildCompactionSummaries, arg.SessionID, arg.ParentIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []CompactionSummary{}
-	for rows.Next() {
-		var i CompactionSummary
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.ParentIds,
-			&i.CoveredStart,
-			&i.CoveredEnd,
-			&i.FirstRetainedMessageID,
-			&i.Kind,
-			&i.Level,
-			&i.SummaryText,
-			&i.Layout,
-			&i.Checkpoint,
-			&i.TokenCount,
-			&i.ModelProvider,
-			&i.ModelID,
-			&i.Reasoning,
-			&i.CoveredMessageIds,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listCompactionCausalityBySession = `-- name: ListCompactionCausalityBySession :many
 SELECT id, summary_id, session_id, turn, tool_call_id, tool, args_hash, is_error, files_changed, created_at
 FROM compaction_causality
@@ -500,42 +232,6 @@ func (q *Queries) ListCompactionCausalityBySession(ctx context.Context, sessionI
 			&i.ArgsHash,
 			&i.IsError,
 			&i.FilesChanged,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listCompactionEmbeddingsBySession = `-- name: ListCompactionEmbeddingsBySession :many
-SELECT message_id, summary_id, session_id, embedding, created_at
-FROM compaction_embeddings
-WHERE session_id = ?
-ORDER BY created_at ASC
-`
-
-func (q *Queries) ListCompactionEmbeddingsBySession(ctx context.Context, sessionID string) ([]CompactionEmbedding, error) {
-	rows, err := q.query(ctx, q.listCompactionEmbeddingsBySessionStmt, listCompactionEmbeddingsBySession, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []CompactionEmbedding{}
-	for rows.Next() {
-		var i CompactionEmbedding
-		if err := rows.Scan(
-			&i.MessageID,
-			&i.SummaryID,
-			&i.SessionID,
-			&i.Embedding,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -602,25 +298,16 @@ func (q *Queries) ListCompactionSummariesBySession(ctx context.Context, sessionI
 const updateSessionCompaction = `-- name: UpdateSessionCompaction :exec
 UPDATE sessions
 SET
-    active_summary_id = ?,
-    reserve_tokens = ?,
-    keep_recent_tokens = ?
+    active_summary_id = ?
 WHERE id = ?
 `
 
 type UpdateSessionCompactionParams struct {
-	ActiveSummaryID  sql.NullString `json:"active_summary_id"`
-	ReserveTokens    int64          `json:"reserve_tokens"`
-	KeepRecentTokens int64          `json:"keep_recent_tokens"`
-	ID               string         `json:"id"`
+	ActiveSummaryID sql.NullString `json:"active_summary_id"`
+	ID              string         `json:"id"`
 }
 
 func (q *Queries) UpdateSessionCompaction(ctx context.Context, arg UpdateSessionCompactionParams) error {
-	_, err := q.exec(ctx, q.updateSessionCompactionStmt, updateSessionCompaction,
-		arg.ActiveSummaryID,
-		arg.ReserveTokens,
-		arg.KeepRecentTokens,
-		arg.ID,
-	)
+	_, err := q.exec(ctx, q.updateSessionCompactionStmt, updateSessionCompaction, arg.ActiveSummaryID, arg.ID)
 	return err
 }

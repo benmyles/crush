@@ -48,6 +48,9 @@ func handleOption(ctx context.Context, args []string, stdin io.Reader, stdout, s
 	if key == "ui" {
 		return optionUI(o, args, stderr)
 	}
+	if key == "compaction" {
+		return optionCompaction(o, args, stderr)
+	}
 
 	// "option reset <key>" wipes a list back to empty. Because the builder
 	// applies operations in execution order, this is just an assignment:
@@ -249,6 +252,59 @@ func optionUI(options map[string]any, args []string, stderr io.Writer) error {
 	}
 
 	slog.Info("UI option set in shell config", "key", key, "value", value)
+	return nil
+}
+
+// optionCompaction implements "option compaction <key> <value>" for the
+// context compaction engine settings that live under options.compaction.
+// Keys mirror the JSON fields in kebab-case.
+func optionCompaction(options map[string]any, args []string, stderr io.Writer) error {
+	if len(args) != 4 {
+		return usage(stderr, "usage: option compaction <enabled|reserve-tokens|keep-recent-tokens|soft-threshold-fraction|budget-fraction|max-summary-tokens|min-summary-tokens|verify|ledger|transcript-map|working-set-files|working-set-max-chars-per-file|extracts-decay|parallel-block-threshold> <value>")
+	}
+
+	key := args[2]
+	value := args[3]
+	c := childMap(options, "compaction")
+
+	switch key {
+	case "enabled", "ledger", "transcript-map":
+		parsed, err := parseBool(value)
+		if err != nil {
+			return usage(stderr, fmt.Sprintf("option compaction %s expects true/false, got %q", key, value))
+		}
+		c[strings.ReplaceAll(key, "-", "_")] = parsed
+	case "reserve-tokens", "keep-recent-tokens", "max-summary-tokens", "min-summary-tokens",
+		"working-set-files", "working-set-max-chars-per-file", "parallel-block-threshold":
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 {
+			return usage(stderr, fmt.Sprintf("option compaction %s expects a non-negative integer, got %q", key, value))
+		}
+		c[strings.ReplaceAll(key, "-", "_")] = parsed
+	case "soft-threshold-fraction", "budget-fraction":
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil || parsed <= 0 || parsed > 1 {
+			return usage(stderr, fmt.Sprintf("option compaction %s expects a number in (0, 1], got %q", key, value))
+		}
+		c[strings.ReplaceAll(key, "-", "_")] = parsed
+	case "extracts-decay":
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return usage(stderr, fmt.Sprintf("option compaction extracts-decay expects a number (0 disables the older lane, negative disables extracts), got %q", value))
+		}
+		c["extracts_decay"] = parsed
+	case "verify":
+		switch value {
+		case "judge", "checks", "off":
+		default:
+			return usage(stderr, fmt.Sprintf("option compaction verify expects judge, checks, or off, got %q", value))
+		}
+		c["verify"] = value
+	default:
+		return usage(stderr, fmt.Sprintf("option compaction: unknown key %q", key))
+	}
+
+	slog.Info("Compaction option set in shell config", "key", key, "value", value)
 	return nil
 }
 

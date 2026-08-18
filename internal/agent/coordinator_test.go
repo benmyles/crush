@@ -49,7 +49,6 @@ func (m *mockSessionAgent) Summarize(context.Context, string, fantasy.ProviderOp
 	return nil
 }
 func (m *mockSessionAgent) GenerateTitle(context.Context, string, string) {}
-func (m *mockSessionAgent) CurrentSessionID() string                      { return "" }
 func (m *mockSessionAgent) MapCompleter() func(context.Context, string) (string, error) {
 	return nil
 }

@@ -48,38 +48,6 @@ CREATE TABLE IF NOT EXISTS compaction_causality (
 CREATE INDEX IF NOT EXISTS idx_compaction_causality_session ON compaction_causality (session_id, turn);
 CREATE INDEX IF NOT EXISTS idx_compaction_causality_tool ON compaction_causality (tool);
 
--- Large-file references + type-aware exploration summaries. Files above a
--- token threshold are represented by a reference + exploration summary
--- instead of inlined raw content.
-CREATE TABLE IF NOT EXISTS compaction_file_refs (
-    id            TEXT PRIMARY KEY,
-    session_id    TEXT NOT NULL,
-    path          TEXT NOT NULL,
-    mime          TEXT,
-    token_count   INTEGER,
-    exploration   TEXT,                             -- type-aware summary (schema/signatures/llm)
-    first_seen_at INTEGER NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_compaction_file_refs_session ON compaction_file_refs (session_id);
-CREATE INDEX IF NOT EXISTS idx_compaction_file_refs_path ON compaction_file_refs (path);
-
--- Optional dense retrieval index over leaf messages (off by default).
--- Vectors stored as BLOB; use cosine similarity in Go over a small index.
-CREATE TABLE IF NOT EXISTS compaction_embeddings (
-    message_id  TEXT PRIMARY KEY,
-    summary_id  TEXT,
-    session_id  TEXT NOT NULL,
-    embedding   BLOB,
-    created_at  INTEGER NOT NULL,
-    FOREIGN KEY (message_id) REFERENCES messages (id) ON DELETE CASCADE,
-    FOREIGN KEY (summary_id) REFERENCES compaction_summaries (id) ON DELETE SET NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_compaction_embeddings_session ON compaction_embeddings (session_id);
-
 -- Full-text search over the immutable message store for recall_grep.
 -- content_rowid ties the FTS table to messages.rowid so searches return the
 -- stable physical row id used by the exact-recovery index. External-content
@@ -113,10 +81,7 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
     INSERT INTO messages_fts(rowid, parts) VALUES (new.rowid, new.parts);
 END;
 
--- Per-session compaction settings carried on the session row so the engine
--- reads its budget from the same record it reads the active summary from.
-ALTER TABLE sessions ADD COLUMN reserve_tokens INTEGER NOT NULL DEFAULT 16384;
-ALTER TABLE sessions ADD COLUMN keep_recent_tokens INTEGER NOT NULL DEFAULT 20000;
+-- The session row points at the DAG node currently in the active context.
 ALTER TABLE sessions ADD COLUMN active_summary_id TEXT;
 -- +goose StatementEnd
 
@@ -128,15 +93,6 @@ DROP TRIGGER IF EXISTS messages_fts_ai;
 DROP TABLE IF EXISTS messages_fts;
 
 ALTER TABLE sessions DROP COLUMN active_summary_id;
-ALTER TABLE sessions DROP COLUMN keep_recent_tokens;
-ALTER TABLE sessions DROP COLUMN reserve_tokens;
-
-DROP INDEX IF EXISTS idx_compaction_embeddings_session;
-DROP TABLE IF EXISTS compaction_embeddings;
-
-DROP INDEX IF EXISTS idx_compaction_file_refs_path;
-DROP INDEX IF EXISTS idx_compaction_file_refs_session;
-DROP TABLE IF EXISTS compaction_file_refs;
 
 DROP INDEX IF EXISTS idx_compaction_causality_tool;
 DROP INDEX IF EXISTS idx_compaction_causality_session;

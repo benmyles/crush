@@ -13,7 +13,6 @@ const CompactContextToolName = "compact_context"
 // CompactContextAgent is the minimal agent surface the compact_context tool
 // needs, defined here to avoid an import cycle with the agent package.
 type CompactContextAgent interface {
-	CurrentSessionID() string
 	// RequestCompaction sets a per-session flag; compaction runs at the next
 	// step boundary instead of synchronously (which would return ErrSessionBusy
 	// from inside a running tool call).
@@ -49,7 +48,7 @@ func NewCompactContextTool(agentResolver func() CompactContextAgent) fantasy.Age
 			if a == nil {
 				return fantasy.NewTextErrorResponse("no active agent available to compact"), nil
 			}
-			sessionID := a.CurrentSessionID()
+			sessionID := GetSessionFromContext(ctx)
 			if strings.TrimSpace(sessionID) == "" {
 				return fantasy.NewTextErrorResponse("no active session to compact"), nil
 			}

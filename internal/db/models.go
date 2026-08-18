@@ -21,24 +21,6 @@ type CompactionCausality struct {
 	CreatedAt    int64          `json:"created_at"`
 }
 
-type CompactionEmbedding struct {
-	MessageID string         `json:"message_id"`
-	SummaryID sql.NullString `json:"summary_id"`
-	SessionID string         `json:"session_id"`
-	Embedding []byte         `json:"embedding"`
-	CreatedAt int64          `json:"created_at"`
-}
-
-type CompactionFileRef struct {
-	ID          string         `json:"id"`
-	SessionID   string         `json:"session_id"`
-	Path        string         `json:"path"`
-	Mime        sql.NullString `json:"mime"`
-	TokenCount  sql.NullInt64  `json:"token_count"`
-	Exploration sql.NullString `json:"exploration"`
-	FirstSeenAt int64          `json:"first_seen_at"`
-}
-
 type CompactionSummary struct {
 	ID                     string         `json:"id"`
 	SessionID              string         `json:"session_id"`
@@ -104,7 +86,5 @@ type Session struct {
 	CreatedAt        int64          `json:"created_at"`
 	SummaryMessageID sql.NullString `json:"summary_message_id"`
 	Todos            sql.NullString `json:"todos"`
-	ReserveTokens    int64          `json:"reserve_tokens"`
-	KeepRecentTokens int64          `json:"keep_recent_tokens"`
 	ActiveSummaryID  sql.NullString `json:"active_summary_id"`
 }

@@ -1,9 +1,5 @@
 package config
 
-import (
-	"strings"
-)
-
 // VerificationMode controls the checkpoint coverage audit.
 type VerificationMode string
 
@@ -19,13 +15,14 @@ const (
 
 // CompactionConfig configures Crush's context compaction engine. The engine
 // combines a deterministic session ledger, a structured self-addressed
-// checkpoint, exact transcript recovery, and (optionally) labeled extracts and
-// dense retrieval, all backed by the append-only message store. Raw messages
-// are never mutated; compaction produces derived summary views over them.
+// checkpoint, budgeted verbatim extracts, a working-set snapshot, and exact
+// transcript recovery, all backed by the append-only message store. Raw
+// messages are never mutated; compaction produces derived summary views over
+// them.
 //
-// When Compaction is nil or Enabled is false, the engine falls back to the
-// legacy single-shot summarization path (gated by DisableAutoSummarize for
-// back-compat).
+// When Compaction is nil the legacy DisableAutoSummarize flag decides; when
+// Enabled is false, Crush uses the legacy single-shot summarization path.
+// In crushrc these keys are set with `option compaction <key> <value>`.
 type CompactionConfig struct {
 	// Enabled controls whether the compaction engine runs. When nil/false,
 	// Crush uses the legacy Summarize path. Defaults to true. Uses *bool so
@@ -57,14 +54,6 @@ type CompactionConfig struct {
 	// Defaults to 6000.
 	MinSummaryTokens int64 `json:"min_summary_tokens,omitempty" jsonschema:"description=Floor for the compaction entry size,default=6000"`
 
-	// SummaryModel is the fixed "provider/model-id" used for the checkpoint
-	// lane. Empty means follow the active agent model.
-	SummaryModel string `json:"summary_model,omitempty" jsonschema:"description=Fixed provider/model-id for the checkpoint lane; empty follows the active model"`
-
-	// SummaryReasoning is the reasoning level for the checkpoint request
-	// ("off", "low", "medium", "high", "max"). Defaults to "max".
-	SummaryReasoning string `json:"summary_reasoning,omitempty" jsonschema:"description=Reasoning level for the checkpoint request,enum=off,enum=low,enum=medium,enum=high,enum=max,default=max"`
-
 	// Verify selects the checkpoint coverage audit mode.
 	// Defaults to "judge".
 	Verify string `json:"verify,omitempty" jsonschema:"description=Checkpoint coverage audit mode,enum=judge,enum=checks,enum=off,default=judge"`
@@ -85,8 +74,10 @@ type CompactionConfig struct {
 	WorkingSetMaxCharsPerFile int `json:"working_set_max_chars_per_file,omitempty" jsonschema:"description=Per-file cap for the working-set snapshot,default=12000"`
 
 	// ExtractsDecay is the ratio multiplier for re-compressing the previous
-	// compaction's extracts. <= 0 disables the older lane. Defaults to 0.5.
-	ExtractsDecay float64 `json:"extracts_decay,omitempty" jsonschema:"description=Ratio multiplier for re-compressing prior extracts; <=0 disables,default=0.5"`
+	// compaction's extracts. 0 disables the older lane; a negative value
+	// disables the extracts lane entirely. *float64 so an unset value (nil)
+	// takes the default (0.5) while an explicit 0 is respected.
+	ExtractsDecay *float64 `json:"extracts_decay,omitempty" jsonschema:"description=Ratio multiplier for re-compressing prior extracts; 0 disables the older lane; negative disables extracts,default=0.5"`
 
 	// ParallelBlockThreshold is the span size (in tokens) above which the
 	// checkpoint lane splits into parallel block summaries. 0 disables
@@ -105,18 +96,29 @@ func DefaultCompactionConfig() CompactionConfig {
 		BudgetFraction:            0.15,
 		MaxSummaryTokens:          48000,
 		MinSummaryTokens:          6000,
-		SummaryReasoning:          "max",
 		Verify:                    string(VerificationJudge),
 		Ledger:                    ptrBool(true),
 		TranscriptMap:             ptrBool(true),
 		WorkingSetFiles:           3,
 		WorkingSetMaxCharsPerFile: 12000,
-		ExtractsDecay:             0.5,
+		ExtractsDecay:             ptrFloat(0.5),
 		ParallelBlockThreshold:    0,
 	}
 }
 
 func ptrBool(v bool) *bool { return &v }
+
+func ptrFloat(v float64) *float64 { return &v }
+
+// ExtractsDecayValue returns the effective extracts decay ratio: the default
+// (0.5) when unset, otherwise the configured value (0 disables the older
+// lane, negative disables the extracts lane).
+func (c CompactionConfig) ExtractsDecayValue() float64 {
+	if c.ExtractsDecay == nil {
+		return *DefaultCompactionConfig().ExtractsDecay
+	}
+	return *c.ExtractsDecay
+}
 
 // ResolveCompactionConfig returns the effective compaction configuration for a
 // published Config, applying defaults and reconciling the legacy
@@ -158,14 +160,12 @@ func isZeroCompactionBlock(c *CompactionConfig) bool {
 		c.BudgetFraction == 0 &&
 		c.MaxSummaryTokens == 0 &&
 		c.MinSummaryTokens == 0 &&
-		c.SummaryModel == "" &&
-		c.SummaryReasoning == "" &&
 		c.Verify == "" &&
 		c.Ledger == nil &&
 		c.TranscriptMap == nil &&
 		c.WorkingSetFiles == 0 &&
 		c.WorkingSetMaxCharsPerFile == 0 &&
-		c.ExtractsDecay == 0 &&
+		c.ExtractsDecay == nil &&
 		c.ParallelBlockThreshold == 0
 }
 
@@ -202,9 +202,6 @@ func applyCompactionDefaults(c *CompactionConfig) {
 	if c.MinSummaryTokens == 0 {
 		c.MinSummaryTokens = d.MinSummaryTokens
 	}
-	if c.SummaryReasoning == "" {
-		c.SummaryReasoning = d.SummaryReasoning
-	}
 	if c.Verify == "" {
 		c.Verify = d.Verify
 	}
@@ -215,23 +212,9 @@ func applyCompactionDefaults(c *CompactionConfig) {
 	if c.WorkingSetMaxCharsPerFile == 0 {
 		c.WorkingSetMaxCharsPerFile = d.WorkingSetMaxCharsPerFile
 	}
-	// ExtractsDecay: 0 is a valid "disable" value, so we do NOT default it
-	// here. The default (0.5) is applied only when the whole config block is
-	// nil/empty (handled in ResolveCompactionConfig via DefaultCompactionConfig).
-}
-
-// ParseSummaryModel splits a "provider/model-id" string into its parts. The
-// provider prefix is mandatory. A model id may itself contain slashes.
-func ParseSummaryModel(s string) (provider, modelID string, ok bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", "", false
+	if c.ExtractsDecay == nil {
+		c.ExtractsDecay = d.ExtractsDecay
 	}
-	idx := strings.IndexByte(s, '/')
-	if idx <= 0 || idx == len(s)-1 {
-		return "", "", false
-	}
-	return s[:idx], s[idx+1:], true
 }
 
 // CompactionEnabled reports whether the compaction engine should run for the

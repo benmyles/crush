@@ -209,3 +209,51 @@ func TestOption_UnknownKey(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown key")
 }
+
+func TestOption_Compaction(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := `option compaction enabled true
+option compaction reserve-tokens 32768
+option compaction keep-recent-tokens 30000
+option compaction soft-threshold-fraction 0.6
+option compaction verify checks
+option compaction ledger false
+option compaction extracts-decay 0
+option compaction working-set-files 5`
+	path := filepath.Join(dir, "crushrc")
+
+	jsonBytes, err := LoadShellConfig(t.Context(), path, []byte(script))
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(jsonBytes, &result))
+
+	opts := result["options"].(map[string]any)
+	compaction := opts["compaction"].(map[string]any)
+	require.Equal(t, true, compaction["enabled"])
+	require.Equal(t, float64(32768), compaction["reserve_tokens"])
+	require.Equal(t, float64(30000), compaction["keep_recent_tokens"])
+	require.Equal(t, 0.6, compaction["soft_threshold_fraction"])
+	require.Equal(t, "checks", compaction["verify"])
+	require.Equal(t, false, compaction["ledger"])
+	require.Equal(t, float64(0), compaction["extracts_decay"])
+	require.Equal(t, float64(5), compaction["working_set_files"])
+}
+
+func TestOption_CompactionRejectsBadValues(t *testing.T) {
+	t.Parallel()
+
+	for _, script := range []string{
+		`option compaction bogus 1`,
+		`option compaction reserve-tokens -5`,
+		`option compaction budget-fraction 1.5`,
+		`option compaction verify maybe`,
+		`option compaction enabled`,
+	} {
+		path := filepath.Join(t.TempDir(), "crushrc")
+		_, err := LoadShellConfig(t.Context(), path, []byte(script))
+		require.Error(t, err, script)
+	}
+}

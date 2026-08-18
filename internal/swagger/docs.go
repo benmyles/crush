@@ -1579,6 +1579,105 @@ const docTemplate = `{
                 }
             }
         },
+        "/workspaces/{id}/mcp/auth": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Authenticate an MCP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "MCP name request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/proto.MCPNameRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/proto.MCPAuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/workspaces/{id}/mcp/auth-url": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Get MCP OAuth authorization URL",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "MCP server name",
+                        "name": "name",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/proto.MCPAuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/workspaces/{id}/mcp/docker/disable": {
             "post": {
                 "tags": [
@@ -1688,6 +1787,49 @@ const docTemplate = `{
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/workspaces/{id}/mcp/pending-auth": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Get MCP servers pending OAuth",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/proto.MCPPendingAuthServer"
+                            }
                         }
                     },
                     "404": {
@@ -3081,6 +3223,67 @@ const docTemplate = `{
                 }
             }
         },
+        "config.CompactionConfig": {
+            "type": "object",
+            "properties": {
+                "budget_fraction": {
+                    "description": "BudgetFraction is the fraction of the consumer model's context window\nthe whole compaction entry may use. Defaults to 0.15.",
+                    "type": "number"
+                },
+                "enabled": {
+                    "description": "Enabled controls whether the compaction engine runs. When nil/false,\nCrush uses the legacy Summarize path. Defaults to true. Uses *bool so\na partial config block (only reserve_tokens) does not silently disable\nthe engine.",
+                    "type": "boolean"
+                },
+                "extracts_decay": {
+                    "description": "ExtractsDecay is the ratio multiplier for re-compressing the previous\ncompaction's extracts. 0 disables the older lane; a negative value\ndisables the extracts lane entirely. *float64 so an unset value (nil)\ntakes the default (0.5) while an explicit 0 is respected.",
+                    "type": "number"
+                },
+                "keep_recent_tokens": {
+                    "description": "KeepRecentTokens is the number of recent tokens retained verbatim\noutside the compacted span. Defaults to 20000.",
+                    "type": "integer"
+                },
+                "ledger": {
+                    "description": "Ledger enables the deterministic session ledger. *bool so a partial\nblock does not silently disable it. Defaults to true.",
+                    "type": "boolean"
+                },
+                "max_summary_tokens": {
+                    "description": "MaxSummaryTokens is the hard cap on the compaction entry size.\nDefaults to 48000.",
+                    "type": "integer"
+                },
+                "min_summary_tokens": {
+                    "description": "MinSummaryTokens is the floor for the compaction entry size.\nDefaults to 6000.",
+                    "type": "integer"
+                },
+                "parallel_block_threshold": {
+                    "description": "ParallelBlockThreshold is the span size (in tokens) above which the\ncheckpoint lane splits into parallel block summaries. 0 disables\nparallel compaction. Defaults to 0.",
+                    "type": "integer"
+                },
+                "reserve_tokens": {
+                    "description": "ReserveTokens is the hard-context headroom kept free before\ntriggering a blocking compaction. Defaults to 16384.",
+                    "type": "integer"
+                },
+                "soft_threshold_fraction": {
+                    "description": "SoftThresholdFraction is the fraction of the context window at which\nan asynchronous compaction is triggered between turns. Defaults to 0.7.",
+                    "type": "number"
+                },
+                "transcript_map": {
+                    "description": "TranscriptMap enables the per-turn transcript map. Defaults to true.",
+                    "type": "boolean"
+                },
+                "verify": {
+                    "description": "Verify selects the checkpoint coverage audit mode.\nDefaults to \"judge\".",
+                    "type": "string"
+                },
+                "working_set_files": {
+                    "description": "WorkingSetFiles is the number of recently-modified files snapshotted\nafter compaction. 0 disables the snapshot. Defaults to 3.",
+                    "type": "integer"
+                },
+                "working_set_max_chars_per_file": {
+                    "description": "WorkingSetMaxCharsPerFile is the per-file cap for the working-set\nsnapshot. Defaults to 12000.",
+                    "type": "integer"
+                }
+            }
+        },
         "config.Completions": {
             "type": "object",
             "properties": {
@@ -3476,6 +3679,9 @@ const docTemplate = `{
                 "auto_lsp": {
                     "type": "boolean"
                 },
+                "compaction": {
+                    "$ref": "#/definitions/config.CompactionConfig"
+                },
                 "context_paths": {
                     "type": "array",
                     "items": {
@@ -3561,6 +3767,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "is_summary_message": {
+                    "type": "boolean"
                 },
                 "model": {
                     "type": "string"
@@ -3924,6 +4133,15 @@ const docTemplate = `{
                 }
             }
         },
+        "proto.MCPAuthResponse": {
+            "type": "object",
+            "properties": {
+                "auth_url": {
+                    "description": "AuthURL is the OAuth authorization URL the user must visit, when\nthe flow is still in progress.",
+                    "type": "string"
+                }
+            }
+        },
         "proto.MCPClientInfo": {
             "type": "object",
             "properties": {
@@ -3977,6 +4195,17 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "proto.MCPPendingAuthServer": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }

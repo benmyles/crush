@@ -10,13 +10,10 @@ import (
 
 type Querier interface {
 	CreateCompactionCausality(ctx context.Context, arg CreateCompactionCausalityParams) error
-	CreateCompactionEmbedding(ctx context.Context, arg CreateCompactionEmbeddingParams) error
-	CreateCompactionFileRef(ctx context.Context, arg CreateCompactionFileRefParams) (CompactionFileRef, error)
 	CreateCompactionSummary(ctx context.Context, arg CreateCompactionSummaryParams) (CompactionSummary, error)
 	CreateFile(ctx context.Context, arg CreateFileParams) (File, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
-	DeleteCompactionSummary(ctx context.Context, id string) error
 	DeleteFile(ctx context.Context, id string) error
 	DeleteMessage(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, id string) error
@@ -24,8 +21,6 @@ type Querier interface {
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	GetActiveCompactionSummary(ctx context.Context, sessionID string) (CompactionSummary, error)
 	GetAverageResponseTime(ctx context.Context) (int64, error)
-	GetCompactionFileRef(ctx context.Context, id string) (CompactionFileRef, error)
-	GetCompactionFileRefByPath(ctx context.Context, arg GetCompactionFileRefByPathParams) (CompactionFileRef, error)
 	GetCompactionSummary(ctx context.Context, id string) (CompactionSummary, error)
 	GetFile(ctx context.Context, id string) (File, error)
 	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
@@ -34,8 +29,6 @@ type Querier interface {
 	GetLastAssistantMessageBySession(ctx context.Context, sessionID string) (Message, error)
 	GetLastSession(ctx context.Context) (Session, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
-	GetMessageByID(ctx context.Context, id string) (Message, error)
-	GetMessagesByCreatedRange(ctx context.Context, arg GetMessagesByCreatedRangeParams) ([]Message, error)
 	GetRecentActivity(ctx context.Context) ([]GetRecentActivityRow, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
 	GetToolUsage(ctx context.Context) ([]GetToolUsageRow, error)
@@ -45,9 +38,7 @@ type Querier interface {
 	GetUsageByHour(ctx context.Context) ([]GetUsageByHourRow, error)
 	GetUsageByModel(ctx context.Context) ([]GetUsageByModelRow, error)
 	ListAllUserMessages(ctx context.Context) ([]Message, error)
-	ListChildCompactionSummaries(ctx context.Context, arg ListChildCompactionSummariesParams) ([]CompactionSummary, error)
 	ListCompactionCausalityBySession(ctx context.Context, sessionID string) ([]CompactionCausality, error)
-	ListCompactionEmbeddingsBySession(ctx context.Context, sessionID string) ([]CompactionEmbedding, error)
 	ListCompactionSummariesBySession(ctx context.Context, sessionID string) ([]CompactionSummary, error)
 	ListFilesByPath(ctx context.Context, path string) ([]File, error)
 	ListFilesBySession(ctx context.Context, sessionID string) ([]File, error)

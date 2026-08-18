@@ -290,7 +290,14 @@ func BuildSpanModel(input SpanInput) SpanModel {
 	toolCallsByID := map[string]SpanToolCall{}
 	readResultsByKey := map[string]int{}
 	var currentTurn *SpanTurn
-	seqCounter := input.SeqOffset
+	// seqCounter is incremented before each message is assigned a seq, so it
+	// starts one below the first ordinal: 0 for span-relative numbering, or
+	// SeqOffset-1 when the caller supplies the session-absolute ordinal of
+	// History[0].
+	seqCounter := 0
+	if input.SeqOffset > 0 {
+		seqCounter = input.SeqOffset - 1
+	}
 
 	startTurn := func(segment SpanSegment, createdAt int64) *SpanTurn {
 		turn := SpanTurn{

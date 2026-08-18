@@ -106,7 +106,8 @@ model small [<provider>/<id>] [flags]  # set the small slot; no arg prints it
 - `model large` with no argument prints the current selection as `provider/id`,
   usable in `$(model large)`.
 
-`large` is the primary coding model; `small` is used for summarization.
+`large` is the primary coding model; `small` is used for titles and other
+lightweight tasks (context compaction runs on the large model).
 
 ### mcp
 
@@ -188,6 +189,13 @@ option reset <list-key>    # clear a list option back to empty
 - **UI settings**: `option ui compact BOOL`, `option ui diff unified|split`,
   `option ui transparent BOOL`, `option ui scrollbar default|always|never`,
   `option ui completions-max-depth N`, `option ui completions-max-items N`.
+- **Compaction settings** (`options.compaction`): `option compaction <key> <value>`
+  with keys `enabled`, `reserve-tokens`, `keep-recent-tokens`,
+  `soft-threshold-fraction`, `budget-fraction`, `max-summary-tokens`,
+  `min-summary-tokens`, `verify` (`judge|checks|off`), `ledger`,
+  `transcript-map`, `working-set-files`, `working-set-max-chars-per-file`,
+  `extracts-decay`, `parallel-block-threshold`. `auto-summarize false` is the
+  legacy way to turn compaction off; prefer `option compaction enabled false`.
 - **List keys** (singular, one value per call, repeatable): `context-path`,
   `global-context-path`, `skill-path`, `disable-skill`. Use `option reset <key>`
   to wipe inherited values (e.g. after `source`).
