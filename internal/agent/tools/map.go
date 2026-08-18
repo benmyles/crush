@@ -31,12 +31,6 @@ When to use it:
 
 The input and output are files on disk (JSONL), external to your context, so datasets of arbitrary size can be processed without polluting your window.`
 
-const agenticMapDescription = `Spawn a full sub-agent for every item in a JSONL input file in parallel, writing structured results to an output JSONL file.
-
-Like llm_map, but each item is processed by a full sub-agent session with access to tools (file reads, code execution) for multi-step reasoning, rather than a single stateless LLM call. Use this when per-item processing requires tool use or multi-turn reasoning that cannot be captured in a single prompt.
-
-The input and output are files on disk (JSONL), external to your context. The scope-reduction invariant applies to nested delegation.`
-
 // LLMMapParams are the params for llm_map.
 type LLMMapParams struct {
 	InputPath    string `json:"input_path" description:"Path to the JSONL input file (one JSON object per line)"`
@@ -48,9 +42,6 @@ type LLMMapParams struct {
 
 // MapCompleter is the per-item completion function for llm_map.
 type MapCompleter func(ctx context.Context, prompt string) (string, error)
-
-// MapSubAgentRunner is the per-item sub-agent function for agentic_map.
-type MapSubAgentRunner func(ctx context.Context, prompt string, readOnly bool) (string, error)
 
 // mapResult is one item's result.
 type mapResult struct {

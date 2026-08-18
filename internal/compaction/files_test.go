@@ -84,30 +84,3 @@ func TestRunExtractsLane_OlderLaneDecays(t *testing.T) {
 	require.Less(t, len(out), len(prev), "older lane must truncate")
 	require.Contains(t, out, "omitted")
 }
-
-func TestCosine(t *testing.T) {
-	t.Parallel()
-	// Identical vectors -> 1.
-	require.InDelta(t, float32(1.0), cosine([]float32{1, 0, 0}, []float32{1, 0, 0}), 0.001)
-	// Orthogonal -> 0.
-	require.InDelta(t, float32(0.0), cosine([]float32{1, 0}, []float32{0, 1}), 0.001)
-	// Opposite -> -1.
-	require.InDelta(t, float32(-1.0), cosine([]float32{1, 0}, []float32{-1, 0}), 0.001)
-}
-
-func TestEncodeDecodeFloat32s(t *testing.T) {
-	t.Parallel()
-	original := []float32{1.0, 2.5, -3.14, 0.0}
-	blob := encodeFloat32s(original)
-	decoded, ok := decodeFloat32s(blob)
-	require.True(t, ok)
-	require.InDeltaSlice(t, original, decoded, 0.001)
-}
-
-func TestDecodeFloat32s_Invalid(t *testing.T) {
-	t.Parallel()
-	_, ok := decodeFloat32s([]byte{1, 2, 3})
-	require.False(t, ok)
-	_, ok = decodeFloat32s(nil)
-	require.False(t, ok)
-}
