@@ -1,0 +1,21 @@
+internal/compaction/engine_run_test.go
+  s_b49145118e9070::t_c003f516994341 34-36,140
+  s_b49145118e9070::t_b64aa621dae647 1-33,37-81,83-139,141-245
+  s_b49145118e9070::t_569482139ebb60 82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "5fcc5bf12636e2f519c6abe57d71b55c69241656",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
