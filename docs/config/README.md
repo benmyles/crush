@@ -237,15 +237,20 @@ Usage:
   model rm <provider>/<id>
 ```
 
-#### `model large`, `model small`
+#### `model large`, `model small`, `model compaction`
 
-Set the large or small model slot. With no model argument, print the current
-selection.
+Set a model slot. With no model argument, print the current selection. `large`
+is the coding model, `small` is used for lightweight tasks such as session
+titles, and `compaction` is the optional model the context compaction engine
+uses to write checkpoints (see `option compaction`). When the compaction slot
+is unset, compaction runs on the large model; setting it to a cheaper or
+faster model keeps compaction cost down without changing the coding model.
 
 ```text
 Usage:
   model large [<provider>/<id>] [flags]
   model small [<provider>/<id>] [flags]
+  model compaction [<provider>/<id>] [flags]
 
 Flags:
       --think                       enable thinking mode
@@ -261,6 +266,7 @@ Flags:
 
 ```bash
 model large openai/gpt-4o --think
+model compaction openai/gpt-4o-mini --reasoning-effort low
 echo "coding with: $(model large)"   # prints: openai/gpt-4o
 ```
 
@@ -555,7 +561,9 @@ errors), a transcript map, budgeted verbatim extracts, a working-set snapshot,
 and an exact-recovery note. Raw messages are never deleted: the agent can
 search them with `recall_grep` and expand a summary with `recall_expand`, and it
 can compact early at a milestone with `compact_context`. These keys map onto
-`options.compaction` in `crush.json`.
+`options.compaction` in `crush.json`. The model that writes the checkpoint is
+the `compaction` model slot when set (`model compaction <provider>/<id>`),
+otherwise the large model.
 
 ```text
 Usage:
@@ -630,6 +638,8 @@ to Bash-based config.
   },
   "models": {
     "large": { "provider": "anthropic", "model": "claude-sonnet-4-20250514" },
+    // optional: a cheaper model for context compaction (defaults to large)
+    "compaction": { "provider": "anthropic", "model": "claude-haiku-4-20250514" },
   },
   "permissions": { "allowed_tools": ["view", "ls", "grep"] },
 }

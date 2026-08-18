@@ -101,9 +101,12 @@ func writeModels(b *strings.Builder, cfg *config.ConfigStore) {
 		return
 	}
 	b.WriteString("[model]\n")
-	for _, typ := range []config.SelectedModelType{config.SelectedModelTypeLarge, config.SelectedModelTypeSmall} {
+	for _, typ := range []config.SelectedModelType{config.SelectedModelTypeLarge, config.SelectedModelTypeSmall, config.SelectedModelTypeCompaction} {
 		m, ok := c.Models[typ]
 		if !ok {
+			if typ == config.SelectedModelTypeCompaction {
+				b.WriteString("compaction = (follows large)\n")
+			}
 			continue
 		}
 		fmt.Fprintf(b, "%s = %s (%s)\n", typ, m.Model, m.Provider)

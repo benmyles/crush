@@ -143,8 +143,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure selected models: %w", err)
 	}
-	cfg.Models[SelectedModelTypeLarge] = resolved.Large
-	cfg.Models[SelectedModelTypeSmall] = resolved.Small
+	resolved.apply(cfg)
 
 	// Persist any fallback corrections while we still hold writeMu.
 	if resolved.LargeFallback {
@@ -778,6 +777,61 @@ type resolvedModels struct {
 	Small         SelectedModel
 	LargeFallback bool // true if Large was corrected to a default
 	SmallFallback bool // true if Small was corrected to a default
+	// Compaction is the optional compaction-model selection, nil when the
+	// slot is not configured (or points at an unknown model, in which case
+	// compaction follows the large model).
+	Compaction *SelectedModel
+}
+
+// apply copies the resolved selections into cfg.Models. The compaction slot
+// is removed when it did not resolve so nothing downstream sees a stale or
+// invalid selection.
+func (r resolvedModels) apply(cfg *Config) {
+	if cfg.Models == nil {
+		cfg.Models = make(map[SelectedModelType]SelectedModel)
+	}
+	cfg.Models[SelectedModelTypeLarge] = r.Large
+	cfg.Models[SelectedModelTypeSmall] = r.Small
+	if r.Compaction != nil {
+		cfg.Models[SelectedModelTypeCompaction] = *r.Compaction
+	} else {
+		delete(cfg.Models, SelectedModelTypeCompaction)
+	}
+}
+
+// resolveCompactionModel validates the optional compaction slot against the
+// catalog and fills catalog defaults (max tokens, reasoning effort). It
+// returns nil when the slot is unset or unusable; compaction then follows the
+// large model.
+func resolveCompactionModel(cfg *Config) *SelectedModel {
+	sel, ok := cfg.Models[SelectedModelTypeCompaction]
+	if !ok {
+		return nil
+	}
+	if sel.Provider == "" || sel.Model == "" {
+		slog.Warn("Ignoring compaction model selection without provider/model; compaction will use the large model")
+		return nil
+	}
+	if _, ok := cfg.Providers.Get(sel.Provider); !ok {
+		slog.Warn("Ignoring compaction model: provider not configured; compaction will use the large model", "provider", sel.Provider, "model", sel.Model)
+		return nil
+	}
+	model := cfg.GetModel(sel.Provider, sel.Model)
+	if model == nil {
+		slog.Warn("Ignoring compaction model: model not found in the provider catalog; compaction will use the large model", "provider", sel.Provider, "model", sel.Model)
+		return nil
+	}
+	resolved := sel
+	if resolved.MaxTokens <= 0 {
+		resolved.MaxTokens = model.DefaultMaxTokens
+	}
+	if resolved.ReasoningEffort == "" {
+		resolved.ReasoningEffort = model.DefaultReasoningEffort
+	}
+	if sel.ProviderOptions != nil {
+		resolved.ProviderOptions = maps.Clone(sel.ProviderOptions)
+	}
+	return &resolved
 }
 
 // resolveSelectedModels validates the user's configured model selections
@@ -903,6 +957,7 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 
 	result.Large = large
 	result.Small = small
+	result.Compaction = resolveCompactionModel(cfg)
 	return result, nil
 }
 

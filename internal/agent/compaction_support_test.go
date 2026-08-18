@@ -208,3 +208,59 @@ func newCompactionTestAgent(t *testing.T, completer compaction.Completer) (*sess
 	agent.compaction = compaction.NewEngine(q, completer, compaction.WithTxDB(conn))
 	return agent, q, sessions, messages, conn
 }
+
+// TestCompactWithEngine_UsesDedicatedCompactionModel verifies that when
+// models.compaction is set, the summarizer identity recorded on the summary
+// node is the compaction model (not the large model), and that clearing the
+// slot falls back to the large model.
+func TestCompactWithEngine_UsesDedicatedCompactionModel(t *testing.T) {
+	completer := func(_ context.Context, _, _ string, _ int64) (string, string, error) {
+		return "## Goal & User Intent\nG\n## Progress\n### Done\n- x\n## Next Action\n1. y\n", "stop", nil
+	}
+	a, q, sessions, messages, _ := newCompactionTestAgent(t, completer)
+	ctx := context.Background()
+
+	addTurns := func(sessID string, from, to int) {
+		for n := from; n <= to; n++ {
+			body := strings.Repeat(fmt.Sprintf("BODY-%02d ", n), 2000)
+			_, err := messages.Create(ctx, sessID, message.CreateMessageParams{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: body}}})
+			require.NoError(t, err)
+			_, err = messages.Create(ctx, sessID, message.CreateMessageParams{Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: body}, message.Finish{Reason: message.FinishReasonEndTurn}}})
+			require.NoError(t, err)
+		}
+	}
+
+	// Dedicated compaction model on another provider.
+	a.SetCompactionModel(&Model{
+		Model:      stubLanguageModel{},
+		CatwalkCfg: catwalk.Model{ID: "cheap-summarizer", ContextWindow: 128000, DefaultMaxTokens: 4096},
+		ModelCfg:   config.SelectedModel{Provider: "otherprov", Model: "cheap-summarizer"},
+	})
+	sess, err := sessions.Create(ctx, "dedicated")
+	require.NoError(t, err)
+	addTurns(sess.ID, 1, 10)
+	require.NoError(t, a.compactWithEngine(ctx, sess.ID, "", fantasy.ProviderOptions{}, nil))
+	sum, err := q.GetActiveCompactionSummary(ctx, sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, "otherprov", sum.ModelProvider.String)
+	require.Equal(t, "cheap-summarizer", sum.ModelID.String)
+
+	// Clearing the slot falls back to the large model.
+	a.SetCompactionModel(nil)
+	sess2, err := sessions.Create(ctx, "fallback")
+	require.NoError(t, err)
+	addTurns(sess2.ID, 1, 10)
+	require.NoError(t, a.compactWithEngine(ctx, sess2.ID, "", fantasy.ProviderOptions{}, nil))
+	sum2, err := q.GetActiveCompactionSummary(ctx, sess2.ID)
+	require.NoError(t, err)
+	require.Equal(t, "test", sum2.ModelProvider.String)
+	require.Equal(t, "test-model", sum2.ModelID.String)
+}
+
+// stubLanguageModel is a non-nil fantasy.LanguageModel so the dedicated
+// compaction model is considered configured; the engine's completer is
+// stubbed in these tests, so it is never invoked.
+type stubLanguageModel struct{ fantasy.LanguageModel }
+
+func (stubLanguageModel) Provider() string { return "otherprov" }
+func (stubLanguageModel) Model() string    { return "cheap-summarizer" }

@@ -54,6 +54,10 @@ func (s SelectedModelType) String() string {
 const (
 	SelectedModelTypeLarge SelectedModelType = "large"
 	SelectedModelTypeSmall SelectedModelType = "small"
+	// SelectedModelTypeCompaction is the optional model used by the context
+	// compaction engine (checkpoint, verification, and parallel-block calls).
+	// When it is not configured, compaction uses the large model.
+	SelectedModelTypeCompaction SelectedModelType = "compaction"
 )
 
 const (
@@ -641,8 +645,9 @@ func (h *HookConfig) TimeoutDuration() time.Duration {
 type Config struct {
 	Schema string `json:"$schema,omitempty"`
 
-	// We currently only support large/small as values here.
-	Models map[SelectedModelType]SelectedModel `json:"models,omitempty" jsonschema:"description=Model configurations for different model types,example={\"large\":{\"model\":\"gpt-4o\",\"provider\":\"openai\"}}"`
+	// Supported keys: large, small, and the optional compaction slot used by
+	// the context compaction engine (defaults to the large model).
+	Models map[SelectedModelType]SelectedModel `json:"models,omitempty" jsonschema:"description=Model configurations for different model types: large (coding), small (titles), and the optional compaction slot (context compaction; defaults to large),example={\"large\":{\"model\":\"gpt-4o\",\"provider\":\"openai\"}}"`
 
 	// Recently used models stored in the data directory config.
 	RecentModels map[SelectedModelType][]SelectedModel `json:"recent_models,omitempty" jsonschema:"-"`
@@ -777,6 +782,16 @@ func (c *Config) LargeModel() *catwalk.Model {
 
 func (c *Config) SmallModel() *catwalk.Model {
 	model, ok := c.Models[SelectedModelTypeSmall]
+	if !ok {
+		return nil
+	}
+	return c.GetModel(model.Provider, model.Model)
+}
+
+// CompactionModel returns the catalog entry for the optional compaction model
+// slot, or nil when compaction follows the large model.
+func (c *Config) CompactionModel() *catwalk.Model {
+	model, ok := c.Models[SelectedModelTypeCompaction]
 	if !ok {
 		return nil
 	}

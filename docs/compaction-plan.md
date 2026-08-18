@@ -32,7 +32,7 @@ deferred. Sections marked *Status:* further down record the per-feature outcome.
 | Optional embedding index + `recall_query` | **Deferred** (no schema, no tool). |
 | Large-file references + exploration summaries | **Deferred** (no schema). |
 | Pubsub compaction lifecycle events / TUI footer | **Deferred**. The composed summary is stored as a summary message so the chat renders it. |
-| Configurable summarizer model / reasoning | **Deferred**; the active large model is used. |
+| Configurable summarizer model / reasoning | Shipped as the optional `models.compaction` slot (`model compaction <provider>/<id> [--reasoning-effort …]` in crushrc). Unset → the active large model. |
 | Config (`options.compaction`, `option compaction …` in crushrc) | Shipped; see §6.4. |
 
 ---
@@ -339,6 +339,16 @@ tokens share the output cap on completions-style providers.
 The summarizer is a **separate, configurable model** (default: a cheap/fast model
 like Gemini Flash at max reasoning, or follow the active model). Resolved through
 `config.Service` + fantasy, never by calling host compaction as a fallback.
+
+*Status:* shipped as the optional `models.compaction` slot, resolved by
+`config` like `large`/`small` (validated against the provider catalog, catalog
+defaults for max tokens / reasoning effort, dropped with a warning when
+invalid) and built by the coordinator alongside the other slots. When set, all
+compaction-lane calls (checkpoint, retries, judge, parallel blocks) run on it
+with its own provider options, system-prompt prefix, auth refresh, context
+window, and pricing; the summary node records that model. When unset, the
+active large model is used. The default is "follow the large model", not a
+built-in cheap model.
 
 ### 4.7 Extractive lane (from ShiftUp)
 
@@ -708,8 +718,11 @@ silently disable a feature (`nil` = default, explicit `false`/`0` respected).
 `disable_auto_summarize` still works and is honored only when no
 `options.compaction` block is present; an explicit `enabled` wins.
 `keep_recent_tokens` and `reserve_tokens` are clamped to `window/4` and
-`window/8` at runtime. Not shipped: `summary_model`, `summary_reasoning`,
-`git_snapshot`, `embeddings`, `large_file_threshold`.
+`window/8` at runtime. The summarizer model is not part of this block: it is
+the optional `models.compaction` slot (§4.6), so it uses the same
+`SelectedModel` shape, catalog validation, and crushrc `model` builtin as
+`large`/`small`. Not shipped: `git_snapshot`, `embeddings`,
+`large_file_threshold`.
 
 ### 6.5 Tools
 

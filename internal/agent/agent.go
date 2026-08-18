@@ -139,6 +139,10 @@ type SessionAgent interface {
 	Run(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)
 	BeginAccepted(sessionID string) *AcceptedRun
 	SetModels(large Model, small Model)
+	// SetCompactionModel sets (or clears, with nil) the dedicated model used
+	// by the context compaction engine. When nil, compaction runs on the
+	// large model.
+	SetCompactionModel(model *Model)
 	SetTools(tools []fantasy.AgentTool)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
@@ -178,11 +182,18 @@ type activeCancel struct {
 }
 
 type sessionAgent struct {
-	largeModel         *csync.Value[Model]
-	smallModel         *csync.Value[Model]
-	systemPromptPrefix *csync.Value[string]
-	systemPrompt       *csync.Value[string]
-	tools              *csync.Slice[fantasy.AgentTool]
+	largeModel *csync.Value[Model]
+	smallModel *csync.Value[Model]
+	// compactionModel is the optional dedicated model for the compaction
+	// engine (models.compaction); unset means "use the large model".
+	compactionModel *csync.Value[compactionModelSlot]
+	// providerAuthRefresh builds the auth-refresh callback for a provider,
+	// used when the compaction model lives on a different provider than the
+	// large model. Nil when the host cannot refresh credentials.
+	providerAuthRefresh func(providerID string) func(context.Context, *fantasy.ProviderError) error
+	systemPromptPrefix  *csync.Value[string]
+	systemPrompt        *csync.Value[string]
+	tools               *csync.Slice[fantasy.AgentTool]
 
 	isSubAgent           bool
 	sessions             session.Service
@@ -256,11 +267,19 @@ type SessionAgentOptions struct {
 	Querier              db.Querier
 	// DB is the underlying connection; when set, the compaction engine
 	// persists each summary node atomically in a transaction.
-	DB          *sql.DB
-	Config      *config.ConfigStore
-	Tools       []fantasy.AgentTool
-	Notify      pubsub.Publisher[notify.Notification]
-	RunComplete pubsub.Publisher[notify.RunComplete]
+	DB     *sql.DB
+	Config *config.ConfigStore
+	// CompactionModel is the optional dedicated model for the compaction
+	// engine (models.compaction). Nil means compaction uses the large model.
+	CompactionModel *Model
+	// ProviderAuthRefresh returns an auth-refresh callback for the given
+	// provider id (nil when the provider needs none). Used for compaction
+	// calls when the compaction model's provider differs from the large
+	// model's.
+	ProviderAuthRefresh func(providerID string) func(context.Context, *fantasy.ProviderError) error
+	Tools               []fantasy.AgentTool
+	Notify              pubsub.Publisher[notify.Notification]
+	RunComplete         pubsub.Publisher[notify.RunComplete]
 }
 
 func NewSessionAgent(
@@ -269,6 +288,8 @@ func NewSessionAgent(
 	a := &sessionAgent{
 		largeModel:           csync.NewValue(opts.LargeModel),
 		smallModel:           csync.NewValue(opts.SmallModel),
+		compactionModel:      csync.NewValue(newCompactionModelSlot(opts.CompactionModel)),
+		providerAuthRefresh:  opts.ProviderAuthRefresh,
 		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
 		systemPrompt:         csync.NewValue(opts.SystemPrompt),
 		isSubAgent:           opts.IsSubAgent,
@@ -1560,9 +1581,13 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 // through the request context. The engine's Completer signature is
 // deliberately narrow, so the hooks travel on ctx rather than as arguments.
 type compactionCallHooks struct {
-	opts          fantasy.ProviderOptions
-	onAuthRefresh func(context.Context, *fantasy.ProviderError) error
-	sessionID     string
+	// model is the model to call (the dedicated compaction model or the
+	// large model); nil falls back to the large model.
+	model              *Model
+	systemPromptPrefix string
+	opts               fantasy.ProviderOptions
+	onAuthRefresh      func(context.Context, *fantasy.ProviderError) error
+	sessionID          string
 
 	mu    sync.Mutex
 	usage fantasy.Usage
@@ -1605,11 +1630,15 @@ func (h *compactionCallHooks) add(usage fantasy.Usage, cost *float64) {
 // Provider options, auth refresh, session headers, and usage accounting are
 // taken from the compactionCallHooks on ctx when present.
 func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userText string, maxOutputTokens int64) (string, string, error) {
-	largeModel := a.largeModel.Get()
-	systemPromptPrefix := a.systemPromptPrefix.Get()
 	hooks := compactionCallHooksFrom(ctx)
+	model := a.largeModel.Get()
+	systemPromptPrefix := a.systemPromptPrefix.Get()
+	if hooks != nil && hooks.model != nil {
+		model = *hooks.model
+		systemPromptPrefix = hooks.systemPromptPrefix
+	}
 	agent := fantasy.NewAgent(
-		largeModel.Model,
+		model.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
 		fantasy.WithUserAgent(userAgent),
 	)
@@ -1621,7 +1650,16 @@ func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userT
 		Prompt:          userText,
 		MaxOutputTokens: &maxTokens,
 		ProviderOptions: a.getCacheControlOptions(),
-		ModelProvider:   func() fantasy.LanguageModel { return a.largeModel.Get().Model },
+		// Re-read the current model on retries so a credential refresh that
+		// rebuilt the models is picked up.
+		ModelProvider: func() fantasy.LanguageModel {
+			if hooks != nil && hooks.model != nil {
+				if m, dedicated := a.compactionModelOrLarge(); dedicated {
+					return m.Model
+				}
+			}
+			return a.largeModel.Get().Model
+		},
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
 			if systemPromptPrefix != "" {
@@ -1696,6 +1734,22 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 		return ErrSessionBusy
 	}
 	largeModel := a.largeModel.Get()
+	// The summarizer: the dedicated compaction model when configured, else
+	// the large model. A dedicated model gets its own provider options,
+	// system-prompt prefix, and auth refresh; the caller's opts describe the
+	// large model's provider.
+	summarizer, dedicated := a.compactionModelOrLarge()
+	callOpts, callRefresh, callPrefix := opts, onAuthRefresh, a.systemPromptPrefix.Get()
+	if dedicated {
+		callRefresh = nil
+		if providerCfg, ok := a.cfg.Config().Providers.Get(summarizer.ModelCfg.Provider); ok {
+			callOpts = getProviderOptions(summarizer, providerCfg)
+			callPrefix = providerCfg.SystemPromptPrefix
+		}
+		if a.providerAuthRefresh != nil {
+			callRefresh = a.providerAuthRefresh(summarizer.ModelCfg.Provider)
+		}
+	}
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
@@ -1780,8 +1834,22 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 		tokensBefore += estimateStoredMessageTokens(msg)
 	}
 
-	hooks := &compactionCallHooks{opts: opts, onAuthRefresh: onAuthRefresh, sessionID: sessionID}
+	hooks := &compactionCallHooks{
+		model:              &summarizer,
+		systemPromptPrefix: callPrefix,
+		opts:               callOpts,
+		onAuthRefresh:      callRefresh,
+		sessionID:          sessionID,
+	}
 	runCtx := withCompactionCallHooks(genCtx, hooks)
+	summarizerWindow := int64(summarizer.CatwalkCfg.ContextWindow)
+	if summarizerWindow <= 0 {
+		summarizerWindow = window
+	}
+	summarizerMaxOutput := int64(summarizer.CatwalkCfg.DefaultMaxTokens)
+	if summarizer.ModelCfg.MaxTokens > 0 {
+		summarizerMaxOutput = summarizer.ModelCfg.MaxTokens
+	}
 	req := compaction.CompactionRequest{
 		SessionID:                 sessionID,
 		Cwd:                       a.cfg.WorkingDir(),
@@ -1795,12 +1863,12 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 		TokensBefore:              tokensBefore,
 		ConsumerContextWindow:     window,
 		SystemPromptTokens:        8000,
-		SummarizerContextWindow:   window,
-		SummarizerMaxOutputTokens: int64(largeModel.CatwalkCfg.DefaultMaxTokens),
+		SummarizerContextWindow:   summarizerWindow,
+		SummarizerMaxOutputTokens: summarizerMaxOutput,
 		KeepRecentTokens:          keepRecent,
 		ReserveTokens:             reserve,
-		ModelProvider:             largeModel.ModelCfg.Provider,
-		ModelID:                   largeModel.ModelCfg.Model,
+		ModelProvider:             summarizer.ModelCfg.Provider,
+		ModelID:                   summarizer.ModelCfg.Model,
 		Cfg:                       cfg,
 	}
 	result, err := a.compaction.Run(runCtx, req)
@@ -1832,7 +1900,8 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 	compactionUsage, compactionCost := hooks.usage, hooks.cost
 	hooks.mu.Unlock()
 	if !usageIsZero(compactionUsage) {
-		a.updateSessionUsage(largeModel, &currentSession, compactionUsage, compactionCost, false)
+		// Priced with the model that actually ran the compaction.
+		a.updateSessionUsage(summarizer, &currentSession, compactionUsage, compactionCost, false)
 	}
 	currentSession.SummaryMessageID = summaryMessage.ID
 	currentSession.CompletionTokens = approxTokenCount(result.SummaryText)
@@ -2512,6 +2581,34 @@ func (a *sessionAgent) QueuedPromptsList(sessionID string) []string {
 func (a *sessionAgent) SetModels(large Model, small Model) {
 	a.largeModel.Set(large)
 	a.smallModel.Set(small)
+}
+
+// compactionModelSlot is the value stored for the optional compaction model
+// (csync.Value does not hold pointers).
+type compactionModelSlot struct {
+	model Model
+	set   bool
+}
+
+func newCompactionModelSlot(m *Model) compactionModelSlot {
+	if m == nil || m.Model == nil {
+		return compactionModelSlot{}
+	}
+	return compactionModelSlot{model: *m, set: true}
+}
+
+func (a *sessionAgent) SetCompactionModel(model *Model) {
+	a.compactionModel.Set(newCompactionModelSlot(model))
+}
+
+// compactionModelOrLarge returns the model the compaction engine should use:
+// the dedicated compaction model when configured, otherwise the large model.
+// dedicated reports which one was chosen.
+func (a *sessionAgent) compactionModelOrLarge() (model Model, dedicated bool) {
+	if slot := a.compactionModel.Get(); slot.set {
+		return slot.model, true
+	}
+	return a.largeModel.Get(), false
 }
 
 func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {

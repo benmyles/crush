@@ -630,7 +630,7 @@ func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderO
 }
 
 func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, agent config.Agent, isSubAgent bool) (SessionAgent, error) {
-	large, small, err := c.buildAgentModels(ctx, isSubAgent)
+	large, small, compactionModel, err := c.buildAgentModels(ctx, isSubAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -639,6 +639,8 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	result := NewSessionAgent(SessionAgentOptions{
 		LargeModel:           large,
 		SmallModel:           small,
+		CompactionModel:      compactionModel,
+		ProviderAuthRefresh:  c.providerAuthRefresh,
 		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
 		SystemPrompt:         "",
 		IsSubAgent:           isSubAgent,
@@ -843,34 +845,37 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 }
 
 // TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
-func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Model, Model, error) {
+// buildAgentModels builds the large and small models plus the optional
+// dedicated compaction model (nil when models.compaction is unset or cannot
+// be built, in which case compaction falls back to the large model).
+func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Model, Model, *Model, error) {
 	largeModelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeLarge]
 	if !ok {
-		return Model{}, Model{}, errLargeModelNotSelected
+		return Model{}, Model{}, nil, errLargeModelNotSelected
 	}
 	smallModelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeSmall]
 	if !ok {
-		return Model{}, Model{}, errSmallModelNotSelected
+		return Model{}, Model{}, nil, errSmallModelNotSelected
 	}
 
 	largeProviderCfg, ok := c.cfg.Config().Providers.Get(largeModelCfg.Provider)
 	if !ok {
-		return Model{}, Model{}, errLargeModelProviderNotConfigured
+		return Model{}, Model{}, nil, errLargeModelProviderNotConfigured
 	}
 
 	largeProvider, err := c.buildProvider(largeProviderCfg, largeModelCfg, isSubAgent)
 	if err != nil {
-		return Model{}, Model{}, err
+		return Model{}, Model{}, nil, err
 	}
 
 	smallProviderCfg, ok := c.cfg.Config().Providers.Get(smallModelCfg.Provider)
 	if !ok {
-		return Model{}, Model{}, errSmallModelProviderNotConfigured
+		return Model{}, Model{}, nil, errSmallModelProviderNotConfigured
 	}
 
 	smallProvider, err := c.buildProvider(smallProviderCfg, smallModelCfg, true)
 	if err != nil {
-		return Model{}, Model{}, err
+		return Model{}, Model{}, nil, err
 	}
 
 	var largeCatwalkModel *catwalk.Model
@@ -888,11 +893,11 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 	}
 
 	if largeCatwalkModel == nil {
-		return Model{}, Model{}, errLargeModelNotFound
+		return Model{}, Model{}, nil, errLargeModelNotFound
 	}
 
 	if smallCatwalkModel == nil {
-		return Model{}, Model{}, errSmallModelNotFound
+		return Model{}, Model{}, nil, errSmallModelNotFound
 	}
 
 	largeModelID := largeModelCfg.Model
@@ -908,11 +913,11 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 
 	largeModel, err := largeProvider.LanguageModel(ctx, largeModelID)
 	if err != nil {
-		return Model{}, Model{}, err
+		return Model{}, Model{}, nil, err
 	}
 	smallModel, err := smallProvider.LanguageModel(ctx, smallModelID)
 	if err != nil {
-		return Model{}, Model{}, err
+		return Model{}, Model{}, nil, err
 	}
 
 	return Model{
@@ -925,7 +930,65 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 			CatwalkCfg: *smallCatwalkModel,
 			ModelCfg:   smallModelCfg,
 			FlatRate:   smallProviderCfg.FlatRate,
-		}, nil
+		}, c.buildCompactionModel(ctx, isSubAgent), nil
+}
+
+// buildCompactionModel builds the optional dedicated compaction model from
+// models.compaction. It never fails the agent build: any problem is logged
+// and nil is returned so compaction runs on the large model instead.
+func (c *coordinator) buildCompactionModel(ctx context.Context, isSubAgent bool) *Model {
+	modelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeCompaction]
+	if !ok {
+		return nil
+	}
+	providerCfg, ok := c.cfg.Config().Providers.Get(modelCfg.Provider)
+	if !ok {
+		slog.Warn("Compaction model provider not configured; compaction will use the large model", "provider", modelCfg.Provider, "model", modelCfg.Model)
+		return nil
+	}
+	provider, err := c.buildProvider(providerCfg, modelCfg, isSubAgent)
+	if err != nil {
+		slog.Warn("Failed to build compaction model provider; compaction will use the large model", "provider", modelCfg.Provider, "model", modelCfg.Model, "error", err)
+		return nil
+	}
+	var catwalkModel *catwalk.Model
+	for _, m := range providerCfg.Models {
+		if m.ID == modelCfg.Model {
+			catwalkModel = &m
+			break
+		}
+	}
+	if catwalkModel == nil {
+		slog.Warn("Compaction model not found in the provider catalog; compaction will use the large model", "provider", modelCfg.Provider, "model", modelCfg.Model)
+		return nil
+	}
+	modelID := modelCfg.Model
+	if modelCfg.Provider == openrouter.Name && isExactoSupported(modelID) {
+		modelID += ":exacto"
+	}
+	languageModel, err := provider.LanguageModel(ctx, modelID)
+	if err != nil {
+		slog.Warn("Failed to build compaction model; compaction will use the large model", "provider", modelCfg.Provider, "model", modelCfg.Model, "error", err)
+		return nil
+	}
+	return &Model{
+		Model:      languageModel,
+		CatwalkCfg: *catwalkModel,
+		ModelCfg:   modelCfg,
+		FlatRate:   providerCfg.FlatRate,
+	}
+}
+
+// providerAuthRefresh returns the auth-refresh callback for a provider id, or
+// nil when the provider is unknown or needs no refresh. The session agent
+// uses it for compaction calls made on a provider other than the large
+// model's.
+func (c *coordinator) providerAuthRefresh(providerID string) func(context.Context, *fantasy.ProviderError) error {
+	providerCfg, ok := c.cfg.Config().Providers.Get(providerID)
+	if !ok {
+		return nil
+	}
+	return c.makeAuthRefreshCallback(providerCfg)
 }
 
 func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map[string]string, providerID string) (fantasy.Provider, error) {
@@ -1247,11 +1310,12 @@ func (c *coordinator) Model() Model {
 
 func (c *coordinator) UpdateModels(ctx context.Context) error {
 	// build the models again so we make sure we get the latest config
-	large, small, err := c.buildAgentModels(ctx, false)
+	large, small, compactionModel, err := c.buildAgentModels(ctx, false)
 	if err != nil {
 		return err
 	}
 	c.currentAgent.SetModels(large, small)
+	c.currentAgent.SetCompactionModel(compactionModel)
 
 	agentCfg, ok := c.cfg.Config().Agents[config.AgentCoder]
 	if !ok {
@@ -1284,6 +1348,15 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 
 	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
 		slog.Error("Failed to refresh OAuth2 token before summarize. Proceeding with existing token.", "error", err)
+	}
+	// A dedicated compaction model may live on another provider; refresh
+	// its token too so the compaction call does not start with an expired one.
+	if compactionCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeCompaction]; ok && compactionCfg.Provider != providerCfg.ID {
+		if compactionProviderCfg, ok := c.cfg.Config().Providers.Get(compactionCfg.Provider); ok {
+			if err := c.refreshTokenIfExpired(ctx, compactionProviderCfg); err != nil {
+				slog.Error("Failed to refresh OAuth2 token for the compaction model before summarize. Proceeding with existing token.", "error", err)
+			}
+		}
 	}
 
 	// Auth failures during summarize flow through fantasy's OnAuthRefresh,

@@ -329,10 +329,12 @@ definitions:
     enum:
     - large
     - small
+    - compaction
     type: string
     x-enum-varnames:
     - SelectedModelTypeLarge
     - SelectedModelTypeSmall
+    - SelectedModelTypeCompaction
   config.TUIOptions:
     properties:
       compact_mode:
@@ -406,7 +408,9 @@ definitions:
       models:
         additionalProperties:
           $ref: '#/definitions/config.SelectedModel'
-        description: We currently only support large/small as values here.
+        description: |-
+          Supported keys: large, small, and the optional compaction slot used by
+          the context compaction engine (defaults to the large model).
         type: object
       options:
         $ref: '#/definitions/github_com_charmbracelet_crush_internal_config.Options'

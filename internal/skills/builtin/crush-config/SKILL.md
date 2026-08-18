@@ -92,6 +92,7 @@ model add <provider>/<id> [flags]      # register a custom model (provider must 
 model remove <provider>/<id>           # alias: rm
 model large [<provider>/<id>] [flags]  # set the large slot; no arg prints it
 model small [<provider>/<id>] [flags]  # set the small slot; no arg prints it
+model compaction [<provider>/<id>] [flags]  # optional slot for context compaction
 ```
 
 - `<provider>/<id>` is the same form `crush models` prints. A missing slash is
@@ -100,14 +101,17 @@ model small [<provider>/<id>] [flags]  # set the small slot; no arg prints it
   `--can-reason BOOL`, `--supports-images BOOL`, `--price-input F`,
   `--price-output F`, `--price-cache-create F`, `--price-cache-hit F`,
   `--reasoning-effort low|medium|high`.
-- `model large`/`model small` flags: `--think`, `--reasoning-effort`,
-  `--max-tokens N`, `--temperature F`, `--top-p F`, `--top-k N`,
-  `--frequency-penalty F`, `--presence-penalty F`, `--provider-options JSON`.
+- `model large`/`model small`/`model compaction` flags: `--think`,
+  `--reasoning-effort`, `--max-tokens N`, `--temperature F`, `--top-p F`,
+  `--top-k N`, `--frequency-penalty F`, `--presence-penalty F`,
+  `--provider-options JSON`.
 - `model large` with no argument prints the current selection as `provider/id`,
   usable in `$(model large)`.
 
 `large` is the primary coding model; `small` is used for titles and other
-lightweight tasks (context compaction runs on the large model).
+lightweight tasks. `compaction` is optional: when set, the context compaction
+engine writes its checkpoints with that model (a cheaper/faster model keeps
+compaction cost down); when unset, compaction runs on the large model.
 
 ### mcp
 
@@ -347,6 +351,7 @@ The `$schema` property enables IDE autocomplete but is optional.
 | `provider add openai --api-key "$K"` | `providers.openai = {"api_key": "$K"}`                 |
 | `model add openai/gpt-x --name X`    | append to `providers.openai.models[]`                  |
 | `model large openai/gpt-x`           | `models.large = {"provider":"openai","model":"gpt-x"}` |
+| `model compaction openai/gpt-x-mini` | `models.compaction = {"provider":"openai","model":"gpt-x-mini"}` |
 | `mcp add gh --type http --url U`     | `mcp.gh = {"type":"http","url":"U"}`                   |
 | `lsp add go --command gopls`         | `lsp.go = {"command":"gopls"}`                         |
 | `hook add PreToolUse --command C`    | append to `hooks.PreToolUse[]`                         |

@@ -192,3 +192,24 @@ provider rm anthropic`)
 	require.Len(t, models, 1)
 	require.Equal(t, "b", models[0].(map[string]any)["id"])
 }
+
+func TestModelSelectCompactionSlot(t *testing.T) {
+	t.Parallel()
+
+	result := loadScript(t, `model compaction openai/gpt-5-mini --reasoning-effort low --max-tokens 8192`)
+	models := result["models"].(map[string]any)
+	sel := models["compaction"].(map[string]any)
+	require.Equal(t, "openai", sel["provider"])
+	require.Equal(t, "gpt-5-mini", sel["model"])
+	require.Equal(t, "low", sel["reasoning_effort"])
+	require.Equal(t, float64(8192), sel["max_tokens"])
+}
+
+func TestModelUnknownSlot(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "crushrc")
+	_, err := LoadShellConfig(t.Context(), path, []byte(`model medium openai/gpt-x`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown subcommand")
+}

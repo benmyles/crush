@@ -3522,11 +3522,13 @@ const docTemplate = `{
             "type": "string",
             "enum": [
                 "large",
-                "small"
+                "small",
+                "compaction"
             ],
             "x-enum-varnames": [
                 "SelectedModelTypeLarge",
-                "SelectedModelTypeSmall"
+                "SelectedModelTypeSmall",
+                "SelectedModelTypeCompaction"
             ]
         },
         "config.TUIOptions": {
@@ -3635,7 +3637,7 @@ const docTemplate = `{
                     "$ref": "#/definitions/config.MCPs"
                 },
                 "models": {
-                    "description": "We currently only support large/small as values here.",
+                    "description": "Supported keys: large, small, and the optional compaction slot used by\nthe context compaction engine (defaults to the large model).",
                     "type": "object",
                     "additionalProperties": {
                         "$ref": "#/definitions/config.SelectedModel"
