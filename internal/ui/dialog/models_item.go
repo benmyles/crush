@@ -72,12 +72,31 @@ type ModelItem struct {
 	prov      catwalk.Provider
 	model     catwalk.Model
 	modelType ModelType
+	// followLarge marks the synthetic "same as the large model" entry offered
+	// for the optional compaction slot; selecting it clears the slot.
+	followLarge bool
 
 	cache        map[int]string
 	t            *styles.Styles
 	m            fuzzy.Match
 	focused      bool
 	showProvider bool
+}
+
+// followLargeItemID is the list id of the "same as the large model" entry.
+const followLargeItemID = "follow-large-model"
+
+// NewFollowLargeModelItem creates the "same as the large model" entry shown
+// at the top of the compaction slot's list.
+func NewFollowLargeModelItem(t *styles.Styles) *ModelItem {
+	return &ModelItem{
+		Versioned:   list.NewVersioned(),
+		model:       catwalk.Model{Name: "Same as the large model (default)"},
+		modelType:   ModelTypeCompaction,
+		followLarge: true,
+		t:           t,
+		cache:       make(map[int]string),
+	}
 }
 
 // Finished implements list.Item. Model items are render-stable
@@ -123,6 +142,9 @@ func (m *ModelItem) Filter() string {
 
 // ID implements ListItem.
 func (m *ModelItem) ID() string {
+	if m.followLarge {
+		return followLargeItemID
+	}
 	return modelKey(string(m.prov.ID), m.model.ID)
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -498,6 +499,16 @@ func (s *ConfigStore) RemoveConfigField(scope Scope, key string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	// Removing a model slot (e.g. models.compaction to fall back to the
+	// large model) is an explicit choice made in this instance: drop the
+	// in-instance pin so the reload below does not resurrect the old
+	// selection from overrides.
+	if modelType, ok := strings.CutPrefix(key, "models."); ok && !strings.Contains(modelType, ".") {
+		s.writeMu.Lock()
+		delete(s.overrides.Models, SelectedModelType(modelType))
+		s.writeMu.Unlock()
 	}
 
 	if err := s.autoReload(context.Background()); err != nil {

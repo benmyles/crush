@@ -782,3 +782,38 @@ func TestConfigStore_SetConfigFields_concurrentInProcess(t *testing.T) {
 		}
 	}
 }
+
+// TestRemoveConfigField_UnpinsModelSlot verifies that removing a models.<slot>
+// key drops the in-instance pin for that slot, so the reload triggered by the
+// removal cannot resurrect the previous selection (this is how the TUI sets
+// the compaction model back to "follow the large model").
+func TestRemoveConfigField_UnpinsModelSlot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "crush.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"models": {"compaction": {"provider": "openai", "model": "gpt-x"}}}`), 0o600))
+
+	store, err := Load(dir, dir, false)
+	require.NoError(t, err)
+	store.globalDataPath = configPath
+	store.CaptureStalenessSnapshot([]string{configPath})
+
+	// Pin the slot the way UpdatePreferredModel/OverridePreferredModel do.
+	store.OverridePreferredModel(SelectedModelTypeCompaction, SelectedModel{Provider: "openai", Model: "gpt-x"})
+	_, pinned := store.overrides.Models[SelectedModelTypeCompaction]
+	require.True(t, pinned)
+
+	require.NoError(t, store.RemoveConfigField(ScopeGlobal, "models.compaction"))
+
+	_, pinned = store.overrides.Models[SelectedModelTypeCompaction]
+	require.False(t, pinned, "removing the slot must drop the pin")
+	_, present := store.Config().Models[SelectedModelTypeCompaction]
+	require.False(t, present, "the slot must be gone from the reloaded config")
+
+	// Removing a nested key under a slot must not unpin the whole slot.
+	store.OverridePreferredModel(SelectedModelTypeCompaction, SelectedModel{Provider: "openai", Model: "gpt-x"})
+	require.NoError(t, store.RemoveConfigField(ScopeGlobal, "models.compaction.reasoning_effort"))
+	_, pinned = store.overrides.Models[SelectedModelTypeCompaction]
+	require.True(t, pinned, "a nested key removal keeps the slot pinned")
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -23,6 +24,9 @@ type ModelType int
 const (
 	ModelTypeLarge ModelType = iota
 	ModelTypeSmall
+	// ModelTypeCompaction is the optional model used by the context
+	// compaction engine; unset means "follow the large model".
+	ModelTypeCompaction
 )
 
 // String returns the string representation of the [ModelType].
@@ -32,6 +36,8 @@ func (mt ModelType) String() string {
 		return "Large Task"
 	case ModelTypeSmall:
 		return "Small Task"
+	case ModelTypeCompaction:
+		return "Compaction"
 	default:
 		return "Unknown"
 	}
@@ -44,6 +50,8 @@ func (mt ModelType) Config() config.SelectedModelType {
 		return config.SelectedModelTypeLarge
 	case ModelTypeSmall:
 		return config.SelectedModelTypeSmall
+	case ModelTypeCompaction:
+		return config.SelectedModelTypeCompaction
 	default:
 		return ""
 	}
@@ -56,8 +64,22 @@ func (mt ModelType) Placeholder() string {
 		return largeModelInputPlaceholder
 	case ModelTypeSmall:
 		return smallModelInputPlaceholder
+	case ModelTypeCompaction:
+		return compactionModelInputPlaceholder
 	default:
 		return ""
+	}
+}
+
+// next returns the model type after mt in the Tab cycle.
+func (mt ModelType) next() ModelType {
+	switch mt {
+	case ModelTypeLarge:
+		return ModelTypeSmall
+	case ModelTypeSmall:
+		return ModelTypeCompaction
+	default:
+		return ModelTypeLarge
 	}
 }
 
@@ -65,6 +87,7 @@ const (
 	onboardingModelInputPlaceholder = "Find your fave"
 	largeModelInputPlaceholder      = "Choose a model for large, complex tasks"
 	smallModelInputPlaceholder      = "Choose a model for small, simple tasks"
+	compactionModelInputPlaceholder = "Choose a model for context compaction"
 )
 
 // ModelsID is the identifier for the model selection dialog.
@@ -202,6 +225,14 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 
 			isEdit := key.Matches(msg, m.keyMap.Edit)
 
+			if modelItem.followLarge {
+				// "Same as the large model": clear the compaction slot.
+				return ActionSelectModel{
+					ModelType:   modelItem.SelectedModelType(),
+					FollowLarge: true,
+				}
+			}
+
 			return ActionSelectModel{
 				Provider:       modelItem.prov,
 				Model:          modelItem.SelectedModel(),
@@ -212,11 +243,7 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 			if m.isOnboarding {
 				break
 			}
-			if m.modelType == ModelTypeLarge {
-				m.modelType = ModelTypeSmall
-			} else {
-				m.modelType = ModelTypeLarge
-			}
+			m.modelType = m.modelType.next()
 			if err := m.setProviderItems(); err != nil {
 				return util.ReportError(err)
 			}
@@ -239,24 +266,29 @@ func (m *Models) Cursor() *tea.Cursor {
 	return InputCursor(m.com.Styles, m.input.Cursor())
 }
 
+// SetModelType switches the dialog to the given model type (e.g. to open it
+// directly on the compaction slot).
+func (m *Models) SetModelType(mt ModelType) error {
+	if m.isOnboarding {
+		return nil
+	}
+	m.modelType = mt
+	return m.setProviderItems()
+}
+
 // modelTypeRadioView returns the radio view for model type selection.
 func (m *Models) modelTypeRadioView() string {
 	t := m.com.Styles
 	textStyle := t.Radio.Label
-	largeRadioStyle := t.Radio.Off
-	smallRadioStyle := t.Radio.Off
-	if m.modelType == ModelTypeLarge {
-		largeRadioStyle = t.Radio.On
-	} else {
-		smallRadioStyle = t.Radio.On
+	var parts []string
+	for _, mt := range []ModelType{ModelTypeLarge, ModelTypeSmall, ModelTypeCompaction} {
+		radioStyle := t.Radio.Off
+		if m.modelType == mt {
+			radioStyle = t.Radio.On
+		}
+		parts = append(parts, radioStyle.Padding(0, 1).Render()+textStyle.Render(mt.String()))
 	}
-
-	largeRadio := largeRadioStyle.Padding(0, 1).Render()
-	smallRadio := smallRadioStyle.Padding(0, 1).Render()
-
-	return fmt.Sprintf("%s%s  %s%s",
-		largeRadio, textStyle.Render(ModelTypeLarge.String()),
-		smallRadio, textStyle.Render(ModelTypeSmall.String()))
+	return strings.Join(parts, "  ")
 }
 
 // Draw implements [Dialog].
@@ -482,6 +514,18 @@ func (m *Models) setProviderItems() error {
 
 		if len(recentGroup.Items) > 0 {
 			groups = append([]ModelGroup{recentGroup}, groups...)
+		}
+	}
+
+	// The compaction slot is optional: offer "same as the large model" as
+	// the first choice, selected when the slot is unset.
+	if m.modelType == ModelTypeCompaction && !m.isOnboarding {
+		defaultGroup := NewModelGroup(t, "Default", false)
+		followItem := NewFollowLargeModelItem(t)
+		defaultGroup.AppendItems(followItem)
+		groups = append([]ModelGroup{defaultGroup}, groups...)
+		if _, configured := cfg.Models[selectedType]; !configured || selectedItemID == "" {
+			selectedItemID = followItem.ID()
 		}
 	}
 

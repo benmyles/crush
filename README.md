@@ -633,6 +633,35 @@ option notifications disabled
 `auto` uses native notifications locally and OSC notifications over SSH when
 supported.
 
+### Context compaction
+
+Long sessions never hit the context wall: when a conversation approaches the
+model's window, Crush compacts the older part of it into a structured checkpoint
+plus a deterministic ledger (your instructions, files, commands, errors), a
+transcript map, budgeted verbatim extracts, a working-set snapshot, and an
+exact-recovery note. Nothing is thrown away — the raw messages stay in the
+session store and the agent can search them (`recall_grep`), expand a summary
+(`recall_expand`), or compact early at a natural milestone (`compact_context`).
+
+Everything about it is configurable from the TUI: open the command palette and
+choose **Compaction Settings** to toggle the engine, tune token budgets, pick
+the coverage-audit mode, or reset to defaults; press <kbd>ctrl+l</kbd> and
+<kbd>tab</kbd> to the **Compaction** slot (or run **Select Compaction Model**)
+to have compaction run on a cheaper model than your coding model — or keep
+"Same as the large model", the default.
+
+The same settings live in `crush.json` under `options.compaction` and
+`models.compaction`, or in `crushrc`:
+
+```bash
+option compaction reserve-tokens 32768     # headroom before a blocking compaction
+option compaction keep-recent-tokens 30000 # recent tokens kept verbatim
+option compaction verify checks            # judge (model audit) | checks | off
+model compaction openai/gpt-4o-mini --reasoning-effort low
+```
+
+See the [config reference](./docs/config/README.md#option-compaction) for every key.
+
 ### Initialization
 
 When you initialize a project, Crush analyzes your codebase and creates

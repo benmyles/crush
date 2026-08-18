@@ -42,6 +42,31 @@ type ActionSelectModel struct {
 	Model          config.SelectedModel
 	ModelType      config.SelectedModelType
 	ReAuthenticate bool
+	// FollowLarge clears an optional slot (the compaction model) so it
+	// follows the large model again. Provider/Model are empty when set.
+	FollowLarge bool
+}
+
+// ActionOpenCompactionModel opens the model picker on the compaction slot.
+type ActionOpenCompactionModel struct{}
+
+// ActionSetCompactionOption writes one options.compaction field. Key is the
+// JSON key (e.g. "reserve_tokens"); Message is shown on success.
+type ActionSetCompactionOption struct {
+	Key     string
+	Value   any
+	Message string
+}
+
+// ActionResetCompactionOptions removes the whole options.compaction block so
+// every setting returns to its default.
+type ActionResetCompactionOptions struct{}
+
+// ActionUpdateCompactionModel rewrites the compaction model selection (e.g.
+// with a new reasoning effort or thinking flag).
+type ActionUpdateCompactionModel struct {
+	Model   config.SelectedModel
+	Message string
 }
 
 // Messages for commands

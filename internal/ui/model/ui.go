@@ -2031,6 +2031,43 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return util.NewInfoMsg("Reasoning effort set to " + msg.Effort)
 		}))
 		m.dialog.CloseDialog(dialog.ReasoningID)
+	case dialog.ActionOpenCompactionModel:
+		if cmd := m.openModelsDialogFor(dialog.ModelTypeCompaction); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case dialog.ActionSetCompactionOption:
+		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.compaction."+msg.Key, msg.Value); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.refreshCompactionSettingsDialog()
+		if msg.Message != "" {
+			cmds = append(cmds, util.CmdHandler(util.NewInfoMsg(msg.Message)))
+		}
+	case dialog.ActionResetCompactionOptions:
+		if err := m.com.Workspace.RemoveConfigField(config.ScopeGlobal, "options.compaction"); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.refreshCompactionSettingsDialog()
+		cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Compaction settings reset to defaults")))
+	case dialog.ActionUpdateCompactionModel:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
+			break
+		}
+		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeCompaction, msg.Model); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.refreshCompactionSettingsDialog()
+		message := msg.Message
+		cmds = append(cmds, m.updateAgentModelCmd(func() tea.Msg {
+			if err := m.com.Workspace.UpdateAgentModel(context.TODO()); err != nil {
+				return util.ReportError(err)
+			}
+			return util.NewInfoMsg(message)
+		}))
 	case dialog.ActionPermissionResponse:
 		m.dialog.CloseDialog(dialog.PermissionsID)
 		switch msg.Action {
@@ -2251,6 +2288,21 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		return util.ReportError(errors.New("configuration not found"))
 	}
 
+	if msg.FollowLarge {
+		// Clear the optional slot so it follows the large model again.
+		if err := m.com.Workspace.RemoveConfigField(config.ScopeGlobal, "models."+string(msg.ModelType)); err != nil {
+			return util.ReportError(err)
+		}
+		m.dialog.CloseDialog(dialog.ModelsID)
+		m.refreshCompactionSettingsDialog()
+		return m.updateAgentModelCmd(func() tea.Msg {
+			if err := m.com.Workspace.UpdateAgentModel(context.TODO()); err != nil {
+				return util.ReportError(err)
+			}
+			return util.NewInfoMsg(stringext.Capitalize(string(msg.ModelType)) + " model now follows the large model")
+		})
+	}
+
 	var (
 		providerID   = msg.Model.Provider
 		isCopilot    = providerID == string(catwalk.InferenceProviderCopilot)
@@ -2320,6 +2372,9 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	m.dialog.CloseDialog(dialog.APIKeyInputID)
 	m.dialog.CloseDialog(dialog.OAuthID)
 	m.dialog.CloseDialog(dialog.ModelsID)
+	if msg.ModelType == config.SelectedModelTypeCompaction {
+		m.refreshCompactionSettingsDialog()
+	}
 
 	if isOnboarding {
 		m.setState(uiLanding, uiFocusEditor)
@@ -4318,6 +4373,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openNotificationsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.CompactionSettingsID:
+		if cmd := m.openCompactionSettingsDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.FilePickerID:
 		if cmd := m.openFilesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -4348,7 +4407,19 @@ func (m *UI) openQuitDialog() tea.Cmd {
 
 // openModelsDialog opens the models dialog.
 func (m *UI) openModelsDialog() tea.Cmd {
+	return m.openModelsDialogFor(dialog.ModelTypeLarge)
+}
+
+// openModelsDialogFor opens the models dialog on the given model slot (large,
+// small, or compaction). An already-open dialog is switched to that slot and
+// brought to front.
+func (m *UI) openModelsDialogFor(modelType dialog.ModelType) tea.Cmd {
 	if m.dialog.ContainsDialog(dialog.ModelsID) {
+		if existing, ok := m.dialog.Dialog(dialog.ModelsID).(*dialog.Models); ok && modelType != dialog.ModelTypeLarge {
+			if err := existing.SetModelType(modelType); err != nil {
+				return util.ReportError(err)
+			}
+		}
 		// Bring to front
 		m.dialog.BringToFront(dialog.ModelsID)
 		return nil
@@ -4359,10 +4430,33 @@ func (m *UI) openModelsDialog() tea.Cmd {
 	if err != nil {
 		return util.ReportError(err)
 	}
+	if modelType != dialog.ModelTypeLarge {
+		if err := modelsDialog.SetModelType(modelType); err != nil {
+			return util.ReportError(err)
+		}
+	}
 
 	m.dialog.OpenDialog(modelsDialog)
 
 	return nil
+}
+
+// openCompactionSettingsDialog opens the compaction settings dialog.
+func (m *UI) openCompactionSettingsDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.CompactionSettingsID) {
+		m.dialog.BringToFront(dialog.CompactionSettingsID)
+		return nil
+	}
+	m.dialog.OpenDialog(dialog.NewCompactionSettings(m.com))
+	return nil
+}
+
+// refreshCompactionSettingsDialog rebuilds the compaction settings rows after
+// a config write, when the dialog is open.
+func (m *UI) refreshCompactionSettingsDialog() {
+	if d, ok := m.dialog.Dialog(dialog.CompactionSettingsID).(*dialog.CompactionSettings); ok && d != nil {
+		d.Refresh()
+	}
 }
 
 // openCommandsDialog opens the commands dialog.

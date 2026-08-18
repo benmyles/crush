@@ -563,7 +563,9 @@ search them with `recall_grep` and expand a summary with `recall_expand`, and it
 can compact early at a milestone with `compact_context`. These keys map onto
 `options.compaction` in `crush.json`. The model that writes the checkpoint is
 the `compaction` model slot when set (`model compaction <provider>/<id>`),
-otherwise the large model.
+otherwise the large model. All of these are also editable in the TUI: open the
+command palette and choose **Compaction Settings** (or **Select Compaction
+Model**, which is the **Compaction** tab of the <kbd>ctrl+l</kbd> model picker).
 
 ```text
 Usage:

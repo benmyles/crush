@@ -32,8 +32,8 @@ deferred. Sections marked *Status:* further down record the per-feature outcome.
 | Optional embedding index + `recall_query` | **Deferred** (no schema, no tool). |
 | Large-file references + exploration summaries | **Deferred** (no schema). |
 | Pubsub compaction lifecycle events / TUI footer | **Deferred**. The composed summary is stored as a summary message so the chat renders it. |
-| Configurable summarizer model / reasoning | Shipped as the optional `models.compaction` slot (`model compaction <provider>/<id> [--reasoning-effort …]` in crushrc). Unset → the active large model. |
-| Config (`options.compaction`, `option compaction …` in crushrc) | Shipped; see §6.4. |
+| Configurable summarizer model / reasoning | Shipped as the optional `models.compaction` slot (`model compaction <provider>/<id> [--reasoning-effort …]` in crushrc, the **Compaction** slot of the TUI model picker, or `models.compaction` in `crush.json`). Unset → the active large model. |
+| Config (`options.compaction`, `option compaction …` in crushrc) | Shipped; see §6.4. Also editable in the TUI: the **Compaction Settings** dialog (command palette) edits every `options.compaction` key and the compaction model's reasoning/thinking, and the model picker (`ctrl+l`) has a **Compaction** slot with a "Same as the large model" default. |
 
 ---
 

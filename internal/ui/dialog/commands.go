@@ -531,6 +531,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	notificationLabel := "Notification Style"
 	commands = append(commands, NewCommandItem(c.com.Styles, "select_notifications", notificationLabel, "", ActionOpenDialog{DialogID: NotificationsID}))
 
+	// Context compaction: the engine settings dialog and a shortcut to the
+	// compaction model slot of the model picker.
+	commands = append(commands,
+		NewCommandItem(c.com.Styles, "compaction_settings", "Compaction Settings", "", ActionOpenDialog{DialogID: CompactionSettingsID}).WithAliases("compaction", "summarization"),
+		NewCommandItem(c.com.Styles, "select_compaction_model", "Select Compaction Model", "", ActionOpenCompactionModel{}),
+	)
+
 	commands = append(
 		commands,
 		NewCommandItem(c.com.Styles, "toggle_yolo", "Toggle Yolo Mode", "ctrl+y", ActionToggleYoloMode{}),
