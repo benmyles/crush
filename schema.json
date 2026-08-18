@@ -102,11 +102,6 @@
           "description": "Per-turn transcript map",
           "default": true
         },
-        "git_snapshot": {
-          "type": "boolean",
-          "description": "Record git state in the ledger",
-          "default": true
-        },
         "working_set_files": {
           "type": "integer",
           "description": "Recently modified files snapshotted after compaction; 0 disables",
@@ -119,18 +114,8 @@
         },
         "extracts_decay": {
           "type": "number",
-          "description": "Ratio multiplier for re-compressing prior extracts; 0 disables",
+          "description": "Ratio multiplier for re-compressing prior extracts; \u003c=0 disables",
           "default": 0.5
-        },
-        "embeddings": {
-          "type": "boolean",
-          "description": "Enable the optional dense retrieval index",
-          "default": false
-        },
-        "large_file_threshold": {
-          "type": "integer",
-          "description": "Token count above which file results become references + exploration summaries",
-          "default": 25000
         },
         "parallel_block_threshold": {
           "type": "integer",

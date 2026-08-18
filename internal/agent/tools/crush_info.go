@@ -398,6 +398,7 @@ func writeOptions(b *strings.Builder, cfg *config.ConfigStore) {
 	opts = append(opts, kv{"auto_lsp", fmt.Sprintf("%v", autoLSP)})
 	autoSummarize := !c.Options.DisableAutoSummarize
 	opts = append(opts, kv{"auto_summarize", fmt.Sprintf("%v", autoSummarize)})
+	opts = append(opts, kv{"compaction_enabled", fmt.Sprintf("%v", config.CompactionEnabled(c))})
 
 	slices.SortFunc(opts, func(a, b kv) int { return strings.Compare(a.key, b.key) })
 	b.WriteString("[options]\n")

@@ -1099,7 +1099,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				// unit before the hard threshold, and suppress it mid-derivation.
 				if a.compaction != nil && a.cfg != nil && !a.disableAutoSummarize {
 					cfg := config.ResolveCompactionConfig(a.cfg.Config())
-					if cfg.Enabled {
+					if cfg.Enabled != nil && *cfg.Enabled {
 						recentMsgs, _ := a.messages.List(ctx, call.SessionID)
 						decision := compaction.DecideTrigger(compaction.TriggerInput{
 							UsageTokens:           tokens,

@@ -27,9 +27,11 @@ const (
 // legacy single-shot summarization path (gated by DisableAutoSummarize for
 // back-compat).
 type CompactionConfig struct {
-	// Enabled controls whether the compaction engine runs. When false,
-	// Crush uses the legacy Summarize path. Defaults to true.
-	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Enable the context compaction engine,default=true"`
+	// Enabled controls whether the compaction engine runs. When nil/false,
+	// Crush uses the legacy Summarize path. Defaults to true. Uses *bool so
+	// a partial config block (only reserve_tokens) does not silently disable
+	// the engine.
+	Enabled *bool `json:"enabled,omitempty" jsonschema:"description=Enable the context compaction engine,default=true"`
 
 	// ReserveTokens is the hard-context headroom kept free before
 	// triggering a blocking compaction. Defaults to 16384.
@@ -67,15 +69,12 @@ type CompactionConfig struct {
 	// Defaults to "judge".
 	Verify string `json:"verify,omitempty" jsonschema:"description=Checkpoint coverage audit mode,enum=judge,enum=checks,enum=off,default=judge"`
 
-	// Ledger enables the deterministic session ledger. Defaults to true.
-	Ledger bool `json:"ledger,omitempty" jsonschema:"description=Deterministic session ledger,default=true"`
+	// Ledger enables the deterministic session ledger. *bool so a partial
+	// block does not silently disable it. Defaults to true.
+	Ledger *bool `json:"ledger,omitempty" jsonschema:"description=Deterministic session ledger,default=true"`
 
 	// TranscriptMap enables the per-turn transcript map. Defaults to true.
-	TranscriptMap bool `json:"transcript_map,omitempty" jsonschema:"description=Per-turn transcript map,default=true"`
-
-	// GitSnapshot records branch/head/status/diff-stat in the ledger.
-	// Defaults to true.
-	GitSnapshot bool `json:"git_snapshot,omitempty" jsonschema:"description=Record git state in the ledger,default=true"`
+	TranscriptMap *bool `json:"transcript_map,omitempty" jsonschema:"description=Per-turn transcript map,default=true"`
 
 	// WorkingSetFiles is the number of recently-modified files snapshotted
 	// after compaction. 0 disables the snapshot. Defaults to 3.
@@ -86,21 +85,12 @@ type CompactionConfig struct {
 	WorkingSetMaxCharsPerFile int `json:"working_set_max_chars_per_file,omitempty" jsonschema:"description=Per-file cap for the working-set snapshot,default=12000"`
 
 	// ExtractsDecay is the ratio multiplier for re-compressing the previous
-	// compaction's extracts. 0 disables the older lane. Defaults to 0.5.
-	ExtractsDecay float64 `json:"extracts_decay,omitempty" jsonschema:"description=Ratio multiplier for re-compressing prior extracts; 0 disables,default=0.5"`
-
-	// Embeddings enables the optional dense retrieval index. Defaults to
-	// false; enabling requires a configured embedding model.
-	Embeddings bool `json:"embeddings,omitempty" jsonschema:"description=Enable the optional dense retrieval index,default=false"`
-
-	// LargeFileThreshold is the token count above which a file result is
-	// stored as a reference + exploration summary instead of inlined.
-	// Defaults to 25000.
-	LargeFileThreshold int64 `json:"large_file_threshold,omitempty" jsonschema:"description=Token count above which file results become references + exploration summaries,default=25000"`
+	// compaction's extracts. <= 0 disables the older lane. Defaults to 0.5.
+	ExtractsDecay float64 `json:"extracts_decay,omitempty" jsonschema:"description=Ratio multiplier for re-compressing prior extracts; <=0 disables,default=0.5"`
 
 	// ParallelBlockThreshold is the span size (in tokens) above which the
 	// checkpoint lane splits into parallel block summaries. 0 disables
-	// parallel compaction. Defaults to 0 (Phase 3 enables it).
+	// parallel compaction. Defaults to 0.
 	ParallelBlockThreshold int64 `json:"parallel_block_threshold,omitempty" jsonschema:"description=Span size in tokens above which the checkpoint lane parallelizes; 0 disables,default=0"`
 }
 
@@ -108,7 +98,7 @@ type CompactionConfig struct {
 // engine. These match the values documented in docs/compaction-plan.md.
 func DefaultCompactionConfig() CompactionConfig {
 	return CompactionConfig{
-		Enabled:                   true,
+		Enabled:                   ptrBool(true),
 		ReserveTokens:             16384,
 		KeepRecentTokens:          20000,
 		SoftThresholdFraction:     0.7,
@@ -117,17 +107,16 @@ func DefaultCompactionConfig() CompactionConfig {
 		MinSummaryTokens:          6000,
 		SummaryReasoning:          "max",
 		Verify:                    string(VerificationJudge),
-		Ledger:                    true,
-		TranscriptMap:             true,
-		GitSnapshot:               true,
+		Ledger:                    ptrBool(true),
+		TranscriptMap:             ptrBool(true),
 		WorkingSetFiles:           3,
 		WorkingSetMaxCharsPerFile: 12000,
 		ExtractsDecay:             0.5,
-		Embeddings:                false,
-		LargeFileThreshold:        25000,
 		ParallelBlockThreshold:    0,
 	}
 }
+
+func ptrBool(v bool) *bool { return &v }
 
 // ResolveCompactionConfig returns the effective compaction configuration for a
 // published Config, applying defaults and reconciling the legacy
@@ -141,30 +130,59 @@ func ResolveCompactionConfig(cfg *Config) CompactionConfig {
 	if opts == nil || opts.Compaction == nil {
 		resolved := DefaultCompactionConfig()
 		if opts != nil && opts.DisableAutoSummarize {
-			resolved.Enabled = false
+			resolved.Enabled = ptrBool(false)
+		}
+		return resolved
+	}
+	// A fully-zero Compaction block (all nil/zero) means "use defaults" so
+	// an empty options.compaction = {} does not disable everything.
+	if isZeroCompactionBlock(opts.Compaction) {
+		resolved := DefaultCompactionConfig()
+		if opts.DisableAutoSummarize {
+			resolved.Enabled = ptrBool(false)
 		}
 		return resolved
 	}
 	resolved := *opts.Compaction
 	applyCompactionDefaults(&resolved)
-	// An explicit Compaction block is authoritative; DisableAutoSummarize is
-	// ignored once the user has opted into the new config shape.
 	return resolved
+}
+
+// isZeroCompactionBlock reports whether every field is nil/zero, meaning the
+// user wrote options.compaction = {} or only set fields that are zero-valued.
+func isZeroCompactionBlock(c *CompactionConfig) bool {
+	return c.Enabled == nil &&
+		c.ReserveTokens == 0 &&
+		c.KeepRecentTokens == 0 &&
+		c.SoftThresholdFraction == 0 &&
+		c.BudgetFraction == 0 &&
+		c.MaxSummaryTokens == 0 &&
+		c.MinSummaryTokens == 0 &&
+		c.SummaryModel == "" &&
+		c.SummaryReasoning == "" &&
+		c.Verify == "" &&
+		c.Ledger == nil &&
+		c.TranscriptMap == nil &&
+		c.WorkingSetFiles == 0 &&
+		c.WorkingSetMaxCharsPerFile == 0 &&
+		c.ExtractsDecay == 0 &&
+		c.ParallelBlockThreshold == 0
 }
 
 // applyCompactionDefaults fills zero values with the documented defaults
 // without overwriting explicit non-zero settings.
 func applyCompactionDefaults(c *CompactionConfig) {
 	d := DefaultCompactionConfig()
-	// Enabled defaults to true only when the struct was allocated (non-nil
-	// pointer) but left zero. A user setting enabled=false explicitly also
-	// leaves the bool false, so we cannot distinguish "unset" from "false"
-	// on a plain bool. To preserve the ability to disable, we treat a
-	// fully-zero CompactionConfig (all fields zero) as "use defaults" and
-	// any non-zero field as "respect the explicit Enabled value".
-	if isZeroCompaction(c) {
-		*c = d
-		return
+	// *bool fields: nil means unset -> use the default. Explicit false is
+	// respected (the user disabled the feature).
+	if c.Enabled == nil {
+		c.Enabled = d.Enabled
+	}
+	if c.Ledger == nil {
+		c.Ledger = d.Ledger
+	}
+	if c.TranscriptMap == nil {
+		c.TranscriptMap = d.TranscriptMap
 	}
 	if c.ReserveTokens == 0 {
 		c.ReserveTokens = d.ReserveTokens
@@ -197,34 +215,9 @@ func applyCompactionDefaults(c *CompactionConfig) {
 	if c.WorkingSetMaxCharsPerFile == 0 {
 		c.WorkingSetMaxCharsPerFile = d.WorkingSetMaxCharsPerFile
 	}
-	if c.ExtractsDecay == 0 {
-		c.ExtractsDecay = d.ExtractsDecay
-	}
-	if c.LargeFileThreshold == 0 {
-		c.LargeFileThreshold = d.LargeFileThreshold
-	}
-}
-
-func isZeroCompaction(c *CompactionConfig) bool {
-	return c.Enabled == false &&
-		c.ReserveTokens == 0 &&
-		c.KeepRecentTokens == 0 &&
-		c.SoftThresholdFraction == 0 &&
-		c.BudgetFraction == 0 &&
-		c.MaxSummaryTokens == 0 &&
-		c.MinSummaryTokens == 0 &&
-		c.SummaryModel == "" &&
-		c.SummaryReasoning == "" &&
-		c.Verify == "" &&
-		c.Ledger == false &&
-		c.TranscriptMap == false &&
-		c.GitSnapshot == false &&
-		c.WorkingSetFiles == 0 &&
-		c.WorkingSetMaxCharsPerFile == 0 &&
-		c.ExtractsDecay == 0 &&
-		c.Embeddings == false &&
-		c.LargeFileThreshold == 0 &&
-		c.ParallelBlockThreshold == 0
+	// ExtractsDecay: 0 is a valid "disable" value, so we do NOT default it
+	// here. The default (0.5) is applied only when the whole config block is
+	// nil/empty (handled in ResolveCompactionConfig via DefaultCompactionConfig).
 }
 
 // ParseSummaryModel splits a "provider/model-id" string into its parts. The
@@ -248,5 +241,5 @@ func CompactionEnabled(cfg *Config) bool {
 	if cfg == nil {
 		return true
 	}
-	return ResolveCompactionConfig(cfg).Enabled
+	return ResolveCompactionConfig(cfg).Enabled != nil && *ResolveCompactionConfig(cfg).Enabled
 }

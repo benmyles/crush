@@ -108,9 +108,11 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	extractsEnabled := req.Cfg.ExtractsDecay >= 0
 	// The older lane needs a previous extracts span to re-compress.
 	olderLaneEnabled := extractsEnabled && req.Cfg.ExtractsDecay > 0 && e.hasOlderExtracts(ctx, req.SessionID)
+	ledgerEnabled := boolVal(req.Cfg.Ledger)
+	mapEnabled := boolVal(req.Cfg.TranscriptMap)
 	plan := PlanBudget(BudgetInputFromConfig(req.Cfg, req.ConsumerContextWindow, req.SystemPromptTokens, req.SummarizerContextWindow, req.SummarizerMaxOutputTokens, req.KeepRecentTokens, req.ReserveTokens, BudgetFeatures{
-		Ledger:        req.Cfg.Ledger,
-		TranscriptMap: req.Cfg.TranscriptMap,
+		Ledger:        ledgerEnabled,
+		TranscriptMap: mapEnabled,
 		Restore:       restoreEnabled,
 		Extracts:      extractsEnabled,
 		OlderLane:     olderLaneEnabled,
@@ -119,12 +121,12 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	// 3. Deterministic ledger and transcript map.
 	ledger := BuildSessionLedger(span, DefaultLedgerLimits)
 	ledgerText := ""
-	if req.Cfg.Ledger {
+	if ledgerEnabled {
 		ledgerText = RenderSessionLedger(ledger, plan.Ledger.MaxChars)
 	}
 	tmap := BuildTranscriptMap(span, 120)
 	mapText := ""
-	if req.Cfg.TranscriptMap {
+	if mapEnabled {
 		mapText = RenderTranscriptMap(tmap, plan.Map.MaxChars)
 	}
 

@@ -24,3 +24,9 @@ func EstimateTokens(chars int) int {
 	}
 	return (chars + CharsPerToken - 1) / CharsPerToken
 }
+
+// boolVal dereferences a *bool, returning false when nil. Used to read the
+// *bool config fields (Enabled, Ledger, TranscriptMap) that are nil when unset.
+func boolVal(p *bool) bool {
+	return p != nil && *p
+}
