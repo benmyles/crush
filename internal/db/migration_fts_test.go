@@ -28,7 +28,7 @@ func TestMigration_FTSWorksOnPopulatedDB(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
-	_, err = conn.Exec(`CREATE TABLE sessions (
+	_, err = conn.ExecContext(context.Background(), `CREATE TABLE sessions (
 		id TEXT PRIMARY KEY,
 		parent_session_id TEXT,
 		title TEXT NOT NULL,
@@ -40,7 +40,7 @@ func TestMigration_FTSWorksOnPopulatedDB(t *testing.T) {
 		created_at INTEGER NOT NULL
 	);`)
 	require.NoError(t, err)
-	_, err = conn.Exec(`CREATE TABLE messages (
+	_, err = conn.ExecContext(context.Background(), `CREATE TABLE messages (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
 		role TEXT NOT NULL,
@@ -52,7 +52,7 @@ func TestMigration_FTSWorksOnPopulatedDB(t *testing.T) {
 		FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
 	);`)
 	require.NoError(t, err)
-	_, err = conn.Exec(`CREATE TABLE files (
+	_, err = conn.ExecContext(context.Background(), `CREATE TABLE files (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
 		path TEXT NOT NULL,
@@ -66,9 +66,9 @@ func TestMigration_FTSWorksOnPopulatedDB(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert a session and a message with searchable text in `parts`.
-	_, err = conn.Exec(`INSERT INTO sessions (id, title, updated_at, created_at) VALUES ('s1', 'pre', 1, 1);`)
+	_, err = conn.ExecContext(context.Background(), `INSERT INTO sessions (id, title, updated_at, created_at) VALUES ('s1', 'pre', 1, 1);`)
 	require.NoError(t, err)
-	_, err = conn.Exec(`INSERT INTO messages (id, session_id, role, parts, created_at, updated_at) VALUES ('m1', 's1', 'user', '[{"type":"text","text":"findme_unique_token_in_parts"}]', 2, 2);`)
+	_, err = conn.ExecContext(context.Background(), `INSERT INTO messages (id, session_id, role, parts, created_at, updated_at) VALUES ('m1', 's1', 'user', '[{"type":"text","text":"findme_unique_token_in_parts"}]', 2, 2);`)
 	require.NoError(t, err)
 
 	// Run all migrations on top of the pre-existing schema. This is the
@@ -91,7 +91,7 @@ func TestMigration_FTSWorksOnPopulatedDB(t *testing.T) {
 	require.Equal(t, 1, hit, "pre-migration message must be searchable via FTS after migration")
 
 	// Inserting a new message after migration must keep FTS in sync.
-	_, err = conn.Exec(`INSERT INTO messages (id, session_id, role, parts, created_at, updated_at) VALUES ('m2', 's1', 'assistant', '[{"type":"text","text":"post_migration_token"}]', 3, 3);`)
+	_, err = conn.ExecContext(context.Background(), `INSERT INTO messages (id, session_id, role, parts, created_at, updated_at) VALUES ('m2', 's1', 'assistant', '[{"type":"text","text":"post_migration_token"}]', 3, 3);`)
 	require.NoError(t, err)
 	err = conn.QueryRowContext(context.Background(),
 		`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'post_migration_token';`,

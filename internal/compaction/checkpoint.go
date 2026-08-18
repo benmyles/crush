@@ -158,7 +158,7 @@ func NormalizeCheckpointText(raw string) string {
 	if m := fence.FindStringSubmatch(text); len(m) > 1 {
 		text = strings.TrimSpace(m[1])
 	}
-	wrapped := regexp.MustCompile("(?is)^<checkpoint>\\s*(.*?)\\s*</checkpoint>$")
+	wrapped := regexp.MustCompile(`(?is)^<checkpoint>\s*(.*?)\s*</checkpoint>$`)
 	if m := wrapped.FindStringSubmatch(text); len(m) > 1 {
 		text = strings.TrimSpace(m[1])
 	}

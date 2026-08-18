@@ -29,6 +29,118 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "CompactionConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable the context compaction engine",
+          "default": true
+        },
+        "reserve_tokens": {
+          "type": "integer",
+          "description": "Hard-context headroom kept free before a blocking compaction",
+          "default": 16384
+        },
+        "keep_recent_tokens": {
+          "type": "integer",
+          "description": "Recent tokens retained verbatim outside the compacted span",
+          "default": 20000
+        },
+        "soft_threshold_fraction": {
+          "type": "number",
+          "description": "Fraction of the context window at which async compaction triggers",
+          "default": 0.7
+        },
+        "budget_fraction": {
+          "type": "number",
+          "description": "Fraction of the consumer model context window the compaction entry may use",
+          "default": 0.15
+        },
+        "max_summary_tokens": {
+          "type": "integer",
+          "description": "Hard cap on the compaction entry size",
+          "default": 48000
+        },
+        "min_summary_tokens": {
+          "type": "integer",
+          "description": "Floor for the compaction entry size",
+          "default": 6000
+        },
+        "summary_model": {
+          "type": "string",
+          "description": "Fixed provider/model-id for the checkpoint lane; empty follows the active model"
+        },
+        "summary_reasoning": {
+          "type": "string",
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "description": "Reasoning level for the checkpoint request",
+          "default": "max"
+        },
+        "verify": {
+          "type": "string",
+          "enum": [
+            "judge",
+            "checks",
+            "off"
+          ],
+          "description": "Checkpoint coverage audit mode",
+          "default": "judge"
+        },
+        "ledger": {
+          "type": "boolean",
+          "description": "Deterministic session ledger",
+          "default": true
+        },
+        "transcript_map": {
+          "type": "boolean",
+          "description": "Per-turn transcript map",
+          "default": true
+        },
+        "git_snapshot": {
+          "type": "boolean",
+          "description": "Record git state in the ledger",
+          "default": true
+        },
+        "working_set_files": {
+          "type": "integer",
+          "description": "Recently modified files snapshotted after compaction; 0 disables",
+          "default": 3
+        },
+        "working_set_max_chars_per_file": {
+          "type": "integer",
+          "description": "Per-file cap for the working-set snapshot",
+          "default": 12000
+        },
+        "extracts_decay": {
+          "type": "number",
+          "description": "Ratio multiplier for re-compressing prior extracts; 0 disables",
+          "default": 0.5
+        },
+        "embeddings": {
+          "type": "boolean",
+          "description": "Enable the optional dense retrieval index",
+          "default": false
+        },
+        "large_file_threshold": {
+          "type": "integer",
+          "description": "Token count above which file results become references + exploration summaries",
+          "default": 25000
+        },
+        "parallel_block_threshold": {
+          "type": "integer",
+          "description": "Span size in tokens above which the checkpoint lane parallelizes; 0 disables",
+          "default": 0
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Completions": {
       "properties": {
         "max_depth": {
@@ -488,8 +600,12 @@
         },
         "disable_auto_summarize": {
           "type": "boolean",
-          "description": "Disable automatic conversation summarization",
+          "description": "Disable automatic conversation summarization. Deprecated: use options.compaction.enabled instead.",
           "default": false
+        },
+        "compaction": {
+          "$ref": "#/$defs/CompactionConfig",
+          "description": "Context compaction engine settings"
         },
         "data_directory": {
           "type": "string",

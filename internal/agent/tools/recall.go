@@ -257,6 +257,9 @@ func NewRecallExpandTool(dbx db.DBTX, q db.Querier, sessionResolver func() strin
 				snippet := snippetFromParts(parts, 400)
 				fmt.Fprintf(&sb, "### %s (role=%s)\n%s\n\n", id, role, snippet)
 			}
+			if err := rows.Err(); err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("recall_expand row iteration failed: %v", err)), nil
+			}
 			if count == 0 {
 				sb.WriteString("(no raw messages could be loaded; they may have been deleted.)")
 			}
