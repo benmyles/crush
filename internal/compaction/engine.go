@@ -162,6 +162,10 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 				return text, err
 			},
 		})
+		// Fail closed: any block error aborts the compaction.
+		if len(par.Errors) > 0 {
+			return nil, fmt.Errorf("compaction: parallel block compaction failed: %v", par.Errors[0])
+		}
 		if par.Summary != "" {
 			history = par.Summary
 		}

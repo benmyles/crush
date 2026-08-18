@@ -1084,28 +1084,39 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 				tokens := currentSession.CompletionTokens + currentSession.PromptTokens
 				remaining := cw - tokens
-				var threshold int64
-				if cw > largeContextWindowThreshold {
-					threshold = largeContextWindowBuffer
+
+				// Single source of truth for the hard threshold: window - reserve.
+				// Fall back to the legacy constants when the compaction config is
+				// not enabled or reserve is unset.
+				var hardThreshold int64
+				var compactionCfg config.CompactionConfig
+				compactionEnabled := a.compaction != nil && a.cfg != nil && !a.disableAutoSummarize && config.CompactionEnabled(a.cfg.Config())
+				if compactionEnabled {
+					compactionCfg = config.ResolveCompactionConfig(a.cfg.Config())
+					hardThreshold = cw - compactionCfg.ReserveTokens
+				} else if cw > largeContextWindowThreshold {
+					hardThreshold = cw - largeContextWindowBuffer
 				} else {
-					threshold = int64(float64(cw) * smallContextWindowRatio)
+					hardThreshold = cw - int64(float64(cw)*smallContextWindowRatio)
 				}
-				if (remaining <= threshold) && !a.disableAutoSummarize {
+				if remaining <= hardThreshold && !a.disableAutoSummarize {
 					shouldSummarize = true
 					return true
 				}
-				// Structure-aware trigger: when the compaction engine is enabled,
-				// use the rubric to fire an async compaction at a closed reasoning
-				// unit before the hard threshold, and suppress it mid-derivation.
-				if a.compaction != nil && a.cfg != nil && !a.disableAutoSummarize {
-					cfg := config.ResolveCompactionConfig(a.cfg.Config())
-					if cfg.Enabled != nil && *cfg.Enabled {
+				// Structure-aware trigger: only consult the rubric when above the
+				// soft threshold, and use in-memory step messages (not a full DB
+				// read on every step) to avoid unnecessary I/O below the soft
+				// threshold.
+				if compactionEnabled {
+					softThreshold := int64(float64(cw) * compactionCfg.SoftThresholdFraction)
+					if tokens >= softThreshold {
+						// Only read messages when above the soft threshold, not on every step.
 						recentMsgs, _ := a.messages.List(ctx, call.SessionID)
 						decision := compaction.DecideTrigger(compaction.TriggerInput{
 							UsageTokens:           tokens,
 							ContextWindow:         cw,
-							ReserveTokens:         cfg.ReserveTokens,
-							SoftThresholdFraction: cfg.SoftThresholdFraction,
+							ReserveTokens:         compactionCfg.ReserveTokens,
+							SoftThresholdFraction: compactionCfg.SoftThresholdFraction,
 							Messages:              recentMsgs,
 						})
 						if decision.Reason == compaction.TriggerRubric || decision.Reason == compaction.TriggerSoft {

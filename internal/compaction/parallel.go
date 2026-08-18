@@ -37,10 +37,9 @@ type ParallelBlockResult struct {
 // knob) and higher throughput for very large spans, addressing the finding
 // that single-pass summarization attends poorly over 96k+ tokens.
 //
-// The merge is a simple concatenation with a light combine heading; the
-// caller (the engine) feeds the merged result into the checkpoint lane as
-// the "history" text, so the model still produces the final structured
-// checkpoint from the condensed material.
+// Fail-closed: any block error is fatal (the merge does not silently skip
+// failed blocks). Turn-prefix blocks are excluded from parallel summary;
+// they are passed separately to the checkpoint lane.
 func RunParallelBlockCompaction(ctx context.Context, in ParallelBlockInput) ParallelBlockResult {
 	if in.BlockCount <= 1 || len(in.Span.Blocks) == 0 {
 		// No parallelism needed.
@@ -52,8 +51,8 @@ func RunParallelBlockCompaction(ctx context.Context, in ParallelBlockInput) Para
 		return ParallelBlockResult{Summary: summary, BlockCount: 1}
 	}
 
-	// Split blocks into BlockCount contiguous chunks by block count, keeping
-	// turn boundaries intact where possible.
+	// Split history-segment blocks into BlockCount contiguous chunks by turn
+	// boundaries. Turn-prefix blocks are excluded (they are passed separately).
 	chunks := splitBlocksByTurns(in.Span, in.BlockCount)
 
 	type blockResult struct {
@@ -78,13 +77,19 @@ func RunParallelBlockCompaction(ctx context.Context, in ParallelBlockInput) Para
 	}
 	wg.Wait()
 
-	var summaries []string
+	// Fail closed: any block error is fatal.
 	var errs []error
 	for _, r := range results {
 		if r.err != nil {
 			errs = append(errs, r.err)
-			continue
 		}
+	}
+	if len(errs) > 0 {
+		return ParallelBlockResult{Errors: errs}
+	}
+
+	var summaries []string
+	for _, r := range results {
 		if strings.TrimSpace(r.summary) != "" {
 			summaries = append(summaries, r.summary)
 		}
@@ -93,36 +98,49 @@ func RunParallelBlockCompaction(ctx context.Context, in ParallelBlockInput) Para
 	return ParallelBlockResult{
 		Summary:    merged,
 		BlockCount: len(summaries),
-		Errors:     errs,
 	}
 }
 
-// splitBlocksByTurns splits the span's blocks into roughly n contiguous
-// chunks, breaking on turn boundaries so each chunk starts at a turn start.
+// splitBlocksByTurns splits the span's history-segment blocks into roughly n
+// contiguous chunks, breaking on turn boundaries so each chunk starts at a
+// turn start. Turn-prefix segment blocks are excluded (they are passed
+// separately to the checkpoint lane).
 func splitBlocksByTurns(span SpanModel, n int) [][]SpanBlock {
 	if n <= 0 {
 		n = 1
 	}
-	if len(span.Blocks) == 0 {
-		return nil
+	// Collect only history-segment turns; turn-prefix turns are excluded.
+	var historyTurns []SpanTurn
+	for _, t := range span.Turns {
+		if t.Segment == SegmentHistory {
+			historyTurns = append(historyTurns, t)
+		}
 	}
-	// Use turn boundaries from span.Turns to chunk.
-	turnCount := len(span.Turns)
-	if turnCount == 0 {
-		return [][]SpanBlock{span.Blocks}
+	if len(historyTurns) == 0 {
+		// Fallback: use all history-segment blocks directly.
+		var histBlocks []SpanBlock
+		for _, b := range span.Blocks {
+			if b.Segment == SegmentHistory {
+				histBlocks = append(histBlocks, b)
+			}
+		}
+		if len(histBlocks) == 0 {
+			return nil
+		}
+		return [][]SpanBlock{histBlocks}
 	}
-	chunkSize := (turnCount + n - 1) / n
+	chunkSize := (len(historyTurns) + n - 1) / n
 	if chunkSize < 1 {
 		chunkSize = 1
 	}
 	var chunks [][]SpanBlock
-	for start := 0; start < turnCount; start += chunkSize {
+	for start := 0; start < len(historyTurns); start += chunkSize {
 		end := start + chunkSize
-		if end > turnCount {
-			end = turnCount
+		if end > len(historyTurns) {
+			end = len(historyTurns)
 		}
-		firstTurn := span.Turns[start]
-		lastTurn := span.Turns[end-1]
+		firstTurn := historyTurns[start]
+		lastTurn := historyTurns[end-1]
 		startBlock := firstTurn.FirstBlock
 		endBlock := lastTurn.LastBlock
 		if startBlock < 0 {
