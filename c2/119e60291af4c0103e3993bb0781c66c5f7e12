@@ -1,0 +1,52 @@
+internal/db/migrations/20260818000000_add_compaction_engine.sql
+  s_b49145118e9070::t_4b9043e947e3e2 88-91,93,99-103,106,109,112-113
+  s_b49145118e9070::t_6fa6a2bbc8832a 11-13
+internal/db/sql/compaction.sql
+  s_b49145118e9070::t_b86c3a133038da 8,21,131-134
+  s_e82c6b847451e1::t_fe0bd2115e07d0 135
+internal/db/migration_fts_test.go
+  s_b49145118e9070::t_a6f51bc58684ee 76,80
+  s_b49145118e9070::t_9e859e88c5106e 75
+  s_b49145118e9070::t_ac25a0f926ad21 1-9,11-74,77-79,81-101
+  s_b49145118e9070::t_7b0819c6625825 10
+internal/db/compaction.sql.go
+  s_9829ab33b248cf::t_756c4938ff298d 146,159,161,165-181,191,211,238,255,321,335,351-374,424,451,555,576
+internal/db/db.go
+  s_9829ab33b248cf::t_a02a7445946f96 102-104,319-323,528,588
+internal/db/models.go
+  s_9829ab33b248cf::t_250b1c937335db 43-59,86
+internal/db/querier.go
+  s_9829ab33b248cf::t_54c39d215c007b 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "c2119e60291af4c0103e3993bb0781c66c5f7e12",
+  "prompts": {},
+  "sessions": {
+    "s_9829ab33b248cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e82ef020-5527-4337-9925-d675c6f720a7",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
