@@ -13,14 +13,14 @@ import (
 
 // newTestEngine opens a fresh migrated SQLite database and returns an Engine
 // backed by the real db.Queries, plus the Queries for direct row insertion.
-func newTestEngine(t *testing.T, completer Completer) (*Engine, *db.Queries) {
+func newTestEngine(t *testing.T, completer Completer, opts ...EngineOption) (*Engine, *db.Queries) {
 	t.Helper()
 	dataDir := t.TempDir()
 	conn, err := db.Connect(context.Background(), dataDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Release(dataDir) })
 	q := db.New(conn)
-	return NewEngine(q, completer), q
+	return NewEngine(q, completer, opts...), q
 }
 
 func mkMsg(id string, role message.MessageRole, isSummary bool) message.Message {

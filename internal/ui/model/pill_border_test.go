@@ -99,3 +99,72 @@ func TestEffectiveFocusedSectionFallsThrough(t *testing.T) {
 		})
 	}
 }
+
+// TestCompactPillAlwaysHasBorder guards the compaction pulse pill: while the
+// engine runs, the "Compacting" pill must render with its rounded border just
+// like the queue pill, and disappears again once the run finishes.
+func TestCompactPillAlwaysHasBorder(t *testing.T) {
+	u := newTestUI()
+	u.session = &session.Session{ID: "s1"}
+	u.compacting = true
+	u.updateLayoutAndSize()
+	u.renderPills()
+
+	if !strings.Contains(u.pillsView, "Compacting") {
+		t.Fatalf("expected the Compacting pill while compacting:\n%s", u.pillsView)
+	}
+	if !hasRoundedBorder(u.pillsView) {
+		t.Fatalf("expected a rounded border somewhere in pills view:\n%s", u.pillsView)
+	}
+
+	u.compacting = false
+	u.renderPills()
+	if strings.Contains(u.pillsView, "Compacting") {
+		t.Fatalf("the Compacting pill must clear when the run finishes:\n%s", u.pillsView)
+	}
+}
+
+// TestCompactPillShowsLiveTokenStats verifies the pulse pill appends the
+// live "↓ N" token stats once the engine publishes progress, in the range
+// pill style the user asked for (e.g. "↓ 34K").
+func TestCompactPillShowsLiveTokenStats(t *testing.T) {
+	u := newTestUI()
+	u.session = &session.Session{ID: "s1"}
+	u.compacting = true
+	u.compactTokensDown = 34_000
+	u.updateLayoutAndSize()
+	u.renderPills()
+
+	if !strings.Contains(u.pillsView, "Compacting · ↓ 34K") {
+		t.Fatalf("expected live token stats in the pill:\n%s", u.pillsView)
+	}
+
+	u.compactTokensDown = 0
+	u.renderPills()
+	if strings.Contains(u.pillsView, "↓") {
+		t.Fatalf("no stats suffix without progress data:\n%s", u.pillsView)
+	}
+}
+
+// TestShortTokens pins the compact token formatting.
+func TestShortTokens(t *testing.T) {
+	cases := map[int64]string{
+		0:         "0",
+		512:       "512",
+		999:       "999",
+		1_000:     "1.0K",
+		3_456:     "3.5K",
+		9_499:     "9.5K",
+		9_500:     "10K",
+		34_000:    "34K",
+		123_456:   "123K",
+		999_949:   "1000K",
+		1_000_000: "1.0M",
+		1_234_567: "1.2M",
+	}
+	for in, want := range cases {
+		if got := shortTokens(in); got != want {
+			t.Errorf("shortTokens(%d) = %q, want %q", in, got, want)
+		}
+	}
+}

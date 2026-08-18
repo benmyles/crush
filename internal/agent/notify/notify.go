@@ -25,6 +25,15 @@ const (
 	// finished. Message carries the error text when it failed, empty on
 	// success.
 	TypeAWSSSOAuthResult Type = "aws_sso_auth_result"
+	// TypeCompactionStarted indicates the compaction engine began running
+	// for a session (the TUI shows a "Compacting" pulse while it runs).
+	TypeCompactionStarted Type = "compaction_started"
+	// TypeCompactionFinished indicates the compaction engine finished
+	// (successfully or not) for a session.
+	TypeCompactionFinished Type = "compaction_finished"
+	// TypeCompactionProgress carries live token stats for a running
+	// compaction (TokensDown/TokensOut), used to update the TUI pulse pill.
+	TypeCompactionProgress Type = "compaction_progress"
 )
 
 // Notification represents a domain event published by the agent.
@@ -47,6 +56,12 @@ type Notification struct {
 	// AWSSOURL carries the SSO verification URL for TypeAWSSSOAuth once it
 	// appears in the refresh command's output.
 	AWSSOURL string
+	// TokensDown carries the live estimated tokens removed from the active
+	// context so far for TypeCompactionProgress.
+	TokensDown int64
+	// TokensOut carries the live estimated tokens composed into the summary
+	// so far for TypeCompactionProgress.
+	TokensOut int64
 }
 
 // RunComplete is the authoritative end-of-run signal for a session.

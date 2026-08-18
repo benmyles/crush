@@ -70,6 +70,13 @@ type CompactionResult struct {
 	Ledger            SessionLedger
 	Map               TranscriptMap
 	CoveredMessageIDs []string
+	// Overview is the deterministic structural digest of the checkpoint
+	// and lanes, rendered by the TUI as the "Compaction complete" tree.
+	Overview            CheckpointOverview
+	ExtractsTotalBlocks int
+	ExtractsKeptBlocks  int
+	OlderLaneCompressed bool
+	WorkingSetFiles     int
 }
 
 // Completer is the model-backed completion function the engine uses for the
@@ -88,6 +95,9 @@ type Engine struct {
 	// txDB, when set, is used to persist each summary node (summary row,
 	// causality edges, session pointer) in a single transaction.
 	txDB *sql.DB
+	// progressFn, when set, receives live progress snapshots at each lane
+	// completion (see WithProgress). Called synchronously on the Run path.
+	progressFn func(sessionID string, p Progress)
 }
 
 // EngineOption configures an Engine.
@@ -103,6 +113,30 @@ func WithTxDB(conn *sql.DB) EngineOption {
 	}
 }
 
+// Progress is a live progress report for a running compaction.
+type Progress struct {
+	// Phase names the lane or step that just completed (span, checkpoint,
+	// extracts, working_set, complete).
+	Phase string
+	// SpanTokens is the estimated token size of the span being compacted.
+	SpanTokens int64
+	// TokensOut is the estimated token size of the summary composed so far.
+	TokensOut int64
+	// TokensDown is the estimated tokens removed from the active context
+	// so far: SpanTokens minus TokensOut, clamped at zero.
+	TokensDown int64
+}
+
+// WithProgress registers a live progress callback. It is called with the
+// session id at each lane completion; every invocation is a snapshot of the
+// counters so far, never a delta. The callback is expected to be fast and
+// must not block the compaction.
+func WithProgress(fn func(sessionID string, p Progress)) EngineOption {
+	return func(e *Engine) {
+		e.progressFn = fn
+	}
+}
+
 // NewEngine creates an Engine backed by the given querier and completer.
 func NewEngine(q db.Querier, completer Completer, opts ...EngineOption) *Engine {
 	e := &Engine{q: q, completer: completer, now: func() int64 { return time.Now().Unix() }}
@@ -110,6 +144,24 @@ func NewEngine(q db.Querier, completer Completer, opts ...EngineOption) *Engine 
 		opt(e)
 	}
 	return e
+}
+
+// reportProgress forwards a progress snapshot to the registered callback.
+// A nil callback makes it a no-op so engine construction stays optional.
+func (e *Engine) reportProgress(sessionID, phase string, spanTokens, outTokens int64) {
+	if e.progressFn == nil {
+		return
+	}
+	down := spanTokens - outTokens
+	if down < 0 {
+		down = 0
+	}
+	e.progressFn(sessionID, Progress{
+		Phase:      phase,
+		SpanTokens: spanTokens,
+		TokensOut:  outTokens,
+		TokensDown: down,
+	})
 }
 
 // Run executes one compaction and persists the result. It is fail-closed: any
@@ -123,6 +175,19 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	// numbers session-absolute so the recovery note, ledger, and recall
 	// tools all reference the same ordinal space across compactions.
 	span := BuildSpanModel(SpanInput{History: req.History, TurnPrefix: req.TurnPrefix, SeqOffset: req.SeqOffset})
+
+	// The span size is known up front; every later progress report compares
+	// the composed-so-far summary against it to estimate tokens removed.
+	spanTokens := int64(EstimateTokens(span.Stats.Chars))
+	e.reportProgress(req.SessionID, "span", spanTokens, 0)
+
+	// Lane overview accumulates deterministically for the TUI tree.
+	var extractOverview struct {
+		Blocks    int
+		Kept      int
+		OlderLane bool
+	}
+	workingSetFiles := 0
 
 	// Load the previous active summary once: it provides the previous
 	// checkpoint (monotonic merge), the older extracts lane, and the DAG
@@ -236,6 +301,12 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 		checkpointText = e.runVerification(ctx, checkpointText, ledger)
 	}
 
+	// Checkpoint lane settled (including merge and verification): report the
+	// largest summary section. Ledger and map were deterministic from the
+	// start, so they count as composed already.
+	checkpointOut := int64(EstimateTokens(len(CompactionPreamble) + len(checkpointText) + len(ledgerText) + len(mapText)))
+	e.reportProgress(req.SessionID, "checkpoint", spanTokens, checkpointOut)
+
 	// 7. Transcript recovery reference.
 	ref := e.buildTranscriptReference(span, req, summaryID)
 
@@ -254,14 +325,26 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 		if strings.TrimSpace(extractResult.Text) != "" {
 			extractsText = ExtractsHeading + " (verbatim lines kept by the extractive lane; speaker labels and transcript seq pointers added)\n## This span\n" + extractResult.Text
 		}
+		extractOverview.Blocks = len(extractResult.Blocks)
+		for _, b := range extractResult.Blocks {
+			if b.KeepContext {
+				extractOverview.Kept++
+			}
+		}
 		if olderLaneEnabled {
 			maxIn := int(plan.Extracts.OlderLaneTokens) * CharsPerToken
 			if maxIn <= 0 || len(olderExtracts) < maxIn {
 				maxIn = len(olderExtracts)
 			}
 			olderExtractsText = "## Older history (re-compressed from the previous compaction)\n" + RenderOlderLane(olderExtracts, maxIn)
+			extractOverview.OlderLane = true
 		}
 	}
+	extractsOut := checkpointOut
+	if extractsEnabled {
+		extractsOut = int64(EstimateTokens(len(CompactionPreamble) + len(checkpointText) + len(ledgerText) + len(mapText) + len(extractsText) + len(olderExtractsText)))
+	}
+	e.reportProgress(req.SessionID, "extracts", spanTokens, extractsOut)
 
 	// 7c. Working-set snapshot.
 	var workingSetText string
@@ -274,8 +357,10 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 			MaxTotalChars:   plan.Restore.MaxChars,
 		})
 		workingSetText = RenderWorkingSet(snap)
+		workingSetFiles = len(snap.Files)
+		workingSetOut := int64(EstimateTokens(len(CompactionPreamble) + len(checkpointText) + len(ledgerText) + len(mapText) + len(extractsText) + len(olderExtractsText) + len(workingSetText)))
+		e.reportProgress(req.SessionID, "working_set", spanTokens, workingSetOut)
 	}
-
 	// 8. Compose the summary.
 	checkpointSection := ""
 	if strings.TrimSpace(checkpointText) != "" {
@@ -305,7 +390,6 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	// or the checkpoint ran long), drop parts in priority order until it fits,
 	// and fail closed if it still cannot converge. This guarantees compaction
 	// never makes the active context larger.
-	spanTokens := int64(EstimateTokens(span.Stats.Chars))
 	composedTokens := int64(EstimateTokens(len(composed)))
 	if spanTokens > 0 && composedTokens >= spanTokens {
 		dropOrder := []string{"extracts", "workingSet", "map", "ledger"}
@@ -332,18 +416,25 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 
 	// 9. Persist the summary DAG node + causality edges. Both the history and
 	// the compacted turn prefix leave the active context, so both are covered.
+	// Final progress snapshot: the composed summary is the authoritative size.
+	e.reportProgress(req.SessionID, "complete", spanTokens, composedTokens)
 	coveredIDs := coveredMessageIDs(append(append([]message.Message{}, req.History...), req.TurnPrefix...))
 	result := &CompactionResult{
-		SummaryID:         summaryID,
-		SummaryText:       composed,
-		Checkpoint:        checkpointText,
-		Layout:            layout,
-		TokenCount:        int64(EstimateTokens(len(composed))),
-		Level:             esc.Level,
-		Transcript:        ref,
-		Ledger:            ledger,
-		Map:               tmap,
-		CoveredMessageIDs: coveredIDs,
+		SummaryID:           summaryID,
+		SummaryText:         composed,
+		Checkpoint:          checkpointText,
+		Layout:              layout,
+		TokenCount:          int64(EstimateTokens(len(composed))),
+		Level:               esc.Level,
+		Transcript:          ref,
+		Ledger:              ledger,
+		Map:                 tmap,
+		CoveredMessageIDs:   coveredIDs,
+		Overview:            ParseCheckpointOverview(checkpointText),
+		ExtractsTotalBlocks: extractOverview.Blocks,
+		ExtractsKeptBlocks:  extractOverview.Kept,
+		OlderLaneCompressed: extractOverview.OlderLane,
+		WorkingSetFiles:     workingSetFiles,
 	}
 	parentID := ""
 	if prev != nil {

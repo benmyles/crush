@@ -154,6 +154,10 @@ type Workspace interface {
 	AgentQueuedPromptsList(sessionID string) []string
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
+	// AgentCompact runs the context compaction engine explicitly
+	// (/compact); it errors when the engine is disabled instead of
+	// falling back to summarize.
+	AgentCompact(ctx context.Context, sessionID string) error
 	UpdateAgentModel(ctx context.Context) error
 	InitCoderAgent(ctx context.Context) error
 	InitCoderAgentNonInteractive(ctx context.Context) error
@@ -206,6 +210,9 @@ type Workspace interface {
 	SetCompactMode(scope config.Scope, enabled bool) error
 	SetProviderAPIKey(scope config.Scope, providerID string, apiKey any) error
 	SetConfigField(scope config.Scope, key string, value any) error
+	// SetCompactionOptionValue sets a single options.compaction key via the
+	// typed copy-on-write path (no full config reload).
+	SetCompactionOptionValue(scope config.Scope, key string, value any) error
 	RemoveConfigField(scope config.Scope, key string) error
 	ImportCopilot() (*oauth.Token, bool)
 	RefreshOAuthToken(ctx context.Context, scope config.Scope, providerID string) error

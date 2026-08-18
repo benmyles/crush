@@ -108,6 +108,9 @@ type Coordinator interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
+	// Compact runs the context compaction engine explicitly (/compact);
+	// it errors when the engine is disabled instead of falling back.
+	Compact(context.Context, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	GenerateTitle(ctx context.Context, sessionID, prompt string)
@@ -1340,12 +1343,29 @@ func (c *coordinator) QueuedPromptsList(sessionID string) []string {
 	return c.currentAgent.QueuedPromptsList(sessionID)
 }
 
-func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
+// Compact is the explicit compaction-engine entry point (the /compact
+// command). It refreshes tokens for both the large and the dedicated
+// compaction model providers, then delegates to the session agent, which
+// returns an error when the engine is disabled instead of falling back.
+func (c *coordinator) Compact(ctx context.Context, sessionID string) error {
+	if c.currentAgent == nil {
+		return fmt.Errorf("no active agent to compact")
+	}
+	if err := c.refreshSummarizeTokens(ctx); err != nil {
+		return err
+	}
+	providerCfg, _ := c.cfg.Config().Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
+	return c.currentAgent.Compact(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg), c.makeAuthRefreshCallback(providerCfg))
+}
+
+// refreshSummarizeTokens refreshes expired OAuth tokens for the providers a
+// summarize/compact run may touch: the large model's provider and, when set,
+// the dedicated compaction model's provider.
+func (c *coordinator) refreshSummarizeTokens(ctx context.Context) error {
 	providerCfg, ok := c.cfg.Config().Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
 	if !ok {
 		return errModelProviderNotConfigured
 	}
-
 	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
 		slog.Error("Failed to refresh OAuth2 token before summarize. Proceeding with existing token.", "error", err)
 	}
@@ -1358,7 +1378,20 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 			}
 		}
 	}
+	return nil
+}
 
+// Summarize runs a session summarization through the session agent: the new
+// engine when enabled, the legacy single-shot summarizer otherwise (and as
+// fallback).
+func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
+	if c.currentAgent == nil {
+		return fmt.Errorf("no active agent to summarize")
+	}
+	if err := c.refreshSummarizeTokens(ctx); err != nil {
+		return err
+	}
+	providerCfg, _ := c.cfg.Config().Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
 	// Auth failures during summarize flow through fantasy's OnAuthRefresh,
 	// the same path used by regular turns.
 	return c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg), c.makeAuthRefreshCallback(providerCfg))

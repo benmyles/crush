@@ -314,6 +314,12 @@ func (w *ClientWorkspace) AgentSummarize(ctx context.Context, sessionID string) 
 	return w.client.AgentSummarizeSession(ctx, w.workspaceID(), sessionID)
 }
 
+// AgentCompact reuses the remote summarize endpoint; the remote server runs
+// the same engine dispatch (engine when enabled, legacy otherwise).
+func (w *ClientWorkspace) AgentCompact(ctx context.Context, sessionID string) error {
+	return w.client.AgentSummarizeSession(ctx, w.workspaceID(), sessionID)
+}
+
 func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.client.UpdateAgent(ctx, w.workspaceID())
 }
@@ -558,6 +564,12 @@ func (w *ClientWorkspace) SetConfigField(scope config.Scope, key string, value a
 		w.refreshWorkspace()
 	}
 	return err
+}
+
+// SetCompactionOptionValue reuses the generic field setter; the remote
+// server owns the typed path, so the extra client round-trip is unavoidable.
+func (w *ClientWorkspace) SetCompactionOptionValue(scope config.Scope, key string, value any) error {
+	return w.SetConfigField(scope, key, value)
 }
 
 func (w *ClientWorkspace) RemoveConfigField(scope config.Scope, key string) error {

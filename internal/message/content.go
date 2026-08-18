@@ -133,6 +133,58 @@ type Finish struct {
 	Details string       `json:"details,omitempty"`
 }
 
+// CompactionContent is the structured metadata attached to an engine-produced
+// summary message. It carries the deterministic digest of the compaction
+// (checkpoint/lane counts, seq ranges, model provenance) so the TUI can render
+// the "Compaction complete" overview tree without parsing the summary text.
+// It is not part of the model-facing context; prompt assembly only reads
+// TextContent parts.
+type CompactionContent struct {
+	SummaryID         string `json:"summary_id"`
+	Level             int    `json:"level"`
+	TokenCount        int64  `json:"token_count"`
+	TokensBefore      int64  `json:"tokens_before"`
+	ModelProvider     string `json:"model_provider,omitempty"`
+	ModelID           string `json:"model_id,omitempty"`
+	CompactedMessages int    `json:"compacted_messages"`
+	SeqStart          int    `json:"seq_start"`
+	SeqEnd            int    `json:"seq_end"`
+	FirstRetainedSeq  int    `json:"first_retained_seq"`
+	Checkpoint        struct {
+		Goals       int `json:"goals"`
+		Constraints int `json:"constraints"`
+		Decisions   int `json:"decisions"`
+		DeadEnds    int `json:"dead_ends"`
+		Questions   int `json:"questions"`
+		Done        int `json:"done"`
+		InProgress  int `json:"in_progress"`
+		Blocked     int `json:"blocked"`
+		NextActions int `json:"next_actions"`
+	} `json:"checkpoint"`
+	Ledger struct {
+		Instructions int `json:"instructions"`
+		Errors       int `json:"errors"`
+		Files        int `json:"files"`
+		Commands     int `json:"commands"`
+	} `json:"ledger"`
+	ExtractsKeptBlocks  int  `json:"extracts_kept_blocks"`
+	ExtractsTotalBlocks int  `json:"extracts_total_blocks"`
+	OlderLaneCompressed bool `json:"older_lane_compressed"`
+	WorkingSetFiles     int  `json:"working_set_files"`
+}
+
+func (CompactionContent) isPart() {}
+
+// CompactionPart returns the CompactionContent part of the message, if any.
+func (m *Message) CompactionPart() (CompactionContent, bool) {
+	for _, part := range m.Parts {
+		if c, ok := part.(CompactionContent); ok {
+			return c, true
+		}
+	}
+	return CompactionContent{}, false
+}
+
 func (Finish) isPart() {}
 
 // ShellCommand stores a bang-mode shell command and its output as a

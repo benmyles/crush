@@ -61,6 +61,44 @@ func queuePill(queue int, t *styles.Styles) string {
 	return t.Pills.Focused.Render(content)
 }
 
+// compactPill renders the pulsing "Compacting" indicator shown while the
+// context compaction engine runs. The label breathes between the working
+// gradient endpoints on a triangle wave, so it reads as a glow rather than a
+// static badge. tokensDown, when positive, appends the live "↓ 34K" stat from
+// the engine's progress notifications.
+func compactPill(frame int, tokensDown int64, t *styles.Styles) string {
+	const pulseFrames = 16
+	idx := frame % (2 * (pulseFrames - 1))
+	if idx >= pulseFrames {
+		idx = 2*(pulseFrames-1) - idx
+	}
+	ramp := lipgloss.Blend1D(pulseFrames, t.WorkingGradFromColor, t.WorkingGradToColor)
+	col := ramp[idx]
+	text := "Compacting" + strings.Repeat(".", frame%4)
+	if tokensDown > 0 {
+		text += " · ↓ " + shortTokens(tokensDown)
+	}
+	label := t.Pills.QueueLabel.Render(text)
+	bolt := strings.Join(styles.ForegroundGrad(t.Pills.QueueIconBase, "⚡", false, col, col), "")
+	content := fmt.Sprintf("%s %s", bolt, label)
+	return t.Pills.Focused.Render(content)
+}
+
+// shortTokens renders a token count compactly: raw below 1k, one decimal in
+// the low K range, rounded K from 9.5k, and M with one decimal from 1M.
+func shortTokens(v int64) string {
+	switch {
+	case v >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(v)/1e6)
+	case v >= 9_500:
+		return fmt.Sprintf("%.0fK", float64(v)/1000)
+	case v >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(v)/1000)
+	default:
+		return fmt.Sprintf("%d", v)
+	}
+}
+
 // todoPill renders the todo progress pill with optional spinner and task name.
 func todoPill(todos []session.Todo, spinnerView string, panelFocused bool, t *styles.Styles) string {
 	if !hasIncompleteTodos(todos) {
@@ -258,7 +296,7 @@ func (m *UI) pillsAreaHeight() int {
 	}
 	hasIncomplete := hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
-	hasPills := hasIncomplete || hasQueue
+	hasPills := hasIncomplete || hasQueue || m.compacting
 	if !hasPills {
 		return 0
 	}
@@ -301,7 +339,7 @@ func (m *UI) renderPills() {
 	hasIncomplete := hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
 
-	if !hasIncomplete && !hasQueue {
+	if !hasIncomplete && !hasQueue && !m.compacting {
 		return
 	}
 
@@ -321,6 +359,9 @@ func (m *UI) renderPills() {
 	}
 	if hasQueue {
 		pills = append(pills, queuePill(m.promptQueue, t))
+	}
+	if m.compacting {
+		pills = append(pills, compactPill(m.compactPulse, m.compactTokensDown, t))
 	}
 
 	var expandedList string

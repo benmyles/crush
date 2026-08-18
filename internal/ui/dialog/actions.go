@@ -87,6 +87,10 @@ type (
 	ActionSummarize                   struct {
 		SessionID string
 	}
+	// ActionCompact is the engine-only compaction command (/compact).
+	ActionCompact struct {
+		SessionID string
+	}
 	// ActionSelectReasoningEffort is a message indicating a reasoning effort
 	// has been selected.
 	ActionSelectReasoningEffort struct {

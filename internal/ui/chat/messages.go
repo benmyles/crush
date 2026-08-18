@@ -388,6 +388,11 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
 		var items []MessageItem
+		// Engine-produced compaction summaries render as the structured
+		// overview tree instead of the plain assistant render.
+		if part, ok := msg.CompactionPart(); ok && msg.IsSummaryMessage {
+			return []MessageItem{NewCompactionMessageItem(sty, msg, part)}
+		}
 		if ShouldRenderAssistantMessage(msg) {
 			items = append(items, NewAssistantMessageItem(sty, msg))
 		}

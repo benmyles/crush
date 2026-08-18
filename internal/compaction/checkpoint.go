@@ -206,6 +206,110 @@ func ValidateCheckpoint(text string, splitTurn, truncated bool) CheckpointValida
 }
 
 // CheckpointItem is a parsed stable-ID bullet from the checkpoint.
+// CheckpointOverview is a deterministic structural digest of a checkpoint:
+// counts per stable-ID family and per Progress subsection. The TUI renders it
+// as the tree under the "Compaction complete" header.
+type CheckpointOverview struct {
+	Goals       int `json:"goals"`
+	Constraints int `json:"constraints"`
+	Decisions   int `json:"decisions"`
+	DeadEnds    int `json:"deadEnds"`
+	Questions   int `json:"questions"`
+	Done        int `json:"done"`
+	InProgress  int `json:"inProgress"`
+	Blocked     int `json:"blocked"`
+	NextActions int `json:"nextActions"`
+}
+
+var (
+	// listLine matches a Markdown unordered/ordered list item.
+	listLine = regexp.MustCompile(`^\s*(?:[-*]|\d+\.)\s+\S`)
+	// subsectionHeading matches "### Done" style Progress subsections.
+	subsectionHeading = regexp.MustCompile(`(?m)^###\s+(.+?)\s*$`)
+)
+
+// checkpointSectionText returns the body text of a "## Section" block, or "".
+func checkpointSectionText(text, section string) string {
+	escaped := regexp.QuoteMeta(section)
+	re := regexp.MustCompile(`(?m)^##\s+` + escaped + `\s*$`)
+	loc := re.FindStringIndex(text)
+	if loc == nil {
+		return ""
+	}
+	body := text[loc[1]:]
+	if end := regexp.MustCompile(`(?m)^##\s+`).FindStringIndex(body); end != nil {
+		body = body[:end[0]]
+	}
+	return body
+}
+
+// subsectionCount returns the number of list lines under a "### Name"
+// subsection of a section body, or 0 when the subsection is absent.
+func subsectionCount(sectionBody, name string) int {
+	escaped := regexp.QuoteMeta(name)
+	re := regexp.MustCompile(`(?m)^###\s+` + escaped + `\s*$`)
+	loc := re.FindStringIndex(sectionBody)
+	if loc == nil {
+		return 0
+	}
+	body := sectionBody[loc[1]:]
+	if next := subsectionHeading.FindStringIndex(body); next != nil {
+		body = body[:next[0]]
+	}
+	return countListLines(body)
+}
+
+// countListLines counts the list lines in a markdown body.
+func countListLines(body string) int {
+	count := 0
+	for _, line := range strings.Split(body, "\n") {
+		if listLine.MatchString(line) {
+			count++
+		}
+	}
+	return count
+}
+
+// ParseCheckpointOverview computes the deterministic digest of a checkpoint.
+func ParseCheckpointOverview(text string) CheckpointOverview {
+	items := ParseCheckpointItems(text)
+	var ov CheckpointOverview
+	for _, it := range items {
+		// IDs are [C1], [D1], [X1], [Q1]; parse the letter prefix and
+		// trailing number to count one family each.
+		if len(it.ID) < 2 {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(it.ID[1:], "%d", &n); err != nil {
+			continue
+		}
+		switch it.ID[:1] {
+		case "G":
+			ov.Goals++
+		case "C":
+			ov.Constraints++
+		case "D":
+			ov.Decisions++
+		case "X":
+			ov.DeadEnds++
+		case "Q":
+			ov.Questions++
+		}
+	}
+	// Fallback when the checkpoint has no G-family IDs: count the list
+	// lines under the Goal & User Intent section.
+	if ov.Goals == 0 {
+		ov.Goals = countListLines(checkpointSectionText(text, "Goal & User Intent"))
+	}
+	progress := checkpointSectionText(text, "Progress")
+	ov.Done = subsectionCount(progress, "Done")
+	ov.InProgress = subsectionCount(progress, "In Progress")
+	ov.Blocked = subsectionCount(progress, "Blocked")
+	ov.NextActions = countListLines(checkpointSectionText(text, "Next Action"))
+	return ov
+}
+
 type CheckpointItem struct {
 	ID       string
 	Section  string

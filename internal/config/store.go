@@ -455,6 +455,134 @@ func (s *ConfigStore) updateLocked(scope Scope, mutate func(*Config) map[string]
 	return nil
 }
 
+// SetCompactionOptionValue sets a single options.compaction key through the
+// typed copy-on-write path: the in-memory config is updated and the field
+// persisted without the full reload (and the SetupAgents churn) that
+// SetConfigField triggers. The keys match the compaction settings dialog:
+// enabled, reserve_tokens, keep_recent_tokens, soft_threshold_fraction,
+// budget_fraction, max_summary_tokens, min_summary_tokens, verify, ledger,
+// transcript_map, working_set_files, working_set_max_chars_per_file,
+// extracts_decay, and parallel_block_threshold.
+func (s *ConfigStore) SetCompactionOptionValue(scope Scope, key string, value any) error {
+	normalized, err := normalizeCompactionOption(key, value)
+	if err != nil {
+		return err
+	}
+	return s.update(scope, func(c *Config) map[string]any {
+		if c.Options == nil {
+			c.Options = &Options{}
+		}
+		if c.Options.Compaction == nil {
+			c.Options.Compaction = &CompactionConfig{}
+		}
+		cc := c.Options.Compaction
+		switch key {
+		case "enabled":
+			cc.Enabled = ptrBool(normalized.(bool))
+		case "ledger":
+			cc.Ledger = ptrBool(normalized.(bool))
+		case "transcript_map":
+			cc.TranscriptMap = ptrBool(normalized.(bool))
+		case "verify":
+			cc.Verify = normalized.(string)
+		case "soft_threshold_fraction":
+			cc.SoftThresholdFraction = normalized.(float64)
+		case "budget_fraction":
+			cc.BudgetFraction = normalized.(float64)
+		case "extracts_decay":
+			cc.ExtractsDecay = ptrFloat(normalized.(float64))
+		case "reserve_tokens":
+			cc.ReserveTokens = normalized.(int64)
+		case "keep_recent_tokens":
+			cc.KeepRecentTokens = normalized.(int64)
+		case "max_summary_tokens":
+			cc.MaxSummaryTokens = normalized.(int64)
+		case "min_summary_tokens":
+			cc.MinSummaryTokens = normalized.(int64)
+		case "parallel_block_threshold":
+			cc.ParallelBlockThreshold = normalized.(int64)
+		case "working_set_files":
+			cc.WorkingSetFiles = int(normalized.(int64))
+		case "working_set_max_chars_per_file":
+			cc.WorkingSetMaxCharsPerFile = int(normalized.(int64))
+		}
+		return map[string]any{"options.compaction." + key: value}
+	})
+}
+
+// normalizeCompactionOption validates and normalizes a compaction option
+// value into the Go type the CompactionConfig field expects.
+func normalizeCompactionOption(key string, value any) (any, error) {
+	switch key {
+	case "enabled", "ledger", "transcript_map":
+		if b, ok := value.(bool); ok {
+			return b, nil
+		}
+		return nil, fmt.Errorf("options.compaction.%s expects a boolean, got %T", key, value)
+	case "verify":
+		if s, ok := value.(string); ok {
+			return s, nil
+		}
+		return nil, fmt.Errorf("options.compaction.%s expects a string, got %T", key, value)
+	case "soft_threshold_fraction", "budget_fraction", "extracts_decay":
+		f, ok := toFloat64(value)
+		if !ok {
+			return nil, fmt.Errorf("options.compaction.%s expects a number, got %T", key, value)
+		}
+		return f, nil
+	case "reserve_tokens", "keep_recent_tokens", "max_summary_tokens", "min_summary_tokens",
+		"parallel_block_threshold", "working_set_files", "working_set_max_chars_per_file":
+		n, ok := toInt64(value)
+		if !ok {
+			return nil, fmt.Errorf("options.compaction.%s expects an integer, got %T", key, value)
+		}
+		return n, nil
+	}
+	return nil, fmt.Errorf("unknown compaction option %q", key)
+}
+
+// toInt64 normalizes JSON-ish numbers (json.Number, float64, int64, int) to an
+// int64.
+func toInt64(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	case float64:
+		return int64(v), true
+	case json.Number:
+		n, err := v.Int64()
+		if err == nil {
+			return n, true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+// toFloat64 normalizes JSON-ish numbers (json.Number, float64, int64, int) to
+// a float64.
+func toFloat64(value any) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case float64:
+		return v, true
+	case json.Number:
+		f, err := v.Float64()
+		if err == nil {
+			return f, true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
 // OverridePreferredModel sets the preferred model for the given type in
 // memory only, without persisting. It is for per-run overrides (such as the
 // non-interactive --model flags) that must not be written to the user's

@@ -226,6 +226,13 @@ func (w *AppWorkspace) AgentSummarize(ctx context.Context, sessionID string) err
 	return w.app.AgentCoordinator.Summarize(ctx, sessionID)
 }
 
+func (w *AppWorkspace) AgentCompact(ctx context.Context, sessionID string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.Compact(ctx, sessionID)
+}
+
 func (w *AppWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.app.UpdateAgentModel(ctx)
 }
@@ -361,6 +368,10 @@ func (w *AppWorkspace) SetProviderAPIKey(scope config.Scope, providerID string, 
 
 func (w *AppWorkspace) SetConfigField(scope config.Scope, key string, value any) error {
 	return w.store.SetConfigField(scope, key, value)
+}
+
+func (w *AppWorkspace) SetCompactionOptionValue(scope config.Scope, key string, value any) error {
+	return w.store.SetCompactionOptionValue(scope, key, value)
 }
 
 func (w *AppWorkspace) RemoveConfigField(scope config.Scope, key string) error {

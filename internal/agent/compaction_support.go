@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/charmbracelet/crush/internal/compaction"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/message"
 )
@@ -74,6 +75,43 @@ func estimateStoredMessageTokens(msg message.Message) int64 {
 // splitTurnFactor is how much larger than keepRecent the last turn may be
 // before it is split mid-turn instead of being retained whole.
 const splitTurnFactor = 2
+
+// compactionOverviewPart builds the structured CompactionContent part that
+// rides on the engine's summary message. The TUI renders it as the
+// "Compaction complete" tree; it is metadata only and never reaches the
+// model-facing prompt (prompt assembly reads TextContent parts).
+func compactionOverviewPart(result *compaction.CompactionResult, req compaction.CompactionRequest) message.CompactionContent {
+	part := message.CompactionContent{
+		SummaryID:         result.SummaryID,
+		Level:             int(result.Level),
+		TokenCount:        result.TokenCount,
+		TokensBefore:      req.TokensBefore,
+		ModelProvider:     req.ModelProvider,
+		ModelID:           req.ModelID,
+		CompactedMessages: len(result.CoveredMessageIDs),
+		SeqStart:          result.Transcript.CompactedStartSeq,
+		SeqEnd:            result.Transcript.CompactedEndSeq,
+		FirstRetainedSeq:  req.FirstRetainedSeq,
+	}
+	part.Checkpoint.Goals = result.Overview.Goals
+	part.Checkpoint.Constraints = result.Overview.Constraints
+	part.Checkpoint.Decisions = result.Overview.Decisions
+	part.Checkpoint.DeadEnds = result.Overview.DeadEnds
+	part.Checkpoint.Questions = result.Overview.Questions
+	part.Checkpoint.Done = result.Overview.Done
+	part.Checkpoint.InProgress = result.Overview.InProgress
+	part.Checkpoint.Blocked = result.Overview.Blocked
+	part.Checkpoint.NextActions = result.Overview.NextActions
+	part.Ledger.Instructions = len(result.Ledger.UserInstructions)
+	part.Ledger.Errors = len(result.Ledger.Errors)
+	part.Ledger.Files = len(result.Ledger.Files)
+	part.Ledger.Commands = len(result.Ledger.Commands)
+	part.ExtractsKeptBlocks = result.ExtractsKeptBlocks
+	part.ExtractsTotalBlocks = result.ExtractsTotalBlocks
+	part.OlderLaneCompressed = result.OlderLaneCompressed
+	part.WorkingSetFiles = result.WorkingSetFiles
+	return part
+}
 
 // splitForCompaction divides messages into the history to compact, an optional
 // turn prefix (the beginning of an in-flight turn that is compacted while its

@@ -788,9 +788,14 @@ func TestConfigStore_SetConfigFields_concurrentInProcess(t *testing.T) {
 // removal cannot resurrect the previous selection (this is how the TUI sets
 // the compaction model back to "follow the large model").
 func TestRemoveConfigField_UnpinsModelSlot(t *testing.T) {
-	t.Parallel()
-
+	// Not parallel: t.Setenv mutates process env, and the machine's real
+	// user config (looked up via XDG paths) would otherwise define
+	// models.compaction and resurface the slot on reload.
 	dir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "xdg-data"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
+
 	configPath := filepath.Join(dir, "crush.json")
 	require.NoError(t, os.WriteFile(configPath, []byte(`{"models": {"compaction": {"provider": "openai", "model": "gpt-x"}}}`), 0o600))
 

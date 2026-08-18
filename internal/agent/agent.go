@@ -152,7 +152,13 @@ type SessionAgent interface {
 	QueuedPrompts(sessionID string) int
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
+	// Summarize runs context compaction: the new lossless engine when
+	// enabled, else the legacy single-shot summary.
 	Summarize(context.Context, string, fantasy.ProviderOptions, func(context.Context, *fantasy.ProviderError) error) error
+	// Compact runs the context compaction engine explicitly (the /compact
+	// command). It never falls back to the legacy summarizer and returns an
+	// error when the engine is missing or disabled.
+	Compact(context.Context, string, fantasy.ProviderOptions, func(context.Context, *fantasy.ProviderError) error) error
 	Model() Model
 	GenerateTitle(ctx context.Context, sessionID, userPrompt string)
 	// MapCompleter returns a stateless completion function for llm_map, or
@@ -310,9 +316,26 @@ func NewSessionAgent(
 		cancelMark:           csync.NewMap[string, uint64](),
 	}
 	if opts.Querier != nil {
-		a.compaction = compaction.NewEngine(opts.Querier, a.fantasyCompleter, compaction.WithTxDB(opts.DB))
+		a.compaction = compaction.NewEngine(opts.Querier, a.fantasyCompleter, compaction.WithTxDB(opts.DB), compaction.WithProgress(a.publishCompactionProgress))
 	}
 	return a
+}
+
+// publishCompactionProgress forwards live engine progress snapshots to the
+// TUI pulse pill via the agent notification channel. A nil publisher (tests,
+// headless clients) makes it a no-op. The initial span event (nothing
+// composed yet) is skipped so the pill only starts showing a ↓ count once
+// real summary work has been accounted.
+func (a *sessionAgent) publishCompactionProgress(sessionID string, p compaction.Progress) {
+	if a.notify == nil || p.TokensOut == 0 {
+		return
+	}
+	a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+		SessionID:  sessionID,
+		Type:       notify.TypeCompactionProgress,
+		TokensDown: p.TokensDown,
+		TokensOut:  p.TokensOut,
+	})
 }
 
 // AcceptedRun owns exactly one accept reservation taken by
@@ -1282,7 +1305,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			if !ok {
 				existing = []SessionAgentCall{}
 			}
-			call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
+			call.Prompt = fmt.Sprintf("Earlier conversation context was compacted into a session summary (the full history is recoverable with recall_grep and recall_expand). The original user request was: `%s`", call.Prompt)
 			existing = append(existing, call)
 			a.messageQueue.Set(call.SessionID, existing)
 		}
@@ -1426,6 +1449,22 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		}
 	}
 
+	return a.legacySummarize(ctx, sessionID, opts, onAuthRefresh)
+}
+
+// Compact is the engine-only compaction entry point (the /compact command).
+// Unlike Summarize it never falls back to the legacy summarizer: when the
+// engine is missing or disabled it returns an error so the caller can tell
+// the user to use the legacy summarize path instead.
+func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error {
+	if !a.compactionEngineEnabled() {
+		return fmt.Errorf("the context compaction engine is disabled (set options.compaction.enabled to true, or use the legacy summarize command)")
+	}
+	instructions := a.ConsumeCompactionRequest(sessionID)
+	return a.compactWithEngine(ctx, sessionID, instructions, opts, onAuthRefresh)
+}
+
+func (a *sessionAgent) legacySummarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error {
 	if a.IsSessionBusy(sessionID) {
 		return ErrSessionBusy
 	}
@@ -1785,6 +1824,20 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 			slog.Error("Failed to flush pending message updates after compaction", "error", flushErr)
 		}
 	}()
+	// TUI lifecycle events: the pulse indicator rides on the started
+	// event and clears on finished (success or failure).
+	if a.notify != nil {
+		a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+			SessionID:    sessionID,
+			SessionTitle: currentSession.Title,
+			Type:         notify.TypeCompactionStarted,
+		})
+		defer a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+			SessionID:    sessionID,
+			SessionTitle: currentSession.Title,
+			Type:         notify.TypeCompactionFinished,
+		})
+	}
 
 	cfg := config.ResolveCompactionConfig(a.cfg.Config())
 	window := int64(largeModel.CatwalkCfg.ContextWindow)
@@ -1888,6 +1941,7 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 		return err
 	}
 	summaryMessage.AppendContent(result.SummaryText)
+	summaryMessage.Parts = append(summaryMessage.Parts, compactionOverviewPart(result, req))
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
 	if err := a.messages.Update(genCtx, summaryMessage); err != nil {
 		return err
@@ -2532,12 +2586,48 @@ func (a *sessionAgent) HasCompactionRequest(sessionID string) bool {
 // MapCompleter returns a stateless completion function suitable for llm_map's
 // per-item calls. It reuses the agent's fantasyCompleter with a generic system
 // prompt. Returns nil if no model is configured.
+//
+// Usage accounting: outside a compaction run the call has no hooks on ctx, so
+// the closure creates per-call hooks, accumulates the usage, and immediately
+// flushes it into the session (serialized across the parallel map workers so
+// cost increments and counters are not lost to last-write-wins races). Inside
+// a compaction run the caller's hooks already accumulate the usage centrally.
 func (a *sessionAgent) MapCompleter() func(ctx context.Context, prompt string) (string, error) {
 	if a.compaction == nil {
 		return nil
 	}
+	var flushMu sync.Mutex
 	return func(ctx context.Context, prompt string) (string, error) {
-		text, _, err := a.fantasyCompleter(ctx, "You are a precise data-processing assistant. Follow the instructions exactly and return valid JSON.", prompt, 4096)
+		callCtx := ctx
+		hooks := compactionCallHooksFrom(ctx)
+		ownHooks := hooks == nil
+		if ownHooks {
+			model := a.largeModel.Get()
+			hooks = &compactionCallHooks{
+				model:     &model,
+				sessionID: tools.GetSessionFromContext(ctx),
+			}
+			callCtx = withCompactionCallHooks(ctx, hooks)
+		}
+		text, _, err := a.fantasyCompleter(callCtx, "You are a precise data-processing assistant. Follow the instructions exactly and return valid JSON.", prompt, 4096)
+		if ownHooks {
+			hooks.mu.Lock()
+			usage, cost := hooks.usage, hooks.cost
+			hooks.mu.Unlock()
+			if usageIsZero(usage) {
+				return text, err
+			}
+			flushMu.Lock()
+			defer flushMu.Unlock()
+			current, getErr := a.sessions.Get(ctx, hooks.sessionID)
+			if getErr != nil {
+				return text, err
+			}
+			a.updateSessionUsage(a.largeModel.Get(), &current, usage, cost, false)
+			if _, saveErr := a.sessions.Save(ctx, current); saveErr != nil {
+				slog.Error("Failed to save session usage after llm_map", "error", saveErr)
+			}
+		}
 		return text, err
 	}
 }

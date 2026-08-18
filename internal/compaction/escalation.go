@@ -3,6 +3,7 @@ package compaction
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -182,6 +183,13 @@ func completeWithRetry(ctx context.Context, complete EscalationCompleter, level 
 
 // isTransient reports whether an error is a transient (retryable) failure.
 // Non-transient (4xx, auth, cancelled) errors propagate immediately.
+// statusCodeRe matches a bare HTTP status code token from provider errors,
+// so incidental digit runs ("40000 tokens exceeded", port numbers) are not
+// misclassified as HTTP responses.
+var statusCodeRe = regexp.MustCompile(`\b(400|401|403|422|429|500|502|503|504)\b`)
+
+// isTransient reports whether an error is a transient (retryable) failure.
+// Non-transient (4xx, auth, cancelled) errors propagate immediately.
 func isTransient(err error) bool {
 	if err == nil {
 		return false
@@ -190,16 +198,21 @@ func isTransient(err error) bool {
 	if strings.Contains(msg, "context canceled") || strings.Contains(msg, "context deadline exceeded") {
 		return false
 	}
-	// 4xx and auth are not transient.
-	if strings.Contains(msg, "401") || strings.Contains(msg, "403") || strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden") {
+	// 4xx and auth are not transient. Match status codes as standalone
+	// tokens so a stray "40000" (token counts, ports) does not read as 400.
+	if strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden") {
 		return false
 	}
-	if strings.Contains(msg, "400") || strings.Contains(msg, "422") {
-		return false
+	for _, code := range statusCodeRe.FindAllString(msg, -1) {
+		switch code {
+		case "400", "401", "403", "422":
+			return false
+		case "429", "500", "502", "503", "504":
+			return true
+		}
 	}
-	// 429, 5xx, timeout, connection reset, EOF are transient. msg is
-	// lowercased above, so match lowercase tokens.
-	for _, needle := range []string{"429", "500", "502", "503", "504", "timeout", "connection reset", "eof", "temporary", "overloaded", "rate limit"} {
+	// Text heuristics for network/proxy failures. msg is lowercased above.
+	for _, needle := range []string{"timeout", "connection reset", "eof", "temporary", "overloaded", "rate limit"} {
 		if strings.Contains(msg, needle) {
 			return true
 		}

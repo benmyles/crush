@@ -273,6 +273,9 @@ func NewRecallGrepTool(dbx db.DBTX, q db.Querier) fantasy.AgentTool {
 			if sessionID == "" {
 				sessionID = GetSessionFromContext(ctx)
 			}
+			if sessionID == "" {
+				return fantasy.NewTextErrorResponse("no active session to search; pass session_id or run recall_grep from an active session"), nil
+			}
 			hits, err := searchMessagesFTS(ctx, dbx, params.Pattern, sessionID, params.Limit)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("recall_grep failed: %v", err)), nil
@@ -358,20 +361,19 @@ func NewRecallExpandTool(dbx db.DBTX, q db.Querier) fantasy.AgentTool {
 			}
 			sessionID := summary.SessionID
 			// Fetch the covered messages via raw SQL on messages by id set.
+			// All covered ids participate so the reported count is the real
+			// coverage; the LIMIT only bounds how many rows are rendered.
+			totalCovered := len(coveredIDs)
 			placeholders := make([]string, len(coveredIDs))
-			args := make([]any, 0, len(coveredIDs)+1)
+			args := make([]any, 0, len(coveredIDs)+2)
 			args = append(args, sessionID)
 			for i, id := range coveredIDs {
 				placeholders[i] = "?"
 				args = append(args, id)
 			}
-			if len(coveredIDs) > limit {
-				coveredIDs = coveredIDs[:limit]
-				placeholders = placeholders[:limit]
-				args = args[:limit+1]
-			}
+			args = append(args, limit)
 			query := fmt.Sprintf(
-				`SELECT id, role, parts, created_at FROM messages WHERE session_id = ? AND id IN (%s) ORDER BY created_at ASC`,
+				`SELECT id, role, parts, created_at FROM messages WHERE session_id = ? AND id IN (%s) ORDER BY created_at ASC LIMIT ?`,
 				strings.Join(placeholders, ","))
 			rows, err := dbx.QueryContext(ctx, query, args...)
 			if err != nil {
@@ -379,7 +381,7 @@ func NewRecallExpandTool(dbx db.DBTX, q db.Querier) fantasy.AgentTool {
 			}
 			defer rows.Close()
 			var sb strings.Builder
-			fmt.Fprintf(&sb, "Summary %s covered %d messages (showing up to %d):\n\n", params.SummaryID, len(coveredIDs), limit)
+			fmt.Fprintf(&sb, "Summary %s covered %d messages (showing up to %d):\n\n", params.SummaryID, totalCovered, limit)
 			count := 0
 			for rows.Next() {
 				var id, role, parts string

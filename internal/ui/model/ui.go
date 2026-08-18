@@ -365,6 +365,19 @@ type UI struct {
 	todoSpinner    spinner.Model
 	todoIsSpinning bool
 
+	// Compaction pulse pill state. compacting is lit by
+	// notify.TypeCompactionStarted and cleared by
+	// TypeCompactionFinished; compactPulse counts animation frames so the
+	// pill can breathe between the linear-gradient endpoints.
+	compacting   bool
+	compactPulse int
+	// compactTokensDown is the live estimated tokens removed so far,
+	// updated by notify.TypeCompactionProgress.
+	compactTokensDown int64
+
+	// compactSpinner is the tick driver for the compaction pulse.
+	compactSpinner spinner.Model
+
 	// mouse highlighting related state
 	lastClickTime time.Time
 	hoverX        int
@@ -416,6 +429,11 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		spinner.WithStyle(com.Styles.Pills.TodoSpinner),
 	)
 
+	compactSpinner := spinner.New(
+		spinner.WithSpinner(spinner.MiniDot),
+		spinner.WithStyle(com.Styles.Pills.TodoSpinner),
+	)
+
 	// Attachments component
 	attachments := attachments.New(
 		attachments.NewRenderer(
@@ -445,6 +463,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		completions:         comp,
 		attachments:         attachments,
 		todoSpinner:         todoSpinner,
+		compactSpinner:      compactSpinner,
 		lspStates:           make(map[string]workspace.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
 		notifyBackend:       notification.NoopBackend{},
@@ -1240,6 +1259,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+		if m.compacting {
+			var cmd tea.Cmd
+			m.compactSpinner, cmd = m.compactSpinner.Update(msg)
+			m.compactPulse++
+			m.renderPills()
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 
 	case tea.KeyPressMsg:
 		if cmd := m.handleKeyPressMsg(msg); cmd != nil {
@@ -1913,6 +1941,19 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return nil
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionCompact:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before compacting session..."))
+			break
+		}
+		cmds = append(cmds, func() tea.Msg {
+			err := m.com.Workspace.AgentCompact(context.Background(), msg.SessionID)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+			return nil
+		})
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleHelp:
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -2036,7 +2077,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	case dialog.ActionSetCompactionOption:
-		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.compaction."+msg.Key, msg.Value); err != nil {
+		if err := m.com.Workspace.SetCompactionOptionValue(config.ScopeGlobal, msg.Key, msg.Value); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
@@ -4672,6 +4713,25 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 		return m.handleAWSSSOAuth(n.AWSSOCommand, n.AWSSOURL)
 	case notify.TypeAWSSSOAuthResult:
 		return m.handleAWSSSOAuthResult(n.Message)
+	case notify.TypeCompactionStarted:
+		// The compaction engine is running: light the pulsing "Compacting"
+		// pill. Deliberately not the busy→idle edge, so skip the
+		// invalidation below. The tick command starts the pulse loop.
+		m.compacting = true
+		m.compactPulse = 0
+		m.compactTokensDown = 0
+		m.renderPills()
+		return m.compactSpinner.Tick
+	case notify.TypeCompactionProgress:
+		// Live token stats for the pulse pill: tokens removed so far.
+		m.compactTokensDown = n.TokensDown
+		m.renderPills()
+		return nil
+	case notify.TypeCompactionFinished:
+		m.compacting = false
+		m.compactTokensDown = 0
+		m.renderPills()
+		return nil
 	default:
 		return nil
 	}

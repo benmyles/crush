@@ -45,6 +45,7 @@ func (c *errorCoordinator) QueuedPrompts(string) int                          { 
 func (c *errorCoordinator) QueuedPromptsList(string) []string                 { return nil }
 func (c *errorCoordinator) ClearQueue(string)                                 {}
 func (c *errorCoordinator) Summarize(context.Context, string) error           { return nil }
+func (c *errorCoordinator) Compact(context.Context, string) error             { return nil }
 func (c *errorCoordinator) Model() agent.Model                                { return agent.Model{} }
 func (c *errorCoordinator) UpdateModels(context.Context) error                { return nil }
 func (c *errorCoordinator) GenerateTitle(context.Context, string, string)     {}
