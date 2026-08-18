@@ -470,7 +470,12 @@ func BuildSpanModel(input SpanInput) SpanModel {
 					if call.Name == "read" || call.Name == "view" {
 						path := ToolCallPath(call)
 						if path != "" {
-							key := path + "::"
+							// Include offset+limit in the key so a read of a different
+							// range of the same file does not mark the earlier one
+							// stale. Only a re-read of the same range supersedes.
+							offset := fmt.Sprintf("%v", call.Args["offset"])
+							limit := fmt.Sprintf("%v", call.Args["limit"])
+							key := path + "::" + offset + ":" + limit
 							if prev, ok := readResultsByKey[key]; ok && prev < len(blocks) {
 								blocks[prev].SupersededBySeq = block.Seq
 							}

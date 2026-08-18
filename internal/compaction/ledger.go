@@ -107,7 +107,7 @@ var DefaultLedgerLimits = LedgerLimits{
 
 var (
 	writeTools = map[string]bool{"write": true}
-	editTools  = map[string]bool{"edit": true, "multi_edit": true, "apply_patch": true, "morph_edit": true}
+	editTools  = map[string]bool{"edit": true, "multiedit": true, "apply_patch": true, "morph_edit": true, "lsp_rename": true, "lsp_replace_symbol": true}
 	readTools  = map[string]bool{"read": true, "view": true}
 	cmdTools   = map[string]bool{"bash": true, "shell": true, "powershell": true}
 )
@@ -327,22 +327,19 @@ func BuildSessionLedger(model SpanModel, limits LedgerLimits) SessionLedger {
 	sort.Slice(fileList, func(i, j int) bool { return fileList[i].Path < fileList[j].Path })
 	ledger.Files = fileList
 
-	// Trim capped sections from the least-valuable end.
-	if len(ledger.Errors) > limits.MaxErrors {
-		var errs []LedgerError
-		for _, e := range errorsBySig {
-			errs = append(errs, *e)
-		}
-		sort.Slice(errs, func(i, j int) bool { return errs[i].Turn < errs[j].Turn })
-		ledger.Errors = errs[len(errs)-limits.MaxErrors:]
-	} else {
-		var errs []LedgerError
-		for _, e := range errorsBySig {
-			errs = append(errs, *e)
-		}
-		sort.Slice(errs, func(i, j int) bool { return errs[i].Turn < errs[j].Turn })
-		ledger.Errors = errs
+	// Trim capped sections from the least-valuable end. Build the sorted
+	// error list from errorsBySig, then cap to MaxErrors (keeping the most
+	// recent). The previous code checked len(ledger.Errors) before it was
+	// populated, so MaxErrors was never applied.
+	var errs []LedgerError
+	for _, e := range errorsBySig {
+		errs = append(errs, *e)
 	}
+	sort.Slice(errs, func(i, j int) bool { return errs[i].Turn < errs[j].Turn })
+	if len(errs) > limits.MaxErrors {
+		errs = errs[len(errs)-limits.MaxErrors:]
+	}
+	ledger.Errors = errs
 	if len(ledger.Commands) > limits.MaxCommands {
 		ledger.Commands = ledger.Commands[len(ledger.Commands)-limits.MaxCommands:]
 	}

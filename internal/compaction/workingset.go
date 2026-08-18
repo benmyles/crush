@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/charmbracelet/crush/internal/filepathext"
 )
 
 // WorkingSetFile is one snapshotted file in the working set.
@@ -106,7 +108,7 @@ func CollectWorkingSet(in WorkingSetInput) WorkingSetSnapshot {
 		if len(snap.Files) >= in.MaxFiles || in.MaxFiles <= 0 {
 			break
 		}
-		resolved := filepath.Join(in.Cwd, candidate.Path)
+		resolved := filepathext.SmartJoin(in.Cwd, candidate.Path)
 		if !withinCwd(in.Cwd, resolved) {
 			snap.Skipped = append(snap.Skipped, WorkingSetSkip{Path: candidate.Path, Reason: "outside working directory"})
 			continue
