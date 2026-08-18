@@ -39,10 +39,10 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
+	"github.com/charmbracelet/crush/internal/compaction"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/db"
-	"github.com/charmbracelet/crush/internal/compaction"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
@@ -1083,11 +1083,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					if cfg.Enabled {
 						recentMsgs, _ := a.messages.List(ctx, call.SessionID)
 						decision := compaction.DecideTrigger(compaction.TriggerInput{
-							UsageTokens:             tokens,
-							ContextWindow:           cw,
-							ReserveTokens:           cfg.ReserveTokens,
-							SoftThresholdFraction:   cfg.SoftThresholdFraction,
-							Messages:                recentMsgs,
+							UsageTokens:           tokens,
+							ContextWindow:         cw,
+							ReserveTokens:         cfg.ReserveTokens,
+							SoftThresholdFraction: cfg.SoftThresholdFraction,
+							Messages:              recentMsgs,
 						})
 						if decision.Reason == compaction.TriggerRubric || decision.Reason == compaction.TriggerSoft {
 							shouldSummarize = true
@@ -1583,9 +1583,23 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
-	msgs, err := a.getSessionMessages(ctx, currentSession)
+	// Build the history from the RAW message list, not getSessionMessages.
+	// getSessionMessages returns a synthetic compaction-summary user message
+	// + retained tail; feeding that into the engine would classify the
+	// previous checkpoint as a user instruction, pollute the ledger/extracts,
+	// and put the fake "compaction-summary" id into covered_message_ids.
+	// The previous checkpoint is injected via previousCheckpoint instead.
+	rawMsgs, err := a.messages.List(ctx, sessionID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to list messages: %w", err)
+	}
+	// Drop summary messages: they are derived views, not source material.
+	msgs := make([]message.Message, 0, len(rawMsgs))
+	for _, m := range rawMsgs {
+		if m.IsSummaryMessage {
+			continue
+		}
+		msgs = append(msgs, m)
 	}
 	if len(msgs) == 0 {
 		return nil
@@ -1618,6 +1632,9 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 	if firstRetainedIdx < len(msgs) {
 		firstRetainedID = msgs[firstRetainedIdx].ID
 	}
+	// History always starts at msgs[0] (we compact the older prefix and keep
+	// the recent tail), so the session-absolute seq of History[0] is 1.
+	seqOffset := 1
 
 	// Build the compaction request from the active model's context window.
 	window := int64(largeModel.CatwalkCfg.ContextWindow)
@@ -1640,6 +1657,7 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 		TurnPrefix:                turnPrefix,
 		FirstRetainedSeq:          firstRetainedIdx + 1,
 		FirstRetainedID:           firstRetainedID,
+		SeqOffset:                 seqOffset,
 		SplitTurn:                 len(turnPrefix) > 0,
 		TokensBefore:              tokensBefore,
 		ConsumerContextWindow:     window,

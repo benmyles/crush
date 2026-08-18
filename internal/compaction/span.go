@@ -271,11 +271,18 @@ func orderedKeys(m map[string]any) []string {
 type SpanInput struct {
 	History    []message.Message
 	TurnPrefix []message.Message
+	// SeqOffset is the session-absolute 1-based ordinal of History[0] in the
+	// full raw message list. When 0, seq numbers start at 1 (span-relative).
+	// Setting it makes every block.Seq session-absolute so the recovery note,
+	// ledger, and recall tools all reference the same ordinal space across
+	// repeated compactions.
+	SeqOffset int
 }
 
 // BuildSpanModel renders the compacted message span as labeled, line-anchored
-// blocks. Seq numbers are 1-based ordinals within the full span (history then
-// turnPrefix), stable like Pi's JSONL physical line numbers.
+// blocks. Seq numbers are 1-based ordinals in the full session message list
+// (session-absolute when SeqOffset is set), stable like Pi's JSONL physical
+// line numbers.
 func BuildSpanModel(input SpanInput) SpanModel {
 	var blocks []SpanBlock
 	var turns []SpanTurn
@@ -283,7 +290,7 @@ func BuildSpanModel(input SpanInput) SpanModel {
 	toolCallsByID := map[string]SpanToolCall{}
 	readResultsByKey := map[string]int{}
 	var currentTurn *SpanTurn
-	seqCounter := 0
+	seqCounter := input.SeqOffset
 
 	startTurn := func(segment SpanSegment, createdAt int64) *SpanTurn {
 		turn := SpanTurn{
@@ -498,6 +505,11 @@ func BuildSpanModel(input SpanInput) SpanModel {
 }
 
 func userLikeText(msg message.Message) (string, UserLikeKind) {
+	// A compaction summary message is never a user instruction: classify it
+	// as a compaction summary so the ledger/extracts query excludes it.
+	if msg.IsSummaryMessage {
+		return TextOfContent(msg.Parts), UserKindCompactionSummary
+	}
 	// Shell commands are part of user messages in bang mode.
 	if shellCmds := msg.ShellCommands(); len(shellCmds) > 0 {
 		var sb strings.Builder
@@ -520,9 +532,6 @@ func userLikeText(msg message.Message) (string, UserLikeKind) {
 		return sb.String(), UserKindShell
 	}
 	text := TextOfContent(msg.Parts)
-	if text == "" && msg.IsSummaryMessage {
-		return text, UserKindCompactionSummary
-	}
 	return text, UserKindUser
 }
 

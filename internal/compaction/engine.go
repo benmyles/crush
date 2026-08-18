@@ -26,12 +26,17 @@ const ExtractsHeading = "# Compressed Transcript Extracts"
 
 // CompactionRequest is what the engine needs to run a compaction.
 type CompactionRequest struct {
-	SessionID          string
-	Cwd                string
-	History            []message.Message
-	TurnPrefix         []message.Message
-	FirstRetainedSeq   int
-	FirstRetainedID    string
+	SessionID        string
+	Cwd              string
+	History          []message.Message
+	TurnPrefix       []message.Message
+	FirstRetainedSeq int
+	FirstRetainedID  string
+	// SeqOffset is the session-absolute 1-based ordinal of History[0] in the
+	// full raw message list, so block seq numbers stay session-absolute across
+	// repeated compactions (otherwise the second compaction's seqs restart at
+	// 1 and the recovery note/ActiveContext anchors break).
+	SeqOffset          int
 	SplitTurn          bool
 	CustomInstructions string
 	TokensBefore       int64
@@ -89,8 +94,10 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 		return nil, fmt.Errorf("compaction: no source messages")
 	}
 
-	// 1. Span model with stable seq anchors.
-	span := BuildSpanModel(SpanInput{History: req.History, TurnPrefix: req.TurnPrefix})
+	// 1. Span model with stable seq anchors. SeqOffset makes block seq
+	// numbers session-absolute so the recovery note, ledger, and recall
+	// tools all reference the same ordinal space across compactions.
+	span := BuildSpanModel(SpanInput{History: req.History, TurnPrefix: req.TurnPrefix, SeqOffset: req.SeqOffset})
 
 	// 2. Budget.
 	restoreEnabled := req.Cfg.WorkingSetFiles > 0
@@ -443,22 +450,23 @@ func (e *Engine) persist(ctx context.Context, req CompactionRequest, result *Com
 		coveredEnd = sql.NullInt64{Int64: int64(result.Transcript.CompactedEndSeq), Valid: true}
 	}
 	_, err := e.q.CreateCompactionSummary(ctx, db.CreateCompactionSummaryParams{
-		ID:                result.SummaryID,
-		SessionID:         req.SessionID,
-		ParentIds:         parentIDs,
-		CoveredStart:      coveredStart,
-		CoveredEnd:        coveredEnd,
-		Kind:              kind,
-		Level:             level,
-		SummaryText:       result.SummaryText,
-		Layout:            layoutJSON,
-		Checkpoint:        sql.NullString{String: result.Checkpoint, Valid: result.Checkpoint != ""},
-		TokenCount:        result.TokenCount,
-		ModelProvider:     modelProvider,
-		ModelID:           modelID,
-		Reasoning:         reasoning,
-		CoveredMessageIds: coveredIDsJSON,
-		CreatedAt:         e.now(),
+		ID:                     result.SummaryID,
+		SessionID:              req.SessionID,
+		ParentIds:              parentIDs,
+		CoveredStart:           coveredStart,
+		CoveredEnd:             coveredEnd,
+		FirstRetainedMessageID: sql.NullString{String: req.FirstRetainedID, Valid: req.FirstRetainedID != ""},
+		Kind:                   kind,
+		Level:                  level,
+		SummaryText:            result.SummaryText,
+		Layout:                 layoutJSON,
+		Checkpoint:             sql.NullString{String: result.Checkpoint, Valid: result.Checkpoint != ""},
+		TokenCount:             result.TokenCount,
+		ModelProvider:          modelProvider,
+		ModelID:                modelID,
+		Reasoning:              reasoning,
+		CoveredMessageIds:      coveredIDsJSON,
+		CreatedAt:              e.now(),
 	})
 	if err != nil {
 		return err
@@ -492,6 +500,13 @@ func (e *Engine) persist(ctx context.Context, req CompactionRequest, result *Com
 // ActiveContext loads the current summary node(s) plus the retained tail of
 // raw messages for a session, returning the messages that form the active
 // context view. This replaces the legacy "slice from SummaryMessageID".
+//
+// The retained tail starts at the first raw message after the compacted
+// range, located by id (first_retained_message_id) — not by covered_end as an
+// index, because covered_end is a session-absolute ordinal that does not map
+// to a position in the full raw list after the second compaction. Summary
+// messages (IsSummaryMessage) are excluded from the retained tail so the
+// checkpoint text is never duplicated in the prompt.
 func (e *Engine) ActiveContext(ctx context.Context, sessionID string, allMessages []message.Message) (summaryText string, retained []message.Message, err error) {
 	active, err := e.q.GetActiveCompactionSummary(ctx, sessionID)
 	if err != nil {
@@ -501,18 +516,31 @@ func (e *Engine) ActiveContext(ctx context.Context, sessionID string, allMessage
 		}
 		return "", nil, err
 	}
-	// Retained tail = messages whose seq is after the covered range.
-	coveredEnd := int64(0)
-	if active.CoveredEnd.Valid {
-		coveredEnd = active.CoveredEnd.Int64
-	}
-	// Seq is 1-based ordinal in creation order; map roughly by index. The
-	// message list is ordered by created_at ASC, so index+1 is the seq.
-	cutoff := int(coveredEnd)
-	for i, msg := range allMessages {
-		if i+1 > cutoff {
-			retained = append(retained, msg)
+	// Locate the retained cut by id. Fall back to the absolute ordinal only if
+	// the id is missing (older summary rows predate the column).
+	cutIdx := -1
+	if active.FirstRetainedMessageID.Valid && active.FirstRetainedMessageID.String != "" {
+		for i, msg := range allMessages {
+			if msg.ID == active.FirstRetainedMessageID.String {
+				cutIdx = i
+				break
+			}
 		}
+	}
+	if cutIdx < 0 && active.CoveredEnd.Valid {
+		// Fallback: covered_end is a session-absolute 1-based ordinal.
+		cutIdx = int(active.CoveredEnd.Int64)
+	}
+	for i, msg := range allMessages {
+		if i < cutIdx {
+			continue
+		}
+		// Exclude summary messages from the retained tail: the checkpoint
+		// text is already carried by summaryText.
+		if msg.IsSummaryMessage {
+			continue
+		}
+		retained = append(retained, msg)
 	}
 	return active.SummaryText, retained, nil
 }
