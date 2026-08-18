@@ -99,6 +99,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getMessageStmt, err = db.PrepareContext(ctx, getMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMessage: %w", err)
 	}
+	if q.getMessageByIDStmt, err = db.PrepareContext(ctx, getMessageByID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMessageByID: %w", err)
+	}
 	if q.getMessagesByCreatedRangeStmt, err = db.PrepareContext(ctx, getMessagesByCreatedRange); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMessagesByCreatedRange: %w", err)
 	}
@@ -313,6 +316,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getMessageStmt: %w", cerr)
 		}
 	}
+	if q.getMessageByIDStmt != nil {
+		if cerr := q.getMessageByIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMessageByIDStmt: %w", cerr)
+		}
+	}
 	if q.getMessagesByCreatedRangeStmt != nil {
 		if cerr := q.getMessagesByCreatedRangeStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getMessagesByCreatedRangeStmt: %w", cerr)
@@ -517,6 +525,7 @@ type Queries struct {
 	getLastAssistantMessageBySessionStmt  *sql.Stmt
 	getLastSessionStmt                    *sql.Stmt
 	getMessageStmt                        *sql.Stmt
+	getMessageByIDStmt                    *sql.Stmt
 	getMessagesByCreatedRangeStmt         *sql.Stmt
 	getRecentActivityStmt                 *sql.Stmt
 	getSessionByIDStmt                    *sql.Stmt
@@ -576,6 +585,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getLastAssistantMessageBySessionStmt:  q.getLastAssistantMessageBySessionStmt,
 		getLastSessionStmt:                    q.getLastSessionStmt,
 		getMessageStmt:                        q.getMessageStmt,
+		getMessageByIDStmt:                    q.getMessageByIDStmt,
 		getMessagesByCreatedRangeStmt:         q.getMessagesByCreatedRangeStmt,
 		getRecentActivityStmt:                 q.getRecentActivityStmt,
 		getSessionByIDStmt:                    q.getSessionByIDStmt,

@@ -40,22 +40,23 @@ type CompactionFileRef struct {
 }
 
 type CompactionSummary struct {
-	ID                string         `json:"id"`
-	SessionID         string         `json:"session_id"`
-	ParentIds         string         `json:"parent_ids"`
-	CoveredStart      sql.NullInt64  `json:"covered_start"`
-	CoveredEnd        sql.NullInt64  `json:"covered_end"`
-	Kind              string         `json:"kind"`
-	Level             int64          `json:"level"`
-	SummaryText       string         `json:"summary_text"`
-	Layout            string         `json:"layout"`
-	Checkpoint        sql.NullString `json:"checkpoint"`
-	TokenCount        int64          `json:"token_count"`
-	ModelProvider     sql.NullString `json:"model_provider"`
-	ModelID           sql.NullString `json:"model_id"`
-	Reasoning         sql.NullString `json:"reasoning"`
-	CoveredMessageIds string         `json:"covered_message_ids"`
-	CreatedAt         int64          `json:"created_at"`
+	ID                     string         `json:"id"`
+	SessionID              string         `json:"session_id"`
+	ParentIds              string         `json:"parent_ids"`
+	CoveredStart           sql.NullInt64  `json:"covered_start"`
+	CoveredEnd             sql.NullInt64  `json:"covered_end"`
+	FirstRetainedMessageID sql.NullString `json:"first_retained_message_id"`
+	Kind                   string         `json:"kind"`
+	Level                  int64          `json:"level"`
+	SummaryText            string         `json:"summary_text"`
+	Layout                 string         `json:"layout"`
+	Checkpoint             sql.NullString `json:"checkpoint"`
+	TokenCount             int64          `json:"token_count"`
+	ModelProvider          sql.NullString `json:"model_provider"`
+	ModelID                sql.NullString `json:"model_id"`
+	Reasoning              sql.NullString `json:"reasoning"`
+	CoveredMessageIds      string         `json:"covered_message_ids"`
+	CreatedAt              int64          `json:"created_at"`
 }
 
 type File struct {
@@ -82,7 +83,7 @@ type Message struct {
 }
 
 type MessagesFt struct {
-	Text string `json:"text"`
+	Parts string `json:"parts"`
 }
 
 type ReadFile struct {

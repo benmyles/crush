@@ -5,6 +5,7 @@ INSERT INTO compaction_summaries (
     parent_ids,
     covered_start,
     covered_end,
+    first_retained_message_id,
     kind,
     level,
     summary_text,
@@ -17,7 +18,7 @@ INSERT INTO compaction_summaries (
     covered_message_ids,
     created_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -126,6 +127,11 @@ SET
     reserve_tokens = ?,
     keep_recent_tokens = ?
 WHERE id = ?;
+
+-- name: GetMessageByID :one
+SELECT *
+FROM messages
+WHERE id = ? LIMIT 1;
 
 -- name: GetMessagesByCreatedRange :many
 SELECT *

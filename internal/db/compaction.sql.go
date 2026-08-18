@@ -143,6 +143,7 @@ INSERT INTO compaction_summaries (
     parent_ids,
     covered_start,
     covered_end,
+    first_retained_message_id,
     kind,
     level,
     summary_text,
@@ -155,28 +156,29 @@ INSERT INTO compaction_summaries (
     covered_message_ids,
     created_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, session_id, parent_ids, covered_start, covered_end, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
+RETURNING id, session_id, parent_ids, covered_start, covered_end, first_retained_message_id, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
 `
 
 type CreateCompactionSummaryParams struct {
-	ID                string         `json:"id"`
-	SessionID         string         `json:"session_id"`
-	ParentIds         string         `json:"parent_ids"`
-	CoveredStart      sql.NullInt64  `json:"covered_start"`
-	CoveredEnd        sql.NullInt64  `json:"covered_end"`
-	Kind              string         `json:"kind"`
-	Level             int64          `json:"level"`
-	SummaryText       string         `json:"summary_text"`
-	Layout            string         `json:"layout"`
-	Checkpoint        sql.NullString `json:"checkpoint"`
-	TokenCount        int64          `json:"token_count"`
-	ModelProvider     sql.NullString `json:"model_provider"`
-	ModelID           sql.NullString `json:"model_id"`
-	Reasoning         sql.NullString `json:"reasoning"`
-	CoveredMessageIds string         `json:"covered_message_ids"`
-	CreatedAt         int64          `json:"created_at"`
+	ID                     string         `json:"id"`
+	SessionID              string         `json:"session_id"`
+	ParentIds              string         `json:"parent_ids"`
+	CoveredStart           sql.NullInt64  `json:"covered_start"`
+	CoveredEnd             sql.NullInt64  `json:"covered_end"`
+	FirstRetainedMessageID sql.NullString `json:"first_retained_message_id"`
+	Kind                   string         `json:"kind"`
+	Level                  int64          `json:"level"`
+	SummaryText            string         `json:"summary_text"`
+	Layout                 string         `json:"layout"`
+	Checkpoint             sql.NullString `json:"checkpoint"`
+	TokenCount             int64          `json:"token_count"`
+	ModelProvider          sql.NullString `json:"model_provider"`
+	ModelID                sql.NullString `json:"model_id"`
+	Reasoning              sql.NullString `json:"reasoning"`
+	CoveredMessageIds      string         `json:"covered_message_ids"`
+	CreatedAt              int64          `json:"created_at"`
 }
 
 func (q *Queries) CreateCompactionSummary(ctx context.Context, arg CreateCompactionSummaryParams) (CompactionSummary, error) {
@@ -186,6 +188,7 @@ func (q *Queries) CreateCompactionSummary(ctx context.Context, arg CreateCompact
 		arg.ParentIds,
 		arg.CoveredStart,
 		arg.CoveredEnd,
+		arg.FirstRetainedMessageID,
 		arg.Kind,
 		arg.Level,
 		arg.SummaryText,
@@ -205,6 +208,7 @@ func (q *Queries) CreateCompactionSummary(ctx context.Context, arg CreateCompact
 		&i.ParentIds,
 		&i.CoveredStart,
 		&i.CoveredEnd,
+		&i.FirstRetainedMessageID,
 		&i.Kind,
 		&i.Level,
 		&i.SummaryText,
@@ -231,7 +235,7 @@ func (q *Queries) DeleteCompactionSummary(ctx context.Context, id string) error 
 }
 
 const getActiveCompactionSummary = `-- name: GetActiveCompactionSummary :one
-SELECT s.id, s.session_id, s.parent_ids, s.covered_start, s.covered_end, s.kind, s.level, s.summary_text, s.layout, s.checkpoint, s.token_count, s.model_provider, s.model_id, s.reasoning, s.covered_message_ids, s.created_at
+SELECT s.id, s.session_id, s.parent_ids, s.covered_start, s.covered_end, s.first_retained_message_id, s.kind, s.level, s.summary_text, s.layout, s.checkpoint, s.token_count, s.model_provider, s.model_id, s.reasoning, s.covered_message_ids, s.created_at
 FROM compaction_summaries s
 JOIN sessions ses ON ses.id = s.session_id
 WHERE ses.active_summary_id = s.id
@@ -248,6 +252,7 @@ func (q *Queries) GetActiveCompactionSummary(ctx context.Context, sessionID stri
 		&i.ParentIds,
 		&i.CoveredStart,
 		&i.CoveredEnd,
+		&i.FirstRetainedMessageID,
 		&i.Kind,
 		&i.Level,
 		&i.SummaryText,
@@ -313,7 +318,7 @@ func (q *Queries) GetCompactionFileRefByPath(ctx context.Context, arg GetCompact
 }
 
 const getCompactionSummary = `-- name: GetCompactionSummary :one
-SELECT id, session_id, parent_ids, covered_start, covered_end, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
+SELECT id, session_id, parent_ids, covered_start, covered_end, first_retained_message_id, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
 FROM compaction_summaries
 WHERE id = ? LIMIT 1
 `
@@ -327,6 +332,7 @@ func (q *Queries) GetCompactionSummary(ctx context.Context, id string) (Compacti
 		&i.ParentIds,
 		&i.CoveredStart,
 		&i.CoveredEnd,
+		&i.FirstRetainedMessageID,
 		&i.Kind,
 		&i.Level,
 		&i.SummaryText,
@@ -338,6 +344,30 @@ func (q *Queries) GetCompactionSummary(ctx context.Context, id string) (Compacti
 		&i.Reasoning,
 		&i.CoveredMessageIds,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getMessageByID = `-- name: GetMessageByID :one
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message
+FROM messages
+WHERE id = ? LIMIT 1
+`
+
+func (q *Queries) GetMessageByID(ctx context.Context, id string) (Message, error) {
+	row := q.queryRow(ctx, q.getMessageByIDStmt, getMessageByID, id)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.Role,
+		&i.Parts,
+		&i.Model,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.Provider,
+		&i.IsSummaryMessage,
 	)
 	return i, err
 }
@@ -391,7 +421,7 @@ func (q *Queries) GetMessagesByCreatedRange(ctx context.Context, arg GetMessages
 }
 
 const listChildCompactionSummaries = `-- name: ListChildCompactionSummaries :many
-SELECT id, session_id, parent_ids, covered_start, covered_end, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
+SELECT id, session_id, parent_ids, covered_start, covered_end, first_retained_message_id, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
 FROM compaction_summaries
 WHERE session_id = ?
   AND id IN (?2)
@@ -418,6 +448,7 @@ func (q *Queries) ListChildCompactionSummaries(ctx context.Context, arg ListChil
 			&i.ParentIds,
 			&i.CoveredStart,
 			&i.CoveredEnd,
+			&i.FirstRetainedMessageID,
 			&i.Kind,
 			&i.Level,
 			&i.SummaryText,
@@ -521,7 +552,7 @@ func (q *Queries) ListCompactionEmbeddingsBySession(ctx context.Context, session
 }
 
 const listCompactionSummariesBySession = `-- name: ListCompactionSummariesBySession :many
-SELECT id, session_id, parent_ids, covered_start, covered_end, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
+SELECT id, session_id, parent_ids, covered_start, covered_end, first_retained_message_id, kind, level, summary_text, layout, checkpoint, token_count, model_provider, model_id, reasoning, covered_message_ids, created_at
 FROM compaction_summaries
 WHERE session_id = ?
 ORDER BY created_at ASC
@@ -542,6 +573,7 @@ func (q *Queries) ListCompactionSummariesBySession(ctx context.Context, sessionI
 			&i.ParentIds,
 			&i.CoveredStart,
 			&i.CoveredEnd,
+			&i.FirstRetainedMessageID,
 			&i.Kind,
 			&i.Level,
 			&i.SummaryText,

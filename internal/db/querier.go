@@ -34,6 +34,7 @@ type Querier interface {
 	GetLastAssistantMessageBySession(ctx context.Context, sessionID string) (Message, error)
 	GetLastSession(ctx context.Context) (Session, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
+	GetMessageByID(ctx context.Context, id string) (Message, error)
 	GetMessagesByCreatedRange(ctx context.Context, arg GetMessagesByCreatedRangeParams) ([]Message, error)
 	GetRecentActivity(ctx context.Context) ([]GetRecentActivityRow, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)

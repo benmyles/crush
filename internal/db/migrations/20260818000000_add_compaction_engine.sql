@@ -8,8 +8,9 @@ CREATE TABLE IF NOT EXISTS compaction_summaries (
     id               TEXT PRIMARY KEY,
     session_id       TEXT NOT NULL,
     parent_ids       TEXT NOT NULL DEFAULT '[]',   -- JSON array of compaction_summaries.id (DAG parents)
-    covered_start    INTEGER,                       -- messages.rowid range start (leaf) or child range start (condensed)
-    covered_end      INTEGER,                       -- messages.rowid range end
+    covered_start    INTEGER,                       -- absolute ordinal of the first compacted raw message (session-relative)
+    covered_end      INTEGER,                       -- absolute ordinal of the last compacted raw message (session-relative)
+    first_retained_message_id TEXT,                 -- id of the first raw message retained after compaction (anchor for ActiveContext)
     kind             TEXT NOT NULL CHECK (kind IN ('leaf', 'condensed')),
     level            INTEGER NOT NULL DEFAULT 0,    -- escalation level that produced it (0=preserve_details,1=bullet_points,2=deterministic)
     summary_text     TEXT NOT NULL,
@@ -84,27 +85,32 @@ CREATE INDEX IF NOT EXISTS idx_compaction_embeddings_session ON compaction_embed
 -- stable physical row id used by the exact-recovery index. External-content
 -- FTS5 is kept in sync by the triggers below so recall_grep sees every
 -- message without a separate indexing step.
+-- The FTS column MUST be named `parts` to match the external-content table's
+-- column, otherwise FTS5 reads the content table and errors with
+-- `no such column: T.parts`. `content_rowid='rowid'` ties FTS rows to the
+-- physical message row id used by the exact-recovery index.
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    text,
+    parts,
     content='messages',
     content_rowid='rowid',
     tokenize='unicode61'
 );
 
--- Backfill the index for messages that predate the FTS table.
-INSERT INTO messages_fts(rowid, text)
-SELECT rowid, parts FROM messages
-WHERE rowid NOT IN (SELECT rowid FROM messages_fts);
+-- Backfill the index for messages that predate the FTS table. The
+-- 'rebuild' command re-reads the content table and populates every row
+-- atomically; it is the correct way to sync an external-content FTS table
+-- after creation.
+INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');
 
 CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.parts);
+    INSERT INTO messages_fts(rowid, parts) VALUES (new.rowid, new.parts);
 END;
 CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.rowid, old.parts);
+    INSERT INTO messages_fts(messages_fts, rowid, parts) VALUES ('delete', old.rowid, old.parts);
 END;
 CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.rowid, old.parts);
-    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.parts);
+    INSERT INTO messages_fts(messages_fts, rowid, parts) VALUES ('delete', old.rowid, old.parts);
+    INSERT INTO messages_fts(rowid, parts) VALUES (new.rowid, new.parts);
 END;
 
 -- Per-session compaction settings carried on the session row so the engine
