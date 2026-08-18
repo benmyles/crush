@@ -1,0 +1,30 @@
+internal/agent/tools/recall.go
+  s_b49145118e9070::t_ef56085c9d49d7 260-262
+internal/compaction/checkpoint.go
+  s_b49145118e9070::t_5b62219cfce631 161
+internal/compaction/transcript.go
+  s_b49145118e9070::t_ca88a4d13f4f7f 96-97,99
+  s_b49145118e9070::t_a25fe350b612e4 101-102
+internal/db/migration_fts_test.go
+  s_b49145118e9070::t_dba241b87415f8 31,43,55,69,71,94
+internal/config/config.go
+  s_b49145118e9070::t_7a67d9dffa76c4 315-320,322
+schema.json
+  s_b49145118e9070::t_0a7fd91d2bdc9c 32-143,603,606-609
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "a0531b9c558a1a51e1b6269e48c0126afbdc69ed",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
