@@ -1072,6 +1072,26 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					shouldSummarize = true
 					return true
 				}
+				// Structure-aware trigger: when the compaction engine is enabled,
+				// use the rubric to fire an async compaction at a closed reasoning
+				// unit before the hard threshold, and suppress it mid-derivation.
+				if a.compaction != nil && a.cfg != nil && !a.disableAutoSummarize {
+					cfg := config.ResolveCompactionConfig(a.cfg.Config())
+					if cfg.Enabled {
+						recentMsgs, _ := a.messages.List(ctx, call.SessionID)
+						decision := compaction.DecideTrigger(compaction.TriggerInput{
+							UsageTokens:             tokens,
+							ContextWindow:           cw,
+							ReserveTokens:           cfg.ReserveTokens,
+							SoftThresholdFraction:   cfg.SoftThresholdFraction,
+							Messages:                recentMsgs,
+						})
+						if decision.Reason == compaction.TriggerRubric || decision.Reason == compaction.TriggerSoft {
+							shouldSummarize = true
+							return true
+						}
+					}
+				}
 				return false
 			},
 			func(steps []fantasy.StepResult) bool {

@@ -687,6 +687,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 			builtTools = append(builtTools,
 				tools.NewRecallGrepTool(c.dbConn, c.querier, sessionResolver),
 				tools.NewRecallDescribeTool(c.querier),
+				tools.NewCompactContextTool(func() tools.CompactContextAgent { return result }, nil),
 			)
 			if isSubAgent {
 				builtTools = append(builtTools, tools.NewRecallExpandTool(c.dbConn, c.querier, sessionResolver))

@@ -131,6 +131,28 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 			historyTurns++
 		}
 	}
+	// Parallel block compaction for very large spans: pre-summarize blocks in
+	// parallel, then feed the condensed material into the checkpoint lane. This
+	// gives predictable summary volume and higher throughput when a single
+	// pass would attend poorly over 96k+ tokens.
+	if req.Cfg.ParallelBlockThreshold > 0 && int64(EstimateTokens(len(history))) > req.Cfg.ParallelBlockThreshold && e.completer != nil {
+		blockCount := 4
+		if historyTurns > 8 {
+			blockCount = 6
+		}
+		par := RunParallelBlockCompaction(ctx, ParallelBlockInput{
+			Span:       span,
+			BlockCount: blockCount,
+			Budget:     CheckpointRenderBudget,
+			Summarize: func(ctx context.Context, blockText string) (string, error) {
+				text, _, err := e.completer(ctx, CheckpointSystemPrompt, "Summarize this transcript block concisely, preserving exact identifiers, file paths, commands, and errors:\n\n"+blockText, plan.Checkpoint.MaxOutputTokens/2)
+				return text, err
+			},
+		})
+		if par.Summary != "" {
+			history = par.Summary
+		}
+	}
 	esc, err := e.runCheckpointLane(ctx, plan, previousCheckpoint, history, turnPrefix, historyTurns, req)
 	if err != nil {
 		return nil, fmt.Errorf("compaction: checkpoint lane failed: %w", err)
