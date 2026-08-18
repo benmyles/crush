@@ -1,0 +1,23 @@
+internal/compaction/budget.go
+  s_b49145118e9070::t_072dfb48e80006 84-89
+  s_b49145118e9070::t_199c0116e83482 134-138
+internal/compaction/compaction_test.go
+  s_b49145118e9070::t_8d39f292e5cda4 115-118,125-142
+  s_b49145118e9070::t_99a9c76119a03c 143-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "de67407d182b9c94cdaccce4c9fe6120032a29a1",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
