@@ -102,8 +102,19 @@ func searchMessagesFTS(ctx context.Context, dbx db.DBTX, pattern, sessionID stri
 	if limit <= 0 {
 		limit = 20
 	}
-	// Build the query. We join messages_fts to messages on rowid and filter
-	// by session when provided. FTS5 MATCH uses the pattern verbatim.
+	// FTS5 MATCH with a raw pattern errors on paths/punctuation (foo.go,
+	// internal/x). Phrase-quote the pattern first; if the quoted MATCH still
+	// errors (unbalanced quotes, FTS5 operator characters), fall back to a
+	// LIKE query over the parts column so recall_grep never fails.
+	quoted := quoteFTSPattern(pattern)
+	hits, err := ftsQuery(ctx, dbx, quoted, sessionID, limit)
+	if err != nil {
+		return likeSearch(ctx, dbx, pattern, sessionID, limit)
+	}
+	return hits, nil
+}
+
+func ftsQuery(ctx context.Context, dbx db.DBTX, quotedPattern, sessionID string, limit int) ([]ftsHit, error) {
 	var (
 		rows *sql.Rows
 		err  error
@@ -115,7 +126,7 @@ func searchMessagesFTS(ctx context.Context, dbx db.DBTX, pattern, sessionID stri
 			 JOIN messages m ON m.rowid = messages_fts.rowid
 			 WHERE messages_fts MATCH ?
 			 ORDER BY rank
-			 LIMIT ?`, pattern, limit)
+			 LIMIT ?`, quotedPattern, limit)
 	} else {
 		rows, err = dbx.QueryContext(ctx,
 			`SELECT m.id, m.session_id, m.role, m.parts, m.created_at, m.rowid
@@ -123,7 +134,7 @@ func searchMessagesFTS(ctx context.Context, dbx db.DBTX, pattern, sessionID stri
 			 JOIN messages m ON m.rowid = messages_fts.rowid
 			 WHERE messages_fts MATCH ? AND m.session_id = ?
 			 ORDER BY rank
-			 LIMIT ?`, pattern, sessionID, limit)
+			 LIMIT ?`, quotedPattern, sessionID, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("recall_grep: search failed: %w", err)
@@ -140,17 +151,96 @@ func searchMessagesFTS(ctx context.Context, dbx db.DBTX, pattern, sessionID stri
 	return hits, rows.Err()
 }
 
-// snippetFromParts extracts a short text snippet from a message's JSON parts.
+// likeSearch is the FTS-syntax-error fallback: a simple LIKE query over the
+// parts column. It is slower than FTS5 but never fails on punctuation.
+func likeSearch(ctx context.Context, dbx db.DBTX, pattern, sessionID string, limit int) ([]ftsHit, error) {
+	like := "%" + pattern + "%"
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if sessionID == "" {
+		rows, err = dbx.QueryContext(ctx,
+			`SELECT id, session_id, role, parts, created_at, rowid
+			 FROM messages
+			 WHERE parts LIKE ?
+			 ORDER BY created_at ASC
+			 LIMIT ?`, like, limit)
+	} else {
+		rows, err = dbx.QueryContext(ctx,
+			`SELECT id, session_id, role, parts, created_at, rowid
+			 FROM messages
+			 WHERE session_id = ? AND parts LIKE ?
+			 ORDER BY created_at ASC
+			 LIMIT ?`, sessionID, like, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("recall_grep: fallback search failed: %w", err)
+	}
+	defer rows.Close()
+	var hits []ftsHit
+	for rows.Next() {
+		var h ftsHit
+		if err := rows.Scan(&h.ID, &h.SessionID, &h.Role, &h.Parts, &h.CreatedAt, &h.Rowid); err != nil {
+			return nil, fmt.Errorf("recall_grep: scan failed: %w", err)
+		}
+		hits = append(hits, h)
+	}
+	return hits, rows.Err()
+}
+
+// snippetFromParts extracts a short text snippet from a message's JSON
+// parts. Crush wraps each part as {"type":"...","data":{...}}, so we decode
+// the wrapper and render text, tool calls, tool results, and shell commands.
 func snippetFromParts(partsJSON string, max int) string {
-	var parts []map[string]any
+	var parts []struct {
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
+	}
 	if err := json.Unmarshal([]byte(partsJSON), &parts); err != nil {
 		return ""
 	}
 	var sb strings.Builder
 	for _, p := range parts {
-		if t, ok := p["text"].(string); ok && t != "" {
-			sb.WriteString(t)
-			sb.WriteString(" ")
+		switch p.Type {
+		case "text":
+			var d struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(p.Data, &d) == nil && d.Text != "" {
+				sb.WriteString(d.Text)
+				sb.WriteString(" ")
+			}
+		case "tool_call":
+			var d struct {
+				Name  string `json:"name"`
+				Input string `json:"input"`
+			}
+			if json.Unmarshal(p.Data, &d) == nil {
+				fmt.Fprintf(&sb, "[tool_call: %s %s] ", d.Name, truncateForSnippet(d.Input, 80))
+			}
+		case "tool_result":
+			var d struct {
+				Content string `json:"content"`
+			}
+			if json.Unmarshal(p.Data, &d) == nil && d.Content != "" {
+				fmt.Fprintf(&sb, "[tool_result: %s] ", truncateForSnippet(d.Content, 120))
+			}
+		case "shell_command":
+			var d struct {
+				Command string `json:"command"`
+				Output  string `json:"output"`
+			}
+			if json.Unmarshal(p.Data, &d) == nil {
+				fmt.Fprintf(&sb, "$ %s ", d.Command)
+			}
+		case "reasoning":
+			var d struct {
+				Thinking string `json:"thinking"`
+			}
+			if json.Unmarshal(p.Data, &d) == nil && d.Thinking != "" {
+				sb.WriteString(truncateForSnippet(d.Thinking, 80) + " ")
+			}
 		}
 	}
 	s := strings.Join(strings.Fields(sb.String()), " ")
@@ -158,6 +248,22 @@ func snippetFromParts(partsJSON string, max int) string {
 		s = s[:max] + "…"
 	}
 	return s
+}
+
+func truncateForSnippet(s string, max int) string {
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
+}
+
+// quoteFTSPattern wraps a raw search pattern in FTS5 phrase quotes and
+// escapes embedded double quotes, so paths and punctuation (foo.go,
+// internal/x) do not cause FTS5 syntax errors. Callers should fall back to a
+// LIKE query if the quoted MATCH still errors.
+func quoteFTSPattern(pattern string) string {
+	escaped := strings.ReplaceAll(pattern, `"`, `""`)
+	return `"` + escaped + `"`
 }
 
 // NewRecallGrepTool creates the recall_grep tool. sessionResolver returns the
@@ -171,6 +277,9 @@ func NewRecallGrepTool(dbx db.DBTX, q db.Querier, sessionResolver func() string)
 				return fantasy.NewTextErrorResponse("pattern is required"), nil
 			}
 			sessionID := params.SessionID
+			if sessionID == "" {
+				sessionID = GetSessionFromContext(ctx)
+			}
 			if sessionID == "" && sessionResolver != nil {
 				sessionID = sessionResolver()
 			}
@@ -181,16 +290,48 @@ func NewRecallGrepTool(dbx db.DBTX, q db.Querier, sessionResolver func() string)
 			if len(hits) == 0 {
 				return fantasy.NewTextResponse("No matches found in the session history."), nil
 			}
+			// Build a messageID -> summaryID index from the session's summaries so
+			// hits are grouped by their covering summary and the summary id is
+			// surfaced for recall_expand.
+			covering := buildCoveringSummaryIndex(ctx, q, sessionID, hits)
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "Found %d match(es) in the immutable session history:\n\n", len(hits))
 			for _, h := range hits {
 				snippet := snippetFromParts(h.Parts, 160)
-				fmt.Fprintf(&sb, "- [seq %d] %s · role=%s · session=%s\n  %s\n", h.Rowid, h.ID, h.Role, h.SessionID, snippet)
+				summaryID, covered := covering[h.ID]
+				coverNote := "not covered by any summary (still in the active context)"
+				if covered {
+					coverNote = fmt.Sprintf("covered by summary %s", summaryID)
+				}
+				fmt.Fprintf(&sb, "- [seq %d] %s · role=%s · %s\n  %s\n", h.Rowid, h.ID, h.Role, coverNote, snippet)
 			}
-			sb.WriteString("\nUse recall_expand with the covering summary id to recover the full raw turns, or recall_describe for metadata.")
+			sb.WriteString("\nUse recall_expand with a covering summary id to recover the full raw turns, or recall_describe for metadata.")
 			return fantasy.NewTextResponse(sb.String()), nil
 		},
 	)
+}
+
+// buildCoveringSummaryIndex maps each hit message id to the id of the summary
+// that covers it, by scanning the session's compaction_summaries.covered_message_ids.
+func buildCoveringSummaryIndex(ctx context.Context, q db.Querier, sessionID string, hits []ftsHit) map[string]string {
+	out := map[string]string{}
+	if sessionID == "" {
+		return out
+	}
+	summaries, err := q.ListCompactionSummariesBySession(ctx, sessionID)
+	if err != nil {
+		return out
+	}
+	for _, s := range summaries {
+		var ids []string
+		if err := json.Unmarshal([]byte(s.CoveredMessageIds), &ids); err != nil {
+			continue
+		}
+		for _, id := range ids {
+			out[id] = s.ID
+		}
+	}
+	return out
 }
 
 // NewRecallExpandTool creates the recall_expand tool. Only sub-agents should
@@ -222,7 +363,7 @@ func NewRecallExpandTool(dbx db.DBTX, q db.Querier, sessionResolver func() strin
 				return fantasy.NewTextResponse("This summary has no covered message ids recorded; it may be a condensed node. Use recall_expand on its leaf children instead."), nil
 			}
 			sessionID := summary.SessionID
-			_ = sessionResolver
+			_ = sessionResolver // sessionID comes from the summary row
 			// Fetch the covered messages via raw SQL on messages by id set.
 			placeholders := make([]string, len(coveredIDs))
 			args := make([]any, 0, len(coveredIDs)+1)
@@ -254,7 +395,7 @@ func NewRecallExpandTool(dbx db.DBTX, q db.Querier, sessionResolver func() strin
 					continue
 				}
 				count++
-				snippet := snippetFromParts(parts, 400)
+				snippet := snippetFromParts(parts, 2000)
 				fmt.Fprintf(&sb, "### %s (role=%s)\n%s\n\n", id, role, snippet)
 			}
 			if err := rows.Err(); err != nil {
