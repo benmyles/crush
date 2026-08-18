@@ -1,0 +1,31 @@
+internal/compaction/escalation.go
+  s_b49145118e9070::t_fff813bb6183c9 7
+  s_b49145118e9070::t_8cb8f9bb641cf7 90-98,100-108,110,112,114-127,135-140,143-144,148-196
+internal/agent/agent.go
+  s_b49145118e9070::t_38f90d5048e03a 1669-1670
+internal/compaction/compaction_test.go
+  s_b49145118e9070::t_b1dfc663e9b4b9 6
+  s_b49145118e9070::t_997f6e2bf68b46 4-5
+  s_b49145118e9070::t_eeee12f851552c 262-263,271-297
+  s_b49145118e9070::t_c26bf87922650f 264-266,268-270
+internal/compaction/engine.go
+  s_b49145118e9070::t_3034d282a73d34 53-57
+  s_b49145118e9070::t_5e7f1ae1b152a6 167,304,334-336
+  s_b49145118e9070::t_2802c101873d46 475-476
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "92dcbb579852a0ab77cc89171ad0450522175291",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
