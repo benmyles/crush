@@ -27,7 +27,7 @@ func TestNewLLMMapTool_ProcessesJSONL(t *testing.T) {
 		// Echo back a fixed shape so validation passes.
 		return `{"adult": true, "processed": true}`, nil
 	}
-	tool := NewLLMMapTool(completer)
+	tool := NewLLMMapTool(completer, nil, dir)
 	paramsJSON, err := json.Marshal(LLMMapParams{
 		InputPath:    inputPath,
 		Prompt:       "Is this person an adult? Return JSON.",
@@ -50,7 +50,7 @@ func TestNewLLMMapTool_ProcessesJSONL(t *testing.T) {
 
 func TestNewLLMMapTool_RequiresPaths(t *testing.T) {
 	t.Parallel()
-	tool := NewLLMMapTool(func(_ context.Context, _ string) (string, error) { return "", nil })
+	tool := NewLLMMapTool(func(_ context.Context, _ string) (string, error) { return "", nil }, nil, "")
 	paramsJSON, err := json.Marshal(LLMMapParams{
 		Prompt: "x",
 	})
@@ -66,7 +66,7 @@ func TestNewLLMMapTool_EmptyInput(t *testing.T) {
 	inputPath := filepath.Join(dir, "empty.jsonl")
 	outputPath := filepath.Join(dir, "out.jsonl")
 	require.NoError(t, os.WriteFile(inputPath, []byte(""), 0o644))
-	tool := NewLLMMapTool(func(_ context.Context, _ string) (string, error) { return "{}", nil })
+	tool := NewLLMMapTool(func(_ context.Context, _ string) (string, error) { return "{}", nil }, nil, dir)
 	paramsJSON, err := json.Marshal(LLMMapParams{
 		InputPath:  inputPath,
 		Prompt:     "x",

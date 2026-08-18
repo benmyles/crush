@@ -11,13 +11,14 @@ import (
 	"sync/atomic"
 
 	"charm.land/fantasy"
+
+	"github.com/charmbracelet/crush/internal/filepathext"
+	"github.com/charmbracelet/crush/internal/fsext"
+	"github.com/charmbracelet/crush/internal/permission"
 )
 
 // LLMMapToolName is the tool name for llm_map.
 const LLMMapToolName = "llm_map"
-
-// AgenticMapToolName is the tool name for agentic_map.
-const AgenticMapToolName = "agentic_map"
 
 const llmMapDescription = `Apply a prompt to every item in a JSONL input file in parallel, writing structured results to an output JSONL file.
 
@@ -43,16 +44,6 @@ type LLMMapParams struct {
 	OutputPath   string `json:"output_path" description:"Path to write the JSONL output file"`
 	OutputSchema string `json:"output_schema,omitempty" description:"Optional JSON Schema string to validate each output against"`
 	Concurrency  int    `json:"concurrency,omitempty" description:"Parallel workers (default 16)"`
-}
-
-// AgenticMapParams are the params for agentic_map.
-type AgenticMapParams struct {
-	InputPath    string `json:"input_path" description:"Path to the JSONL input file (one JSON object per line)"`
-	Prompt       string `json:"prompt" description:"The prompt for each sub-agent. The item JSON is appended."`
-	OutputPath   string `json:"output_path" description:"Path to write the JSONL output file"`
-	OutputSchema string `json:"output_schema,omitempty" description:"Optional JSON Schema string to validate each output against"`
-	Concurrency  int    `json:"concurrency,omitempty" description:"Parallel sub-agents (default 4)"`
-	ReadOnly     bool   `json:"read_only,omitempty" description:"Whether sub-agents may modify the filesystem"`
 }
 
 // MapCompleter is the per-item completion function for llm_map.
@@ -160,37 +151,37 @@ func runLLMMap(ctx context.Context, params LLMMapParams, complete MapCompleter) 
 }
 
 // NewLLMMapTool creates the llm_map tool. The completer is the per-item
-// stateless LLM call (no tools, no side effects).
-func NewLLMMapTool(completer MapCompleter) fantasy.AgentTool {
+// stateless LLM call (no tools, no side effects). Paths are resolved against
+// the working directory and the output write is gated by the permission
+// service so llm_map cannot bypass Crush's filesystem permissions.
+func NewLLMMapTool(completer MapCompleter, permissions permission.Service, workingDir string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		LLMMapToolName,
 		llmMapDescription,
 		func(ctx context.Context, params LLMMapParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			return runLLMMap(ctx, params, completer)
-		},
-	)
-}
-
-// NewAgenticMapTool creates the agentic_map tool. The runner spawns a full
-// sub-agent per item.
-func NewAgenticMapTool(runner MapSubAgentRunner) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
-		AgenticMapToolName,
-		agenticMapDescription,
-		func(ctx context.Context, params AgenticMapParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			concurrency := params.Concurrency
-			if concurrency <= 0 {
-				concurrency = 4
+			// Resolve paths against the working directory so relative paths work
+			// and absolute paths outside the cwd are visible to the permission
+			// service.
+			params.InputPath = filepathext.SmartJoin(workingDir, params.InputPath)
+			params.OutputPath = filepathext.SmartJoin(workingDir, params.OutputPath)
+			sessionID := GetSessionFromContext(ctx)
+			if permissions != nil && sessionID != "" {
+				p, err := permissions.Request(ctx, permission.CreatePermissionRequest{
+					SessionID:   sessionID,
+					Path:        fsext.PathOrPrefix(params.OutputPath, workingDir),
+					ToolCallID:  call.ID,
+					ToolName:    LLMMapToolName,
+					Action:      "write",
+					Description: fmt.Sprintf("llm_map write output to %s", params.OutputPath),
+				})
+				if err != nil {
+					return fantasy.ToolResponse{}, err
+				}
+				if !p {
+					return NewPermissionDeniedResponse(), nil
+				}
 			}
-			return runLLMMap(ctx, LLMMapParams{
-				InputPath:    params.InputPath,
-				Prompt:       params.Prompt,
-				OutputPath:   params.OutputPath,
-				OutputSchema: params.OutputSchema,
-				Concurrency:  concurrency,
-			}, func(ctx context.Context, prompt string) (string, error) {
-				return runner(ctx, prompt, params.ReadOnly)
-			})
+			return runLLMMap(ctx, params, completer)
 		},
 	)
 }

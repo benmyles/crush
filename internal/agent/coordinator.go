@@ -675,28 +675,11 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	})
 
 	c.readyWg.Go(func() error {
-		builtTools, err := c.buildTools(initCtx, agent, isSubAgent)
+		builtTools, err := c.buildTools(initCtx, agent, isSubAgent, func() (tools.CompactContextAgent, tools.MapCompleterProvider) {
+			return result, result
+		})
 		if err != nil {
 			return err
-		}
-		// Append compaction recall tools. recall_expand is sub-agent-only so
-		// the main loop cannot flood its own context; recall_grep and
-		// recall_describe are always available when a DB connection exists.
-		if c.dbConn != nil && c.querier != nil {
-			sessionResolver := func() string { return result.CurrentSessionID() }
-			builtTools = append(builtTools,
-				tools.NewRecallGrepTool(c.dbConn, c.querier, sessionResolver),
-				tools.NewRecallDescribeTool(c.querier),
-				tools.NewCompactContextTool(func() tools.CompactContextAgent { return result }),
-			)
-			// Operator-level recursion tools (llm_map / agentic_map) for
-			// data-parallel processing without overflowing the parent context.
-			if completer := result.MapCompleter(); completer != nil {
-				builtTools = append(builtTools, tools.NewLLMMapTool(completer))
-			}
-			if isSubAgent {
-				builtTools = append(builtTools, tools.NewRecallExpandTool(c.dbConn, c.querier, sessionResolver))
-			}
 		}
 		result.SetTools(builtTools)
 		return nil
@@ -705,7 +688,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	return result, nil
 }
 
-func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubAgent bool) ([]fantasy.AgentTool, error) {
+func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubAgent bool, compactionResolver func() (tools.CompactContextAgent, tools.MapCompleterProvider)) ([]fantasy.AgentTool, error) {
 	var allTools []fantasy.AgentTool
 	if slices.Contains(agent.AllowedTools, AgentToolName) {
 		agentTool, err := c.agentTool(ctx)
@@ -785,6 +768,37 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 			tools.NewListMCPResourcesTool(c.cfg, c.permissions),
 			tools.NewReadMCPResourceTool(c.cfg, c.permissions),
 		)
+	}
+
+	// Compaction recall + operator tools. Built here (before the
+	// AllowedTools filter and hook wrapping) so allow-lists, disabled_tools,
+	// and PreToolUse hooks apply to them. recall_expand is sub-agent-only so
+	// the main loop cannot flood its own context; llm_map and compact_context
+	// are not read-only so read-only sub-agents (resolveReadOnlyTools) never
+	// receive them.
+	if c.dbConn != nil && c.querier != nil {
+		compactionAgent, mapCompleter := compactionResolver()
+		sessionResolver := func() string {
+			if compactionAgent != nil {
+				return compactionAgent.CurrentSessionID()
+			}
+			return ""
+		}
+		allTools = append(allTools,
+			tools.NewRecallGrepTool(c.dbConn, c.querier, sessionResolver),
+			tools.NewRecallDescribeTool(c.querier),
+		)
+		if compactionAgent != nil {
+			allTools = append(allTools, tools.NewCompactContextTool(func() tools.CompactContextAgent { return compactionAgent }))
+		}
+		if mapCompleter != nil {
+			if completer := mapCompleter.MapCompleter(); completer != nil {
+				allTools = append(allTools, tools.NewLLMMapTool(completer, c.permissions, c.cfg.WorkingDir()))
+			}
+		}
+		if isSubAgent {
+			allTools = append(allTools, tools.NewRecallExpandTool(c.dbConn, c.querier, sessionResolver))
+		}
 	}
 
 	var filteredTools []fantasy.AgentTool
@@ -1247,7 +1261,9 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return errCoderAgentNotConfigured
 	}
 
-	tools, err := c.buildTools(ctx, agentCfg, false)
+	tools, err := c.buildTools(ctx, agentCfg, false, func() (tools.CompactContextAgent, tools.MapCompleterProvider) {
+		return c.currentAgent, c.currentAgent
+	})
 	if err != nil {
 		return err
 	}

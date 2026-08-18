@@ -20,9 +20,6 @@ const RecallExpandToolName = "recall_expand"
 // RecallDescribeToolName is the tool name for recall_describe.
 const RecallDescribeToolName = "recall_describe"
 
-// RecallQueryToolName is the tool name for recall_query (dense retrieval).
-const RecallQueryToolName = "recall_query"
-
 const recallGrepDescription = `Search the full, uncompacted session history for a pattern.
 
 Use this to recover context that was compacted out of the active window: exact file paths, error strings, tool-call ids, user requests, or any literal text. Results are grouped by the summary node that covers them. The search is over the immutable message store — every message Crush ever persisted, never truncated.
@@ -46,10 +43,6 @@ const recallDescribeDescription = `Describe a compaction summary or file referen
 
 Returns metadata for an id from recall_grep or recall_expand: kind (leaf/condensed summary or file reference), token count, covered message range, parent summaries, and (for summaries) the checkpoint text. Use this to decide whether to expand a node before spending the context.`
 
-const recallQueryDescription = `Semantic search over the session history via embeddings.
-
-Returns the most semantically similar past messages to a query, independent of recency. Use this when you need to recall something by meaning rather than exact text, especially across many compactions. Requires the optional embedding index to be enabled.`
-
 // RecallGrepParams are the params for recall_grep.
 type RecallGrepParams struct {
 	Pattern   string `json:"pattern" description:"The search pattern (FTS5 query syntax: words, phrases, OR, NEAR, *)"`
@@ -68,22 +61,11 @@ type RecallDescribeParams struct {
 	ID string `json:"id" description:"The summary or file-ref id to describe"`
 }
 
-// RecallQueryParams are the params for recall_query.
-type RecallQueryParams struct {
-	Query     string `json:"query" description:"The natural-language query to search for semantically"`
-	SessionID string `json:"session_id,omitempty" description:"Restrict to a session. Defaults to the active session."`
-	Limit     int    `json:"limit,omitempty" description:"Max results (default 5)"`
-}
-
 // MapCompleterProvider provides the stateless completion function for llm_map.
 // Defined here to avoid an import cycle with the agent package.
 type MapCompleterProvider interface {
 	MapCompleter() func(ctx context.Context, prompt string) (string, error)
 }
-
-// RecallQueryRunner performs the embedding + cosine search. It is injected so
-// the tool does not import the compaction package directly (cycle avoidance).
-type RecallQueryRunner func(ctx context.Context, sessionID, query string, limit int) (string, error)
 
 // ftsHit is one search result row.
 type ftsHit struct {
@@ -458,36 +440,6 @@ func NewRecallDescribeTool(q db.Querier) fantasy.AgentTool {
 				return fantasy.NewTextResponse(sb.String()), nil
 			}
 			return fantasy.NewTextResponse("No summary or file reference found with that id."), nil
-		},
-	)
-}
-
-// NewRecallQueryTool creates the recall_query tool (dense semantic retrieval).
-// The runner is injected so the tool does not import the compaction package.
-func NewRecallQueryTool(sessionResolver func() string, runner RecallQueryRunner) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
-		RecallQueryToolName,
-		recallQueryDescription,
-		func(ctx context.Context, params RecallQueryParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			if strings.TrimSpace(params.Query) == "" {
-				return fantasy.NewTextErrorResponse("query is required"), nil
-			}
-			sessionID := params.SessionID
-			if sessionID == "" && sessionResolver != nil {
-				sessionID = sessionResolver()
-			}
-			limit := params.Limit
-			if limit <= 0 {
-				limit = 5
-			}
-			out, err := runner(ctx, sessionID, params.Query, limit)
-			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("recall_query failed: %v", err)), nil
-			}
-			if out == "" {
-				return fantasy.NewTextResponse("No semantic matches found. The embedding index may not be enabled for this session."), nil
-			}
-			return fantasy.NewTextResponse(out), nil
 		},
 	)
 }
