@@ -1,0 +1,19 @@
+internal/agent/coordinator_test.go
+  s_b49145118e9070::t_e145dc6b621c18 52-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "8230add3e4af631585f621224b63a3596f82163f",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
