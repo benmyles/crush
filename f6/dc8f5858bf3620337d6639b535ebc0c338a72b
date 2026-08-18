@@ -1,0 +1,25 @@
+internal/compaction/ledger.go
+  s_b49145118e9070::t_d5744d7d2a8fcb 110
+  s_b49145118e9070::t_27be606a1f6f12 330-340,342
+internal/compaction/span.go
+  s_b49145118e9070::t_b7a0389d50847e 473-478
+internal/compaction/workingset.go
+  s_b49145118e9070::t_12f5af669c1696 9-10
+  s_b49145118e9070::t_7bc0b9e926eba8 111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "f6dc8f5858bf3620337d6639b535ebc0c338a72b",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
