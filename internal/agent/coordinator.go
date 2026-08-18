@@ -689,6 +689,11 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 				tools.NewRecallDescribeTool(c.querier),
 				tools.NewCompactContextTool(func() tools.CompactContextAgent { return result }, nil),
 			)
+			// Operator-level recursion tools (llm_map / agentic_map) for
+			// data-parallel processing without overflowing the parent context.
+			if completer := result.MapCompleter(); completer != nil {
+				builtTools = append(builtTools, tools.NewLLMMapTool(completer))
+			}
 			if isSubAgent {
 				builtTools = append(builtTools, tools.NewRecallExpandTool(c.dbConn, c.querier, sessionResolver))
 			}

@@ -153,6 +153,9 @@ type SessionAgent interface {
 	// CurrentSessionID returns the session id of the in-flight Run, or "".
 	// Used by the recall tools to scope searches to the active session.
 	CurrentSessionID() string
+	// MapCompleter returns a stateless completion function for llm_map, or
+	// nil if no model/engine is configured. Used by the operator tools.
+	MapCompleter() func(ctx context.Context, prompt string) (string, error)
 }
 
 type Model struct {
@@ -2300,6 +2303,19 @@ func (a *sessionAgent) CancelAll() {
 
 func (a *sessionAgent) CurrentSessionID() string {
 	return a.currentSessionID
+}
+
+// MapCompleter returns a stateless completion function suitable for llm_map's
+// per-item calls. It reuses the agent's fantasyCompleter with a generic system
+// prompt. Returns nil if no model is configured.
+func (a *sessionAgent) MapCompleter() func(ctx context.Context, prompt string) (string, error) {
+	if a.compaction == nil {
+		return nil
+	}
+	return func(ctx context.Context, prompt string) (string, error) {
+		text, _, err := a.fantasyCompleter(ctx, "You are a precise data-processing assistant. Follow the instructions exactly and return valid JSON.", prompt, 4096)
+		return text, err
+	}
 }
 
 func (a *sessionAgent) IsBusy() bool {
