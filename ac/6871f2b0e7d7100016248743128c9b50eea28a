@@ -1,0 +1,29 @@
+internal/agent/agent.go
+  s_b49145118e9070::t_246ecbefefa816 1783,1790-1792,1804,1812
+  s_b49145118e9070::t_aea187724b5a2f 1808-1810
+  s_b49145118e9070::t_a9f947eefbc41d 1747-1765,1767-1771,1774-1777,1785,1793-1798
+  s_b49145118e9070::t_d52cbd80779809 1799-1803,1805-1806
+  s_b49145118e9070::t_d59ed3eda17c09 1657-1659,1681
+  s_b49145118e9070::t_60e56800375ced 1766
+internal/agent/split_compaction_test.go
+  s_b49145118e9070::t_2dc4fb517bef8c 73
+  s_b49145118e9070::t_bdb87cc5f1ebf2 1-30,37-47,50-72,74-92
+  s_b49145118e9070::t_2127d327f8e145 48-49
+  s_b49145118e9070::t_17784f61a876e5 31-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "ac6871f2b0e7d7100016248743128c9b50eea28a",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
