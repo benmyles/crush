@@ -1,0 +1,52 @@
+internal/config/store.go
+  s_f55a852310ca7b::t_f86d90f6803a8f 12
+  s_f55a852310ca7b::t_c7b9e8d01ad661 504-513
+README.md
+  s_f55a852310ca7b::t_41401b8134010c 636-664
+internal/ui/dialog/actions.go
+  s_f55a852310ca7b::t_54f31578df8243 45-69
+docs/compaction-plan.md
+  s_f55a852310ca7b::t_41401b8134010c 35-36
+internal/ui/dialog/models.go
+  s_f55a852310ca7b::t_54f31578df8243 8,27-29,39-40,53-54,67-68,74-85,90,228-235,246,269-278,283-289,291,520-530
+  s_f55a852310ca7b::t_c0f08c988981c1 531
+internal/ui/dialog/compaction.go
+  s_f55a852310ca7b::t_45d0a5ed86aa6c 1-15,17-69,75-76,78-79,81,84-146,153-292,294-650
+  s_f55a852310ca7b::t_b51cc9a9caa4e2 16
+  s_f55a852310ca7b::t_b95a030b842b77 147-152
+  s_f55a852310ca7b::t_725feb44995746 70-74,80,83,293
+  s_f55a852310ca7b::t_d5dda607e8b4d2 82
+  s_f55a852310ca7b::t_c8acee1ee82bf2 77
+internal/config/store_test.go
+  s_f55a852310ca7b::t_1c593f66fa17df 785-819
+internal/ui/model/ui.go
+  s_f55a852310ca7b::t_2ea28985c4a1f7 2034-2070,2291-2305,2375-2377,4376-4379,4410-4416,4418-4422,4433-4437,4444-4460
+  s_f55a852310ca7b::t_95a2a626ed8e38 4461
+internal/ui/dialog/models_item.go
+  s_f55a852310ca7b::t_54f31578df8243 75-77,86-101,145-147
+internal/ui/dialog/commands.go
+  s_f55a852310ca7b::t_b95a030b842b77 534-540
+internal/ui/dialog/compaction_test.go
+  s_f55a852310ca7b::t_9ab89effd53d0b 9,11,29-31,130-134,136-137,145-149,151-158
+  s_f55a852310ca7b::t_7efa025fdcc1ba 4-5,15,179-198,200-204
+  s_f55a852310ca7b::t_dd480834d91bd7 1-3,6-8,10,12-14,16-28,32-129,135,138-144,150,159-178,205
+  s_f55a852310ca7b::t_79d10f7c41ba9b 199
+docs/config/README.md
+  s_f55a852310ca7b::t_41401b8134010c 566-568
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "cc8b896e4b31b5d20298a518eaee455c000a7c8d",
+  "prompts": {},
+  "sessions": {
+    "s_f55a852310ca7b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe9b6d4d-b015-4850-9702-f35b0fc82990",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
