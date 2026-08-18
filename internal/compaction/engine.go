@@ -27,6 +27,7 @@ const ExtractsHeading = "# Compressed Transcript Extracts"
 // CompactionRequest is what the engine needs to run a compaction.
 type CompactionRequest struct {
 	SessionID          string
+	Cwd                string
 	History            []message.Message
 	TurnPrefix         []message.Message
 	FirstRetainedSeq   int
@@ -93,12 +94,15 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 
 	// 2. Budget.
 	restoreEnabled := req.Cfg.WorkingSetFiles > 0
+	extractsEnabled := req.Cfg.ExtractsDecay >= 0
+	// The older lane needs a previous extracts span to re-compress.
+	olderLaneEnabled := extractsEnabled && req.Cfg.ExtractsDecay > 0 && e.hasOlderExtracts(ctx, req.SessionID)
 	plan := PlanBudget(BudgetInputFromConfig(req.Cfg, req.ConsumerContextWindow, req.SystemPromptTokens, req.SummarizerContextWindow, req.SummarizerMaxOutputTokens, req.KeepRecentTokens, req.ReserveTokens, BudgetFeatures{
 		Ledger:        req.Cfg.Ledger,
 		TranscriptMap: req.Cfg.TranscriptMap,
 		Restore:       restoreEnabled,
-		Extracts:      false, // Phase 2
-		OlderLane:     false, // Phase 2
+		Extracts:      extractsEnabled,
+		OlderLane:     olderLaneEnabled,
 	}))
 
 	// 3. Deterministic ledger and transcript map.
@@ -155,16 +159,61 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	// 7. Transcript recovery reference.
 	ref := e.buildTranscriptReference(span, req)
 
+	// 7b. Extracts lane (byte-exact, line-anchored, golden spans).
+	var extractsText, olderExtractsText string
+	if extractsEnabled {
+		query := BuildExtractsQuery(
+			retainedUserMessages(req),
+			spanUserMessages(span),
+			req.CustomInstructions,
+		)
+		extractReq := BuildExtractsLaneRequest(span, query, ExtractsRenderBudget, true)
+		extractResult := RunExtractsLane(extractReq)
+		extractsText = ExtractsHeading + " (verbatim lines kept by the extractive lane; speaker labels and transcript seq pointers added)\n## This span\n" + extractResult.Text
+		if olderLaneEnabled {
+			if prev := e.olderExtracts(ctx, req.SessionID); prev != "" {
+				maxIn := 400000
+				if len(prev) < maxIn {
+					maxIn = len(prev)
+				}
+				olderExtractsText = "## Older history (re-compressed from the previous compaction)\n" + RenderOlderLane(prev, maxIn)
+			}
+		}
+	}
+
+	// 7c. Working-set snapshot.
+	var workingSetText string
+	if restoreEnabled && req.Cfg.WorkingSetFiles > 0 {
+		snap := CollectWorkingSet(WorkingSetInput{
+			Files:           ledger.Files,
+			Cwd:             req.Cwd,
+			MaxFiles:        req.Cfg.WorkingSetFiles,
+			MaxCharsPerFile: req.Cfg.WorkingSetMaxCharsPerFile,
+			MaxTotalChars:   plan.Restore.MaxChars,
+		})
+		workingSetText = RenderWorkingSet(snap)
+	}
+
 	// 8. Compose the summary.
 	checkpointSection := ""
 	if strings.TrimSpace(checkpointText) != "" {
 		checkpointSection = CheckpointHeading + "\n\n" + checkpointText
+	}
+	var extractsSection string
+	if extractsText != "" {
+		if olderExtractsText != "" {
+			extractsSection = extractsText + "\n\n" + olderExtractsText
+		} else {
+			extractsSection = extractsText
+		}
 	}
 	composed, layout := composeSummary([]struct{ key, text string }{
 		{"preamble", CompactionPreamble},
 		{"checkpoint", checkpointSection},
 		{"ledger", ledgerText},
 		{"map", mapText},
+		{"extracts", extractsSection},
+		{"workingSet", workingSetText},
 		{"recovery", RenderTranscriptRecoveryNote(ref)},
 	})
 
@@ -293,6 +342,61 @@ func (e *Engine) previousCheckpoint(ctx context.Context, sessionID string) (stri
 		return prev.Checkpoint.String, nil
 	}
 	return "", nil
+}
+
+// hasOlderExtracts reports whether a previous compaction entry has an extracts
+// section that can be re-compressed into the older lane.
+func (e *Engine) hasOlderExtracts(ctx context.Context, sessionID string) bool {
+	return e.olderExtracts(ctx, sessionID) != ""
+}
+
+// olderExtracts returns the previous compaction's extracts section text, sliced
+// from the persisted summary using the recorded layout offsets.
+func (e *Engine) olderExtracts(ctx context.Context, sessionID string) string {
+	prev, err := e.q.GetActiveCompactionSummary(ctx, sessionID)
+	if err != nil {
+		return ""
+	}
+	var layout map[string][2]int
+	if err := json.Unmarshal([]byte(prev.Layout), &layout); err != nil {
+		return ""
+	}
+	bounds, ok := layout["extracts"]
+	if !ok {
+		return ""
+	}
+	if bounds[1] <= bounds[0] || bounds[1] > len(prev.SummaryText) {
+		return ""
+	}
+	return strings.TrimSpace(prev.SummaryText[bounds[0]:bounds[1]])
+}
+
+// retainedUserMessages returns the user-authored messages that will stay in
+// context after compaction (the retained tail). Used to build the extracts
+// query's "current task" focus.
+func retainedUserMessages(req CompactionRequest) []string {
+	var out []string
+	for _, msg := range req.TurnPrefix {
+		if msg.Role == message.User {
+			text := TextOfContent(msg.Parts)
+			if strings.TrimSpace(text) != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	return out
+}
+
+// spanUserMessages returns the user-authored messages within the compacted
+// span, in order.
+func spanUserMessages(span SpanModel) []string {
+	var out []string
+	for _, turn := range span.Turns {
+		if (turn.UserKind == "" || turn.UserKind == UserKindUser) && strings.TrimSpace(turn.UserText) != "" {
+			out = append(out, turn.UserText)
+		}
+	}
+	return out
 }
 
 func (e *Engine) persist(ctx context.Context, req CompactionRequest, result *CompactionResult) error {

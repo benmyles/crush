@@ -1612,6 +1612,7 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 
 	req := compaction.CompactionRequest{
 		SessionID:                 sessionID,
+		Cwd:                       a.cfg.WorkingDir(),
 		History:                   history,
 		TurnPrefix:                turnPrefix,
 		FirstRetainedSeq:          firstRetainedIdx + 1,
