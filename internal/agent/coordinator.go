@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/discover"
 	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/filetracker"
@@ -122,6 +124,8 @@ type coordinator struct {
 	lspManager  *lsp.Manager
 	notify      pubsub.Publisher[notify.Notification]
 	runComplete pubsub.Publisher[notify.RunComplete]
+	querier     db.Querier
+	dbConn      *sql.DB
 	interactive bool
 
 	currentAgent SessionAgent
@@ -149,6 +153,8 @@ type CoordinatorOptions struct {
 	LSPManager  *lsp.Manager
 	Notify      pubsub.Publisher[notify.Notification]
 	RunComplete pubsub.Publisher[notify.RunComplete]
+	Querier     db.Querier
+	DBConn      *sql.DB
 	Skills      *skills.Manager
 	Interactive bool
 }
@@ -178,6 +184,8 @@ func NewCoordinator(ctx context.Context, opts CoordinatorOptions) (Coordinator, 
 		lspManager:   opts.LSPManager,
 		notify:       opts.Notify,
 		runComplete:  opts.RunComplete,
+		querier:      opts.Querier,
+		dbConn:       opts.DBConn,
 		agents:       make(map[string]SessionAgent),
 		allSkills:    allSkills,
 		activeSkills: activeSkills,
@@ -638,6 +646,8 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		IsYolo:               c.permissions.SkipRequests(),
 		Sessions:             c.sessions,
 		Messages:             c.messages,
+		Querier:              c.querier,
+		Config:               c.cfg,
 		Tools:                nil,
 		Notify:               c.notify,
 		RunComplete:          c.runComplete,
@@ -665,11 +675,24 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	})
 
 	c.readyWg.Go(func() error {
-		tools, err := c.buildTools(initCtx, agent, isSubAgent)
+		builtTools, err := c.buildTools(initCtx, agent, isSubAgent)
 		if err != nil {
 			return err
 		}
-		result.SetTools(tools)
+		// Append compaction recall tools. recall_expand is sub-agent-only so
+		// the main loop cannot flood its own context; recall_grep and
+		// recall_describe are always available when a DB connection exists.
+		if c.dbConn != nil && c.querier != nil {
+			sessionResolver := func() string { return result.CurrentSessionID() }
+			builtTools = append(builtTools,
+				tools.NewRecallGrepTool(c.dbConn, c.querier, sessionResolver),
+				tools.NewRecallDescribeTool(c.querier),
+			)
+			if isSubAgent {
+				builtTools = append(builtTools, tools.NewRecallExpandTool(c.dbConn, c.querier, sessionResolver))
+			}
+		}
+		result.SetTools(builtTools)
 		return nil
 	})
 

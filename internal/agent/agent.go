@@ -41,6 +41,8 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
+	"github.com/charmbracelet/crush/internal/db"
+	"github.com/charmbracelet/crush/internal/compaction"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
@@ -148,6 +150,9 @@ type SessionAgent interface {
 	Summarize(context.Context, string, fantasy.ProviderOptions, func(context.Context, *fantasy.ProviderError) error) error
 	Model() Model
 	GenerateTitle(ctx context.Context, sessionID, userPrompt string)
+	// CurrentSessionID returns the session id of the in-flight Run, or "".
+	// Used by the recall tools to scope searches to the active session.
+	CurrentSessionID() string
 }
 
 type Model struct {
@@ -178,6 +183,10 @@ type sessionAgent struct {
 	messages             message.Service
 	disableAutoSummarize bool
 	isYolo               bool
+	querier              db.Querier
+	cfg                  *config.ConfigStore
+	compaction           *compaction.Engine
+	currentSessionID     string
 	notify               pubsub.Publisher[notify.Notification]
 	runComplete          pubsub.Publisher[notify.RunComplete]
 
@@ -232,6 +241,8 @@ type SessionAgentOptions struct {
 	IsYolo               bool
 	Sessions             session.Service
 	Messages             message.Service
+	Querier              db.Querier
+	Config               *config.ConfigStore
 	Tools                []fantasy.AgentTool
 	Notify               pubsub.Publisher[notify.Notification]
 	RunComplete          pubsub.Publisher[notify.RunComplete]
@@ -240,7 +251,7 @@ type SessionAgentOptions struct {
 func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
-	return &sessionAgent{
+	a := &sessionAgent{
 		largeModel:           csync.NewValue(opts.LargeModel),
 		smallModel:           csync.NewValue(opts.SmallModel),
 		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
@@ -251,6 +262,8 @@ func NewSessionAgent(
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                csync.NewSliceFrom(opts.Tools),
 		isYolo:               opts.IsYolo,
+		querier:              opts.Querier,
+		cfg:                  opts.Config,
 		notify:               opts.Notify,
 		runComplete:          opts.RunComplete,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
@@ -259,6 +272,10 @@ func NewSessionAgent(
 		acceptedRuns:         csync.NewMap[string, int](),
 		cancelMark:           csync.NewMap[string, uint64](),
 	}
+	if opts.Querier != nil {
+		a.compaction = compaction.NewEngine(opts.Querier, a.fantasyCompleter)
+	}
+	return a
 }
 
 // AcceptedRun owns exactly one accept reservation taken by
@@ -567,6 +584,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	if err := ValidateCall(call); err != nil {
 		return nil, err
 	}
+	a.currentSessionID = call.SessionID
 
 	// genCtx/cancel are the run context and its cancel func, created under
 	// the per-session dispatch mutex below so a concurrent Cancel can observe
@@ -1327,6 +1345,18 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 }
 
 func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error {
+	// When the compaction engine is available and enabled, use it instead of
+	// the legacy single-shot summary. The engine produces a lossless,
+	// checkpoint + ledger + recovery-note summary and persists a summary DAG
+	// node; the legacy streaming UI path is kept for the fallback.
+	if a.compaction != nil && a.cfg != nil && config.CompactionEnabled(a.cfg.Config()) {
+		if err := a.compactWithEngine(ctx, sessionID, opts, onAuthRefresh); err != nil {
+			slog.Error("Compaction engine failed; falling back to legacy summarize", "error", err)
+		} else {
+			return nil
+		}
+	}
+
 	if a.IsSessionBusy(sessionID) {
 		return ErrSessionBusy
 	}
@@ -1475,6 +1505,198 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	a.messageQueue.Set(sessionID, queuedMessages[1:])
 	_, qErr := a.Run(ctx, firstQueuedMessage)
 	return qErr
+}
+
+// fantasyCompleter bridges the compaction.Engine's Completer signature to a
+// stateless fantasy completion. It builds a one-shot agent with the given
+// system prompt, streams a single user turn, and returns the accumulated text
+// and a stop reason in the engine's vocabulary ("stop", "length", "error",
+// "aborted").
+func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userText string, maxOutputTokens int64) (string, string, error) {
+	largeModel := a.largeModel.Get()
+	agent := fantasy.NewAgent(
+		largeModel.Model,
+		fantasy.WithSystemPrompt(systemPrompt),
+		fantasy.WithUserAgent(userAgent),
+	)
+	var sb strings.Builder
+	maxTokens := maxOutputTokens
+	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
+		Prompt:          userText,
+		Messages:        []fantasy.Message{fantasy.NewUserMessage(userText)},
+		MaxOutputTokens: &maxTokens,
+		ModelProvider:   func() fantasy.LanguageModel { return largeModel.Model },
+		OnTextDelta: func(id, text string) error {
+			sb.WriteString(text)
+			return nil
+		},
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return sb.String(), "aborted", nil
+		}
+		return sb.String(), "error", err
+	}
+	stopReason := "stop"
+	switch string(resp.Response.FinishReason) {
+	case "length", "max_tokens":
+		stopReason = "length"
+	case "content_filter", "refusal":
+		stopReason = "error"
+	}
+	return sb.String(), stopReason, nil
+}
+
+// compactWithEngine runs the compaction engine for the session and records the
+// resulting summary as a summary message, mirroring the legacy Summarize tail
+// (session update, active-request release, queued-message drain) so the UI and
+// queue behavior stay intact.
+func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error {
+	if a.IsSessionBusy(sessionID) {
+		return ErrSessionBusy
+	}
+	largeModel := a.largeModel.Get()
+	currentSession, err := a.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+	msgs, err := a.getSessionMessages(ctx, currentSession)
+	if err != nil {
+		return err
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	genCtx, cancel := context.WithCancel(ctx)
+	ac := &activeCancel{cancel: cancel}
+	a.activeRequests.Set(sessionID, ac)
+	defer a.activeRequests.CompareAndDelete(sessionID, ac)
+	defer cancel()
+	defer func() {
+		if flushErr := a.messages.FlushAll(ctx); flushErr != nil {
+			slog.Error("Failed to flush pending message updates after compaction", "error", flushErr)
+		}
+	}()
+
+	// Split the message list into history (to compact) and a retained tail
+	// (kept verbatim). The retained tail is the most recent messages up to
+	// the configured keep-recent token budget.
+	cfg := config.ResolveCompactionConfig(a.cfg.Config())
+	keepRecent := cfg.KeepRecentTokens
+	if keepRecent <= 0 {
+		keepRecent = 20000
+	}
+	history, turnPrefix, firstRetainedIdx := splitForCompaction(msgs, keepRecent)
+	if len(history) == 0 {
+		return nil
+	}
+	firstRetainedID := ""
+	if firstRetainedIdx < len(msgs) {
+		firstRetainedID = msgs[firstRetainedIdx].ID
+	}
+
+	// Build the compaction request from the active model's context window.
+	window := int64(largeModel.CatwalkCfg.ContextWindow)
+	if window <= 0 {
+		window = 200000
+	}
+	reserve := cfg.ReserveTokens
+	if reserve <= 0 {
+		reserve = 16384
+	}
+	tokensBefore := int64(0)
+	for _, msg := range msgs {
+		tokensBefore += approxTokenCount(msg.Content().Text)
+	}
+
+	req := compaction.CompactionRequest{
+		SessionID:                 sessionID,
+		History:                   history,
+		TurnPrefix:                turnPrefix,
+		FirstRetainedSeq:          firstRetainedIdx + 1,
+		FirstRetainedID:           firstRetainedID,
+		SplitTurn:                 len(turnPrefix) > 0,
+		TokensBefore:              tokensBefore,
+		ConsumerContextWindow:     window,
+		SystemPromptTokens:        8000,
+		SummarizerContextWindow:   window,
+		SummarizerMaxOutputTokens: int64(largeModel.CatwalkCfg.DefaultMaxTokens),
+		KeepRecentTokens:          keepRecent,
+		ReserveTokens:             reserve,
+		Cfg:                       cfg,
+	}
+	result, err := a.compaction.Run(genCtx, req)
+	if err != nil {
+		return err
+	}
+
+	// Record the summary as a summary message so the UI renders it like the
+	// legacy path.
+	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:             message.Assistant,
+		Model:            largeModel.ModelCfg.Model,
+		Provider:         largeModel.ModelCfg.Provider,
+		IsSummaryMessage: true,
+	})
+	if err != nil {
+		return err
+	}
+	summaryMessage.AppendContent(result.SummaryText)
+	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
+	if err := a.messages.Update(genCtx, summaryMessage); err != nil {
+		return err
+	}
+
+	currentSession.SummaryMessageID = summaryMessage.ID
+	currentSession.CompletionTokens = approxTokenCount(result.SummaryText)
+	currentSession.PromptTokens = 0
+	if _, err := a.sessions.Save(genCtx, currentSession); err != nil {
+		return err
+	}
+
+	a.activeRequests.Del(sessionID)
+	cancel()
+
+	queuedMessages, ok := a.messageQueue.Get(sessionID)
+	if !ok || len(queuedMessages) == 0 {
+		return nil
+	}
+	firstQueuedMessage := queuedMessages[0]
+	a.messageQueue.Set(sessionID, queuedMessages[1:])
+	_, qErr := a.Run(ctx, firstQueuedMessage)
+	return qErr
+}
+
+// splitForCompaction divides messages into the history to compact and a
+// retained tail kept verbatim. It keeps the most recent messages whose
+// approximate token count fits the keepRecent budget. Returns the history, the
+// turn-prefix (empty unless the split lands mid-turn), and the index of the
+// first retained message.
+func splitForCompaction(msgs []message.Message, keepRecentTokens int64) (history, turnPrefix []message.Message, firstRetainedIdx int) {
+	if len(msgs) == 0 {
+		return nil, nil, 0
+	}
+	var budget int64
+	idx := len(msgs)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		cost := approxTokenCount(msgs[i].Content().Text)
+		if budget+cost > keepRecentTokens && i < len(msgs)-1 {
+			break
+		}
+		budget += cost
+		idx = i
+	}
+	if idx <= 0 {
+		return nil, nil, 0
+	}
+	// Don't split mid-turn if avoidable: if the first retained message is an
+	// assistant continuation, keep the whole last turn together by including
+	// prior messages until a user message.
+	for idx > 0 && msgs[idx-1].Role != message.User && idx < len(msgs) {
+		idx--
+	}
+	return msgs[:idx], nil, idx
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
@@ -1690,6 +1912,27 @@ func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.S
 	msgs, err := a.messages.List(ctx, session.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list messages: %w", err)
+	}
+
+	// When the compaction engine is available, build the active context from
+	// the summary DAG node plus the retained tail of raw messages. This
+	// replaces the legacy "slice from SummaryMessageID" with a lossless view
+	// over the immutable store.
+	if a.compaction != nil {
+		summaryText, retained, err := a.compaction.ActiveContext(ctx, session.ID, msgs)
+		if err != nil {
+			slog.Debug("compaction: active context load failed, using legacy slice", "error", err)
+		} else if summaryText != "" {
+			// Synthesize a user message carrying the summary text followed by
+			// the retained tail, so preparePrompt sees the same shape the
+			// legacy path produced.
+			summaryMsg := message.Message{
+				ID:    "compaction-summary",
+				Role:  message.User,
+				Parts: []message.ContentPart{message.TextContent{Text: summaryText}},
+			}
+			return append([]message.Message{summaryMsg}, retained...), nil
+		}
 	}
 
 	if session.SummaryMessageID != "" {
@@ -2032,6 +2275,10 @@ func (a *sessionAgent) CancelAll() {
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
+}
+
+func (a *sessionAgent) CurrentSessionID() string {
+	return a.currentSessionID
 }
 
 func (a *sessionAgent) IsBusy() bool {

@@ -318,7 +318,8 @@ type Options struct {
 	TUI                  *TUIOptions `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
 	Debug                bool        `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP             bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
-	DisableAutoSummarize bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
+	DisableAutoSummarize bool              `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization. Deprecated: use options.compaction.enabled instead.,default=false"`
+	Compaction             *CompactionConfig `json:"compaction,omitempty" jsonschema:"description=Context compaction engine settings"`
 	// DataDirectory is where Crush keeps per-project state such as
 	// the SQLite database and workspace overrides. Relative paths are
 	// resolved against the working directory; absolute paths are used

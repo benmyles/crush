@@ -59,6 +59,8 @@ type App struct {
 	Permissions permission.Service
 	Questions   question.Service
 	FileTracker filetracker.Service
+	Querier     db.Querier
+	DB          *sql.DB
 
 	AgentCoordinator agent.Coordinator
 
@@ -113,6 +115,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		Permissions: permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools),
 		Questions:   question.NewService(),
 		FileTracker: filetracker.NewService(q),
+		Querier:     q,
+		DB:          conn,
 		LSPManager:  lsp.NewManager(store),
 		Skills:      skillsMgr,
 
@@ -692,6 +696,8 @@ func (app *App) initCoderAgent(ctx context.Context, interactive bool) error {
 		LSPManager:  app.LSPManager,
 		Notify:      app.agentNotifications,
 		RunComplete: app.runCompletions,
+		Querier:     app.Querier,
+		DBConn:      app.DB,
 		Skills:      app.Skills,
 		Interactive: interactive,
 	})
