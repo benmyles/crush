@@ -1,0 +1,46 @@
+internal/agent/agent_tool.go
+  s_b49145118e9070::t_5197bb88f22d77 7
+  s_b49145118e9070::t_b0e9fb2d653475 21-28,62-70
+  s_b49145118e9070::t_cbe09c0059125a 71-72
+internal/agent/tools/recall.go
+  s_b49145118e9070::t_7407b1f9ffb558 78-82
+  s_b49145118e9070::t_5ea7ebd034a6aa 320-349
+  s_b49145118e9070::t_d788a4f96870f5 23-25,49-52,71-77
+  s_b49145118e9070::t_40106aa2e31bf7 84-87
+  s_b49145118e9070::t_e23a582e15aabc 83
+internal/compaction/files.go
+  s_b49145118e9070::t_946df519d31a66 1-164
+internal/compaction/files_test.go
+  s_b49145118e9070::t_c03e510ad9f6d2 45-46
+  s_b49145118e9070::t_c8a595ef8ddf69 1-44,47-74
+internal/agent/agent.go
+  s_b49145118e9070::t_686344a3380bc5 156-158
+  s_b49145118e9070::t_40963e50310e3c 2308-2320
+internal/agent/tools/map.go
+  s_b49145118e9070::t_9809170b771422 1-322
+internal/agent/coordinator.go
+  s_b49145118e9070::t_f93cf98370a115 692-696
+internal/compaction/embeddings.go
+  s_b49145118e9070::t_181e72f94776cf 1-8,11-30,38-115,120-123,125-126
+  s_b49145118e9070::t_748130fb7d04e5 9-10
+  s_b49145118e9070::t_603cbf35e0f303 31-37,116-119,124
+internal/agent/tools/map_test.go
+  s_b49145118e9070::t_759c8ba6de223e 5,10,31,39-40,54,58-59,70,75-76
+  s_b49145118e9070::t_d0b6e212d79cda 1-4,6-9,11-30,32-38,41-53,55-57,60-69,71-74,77-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "3fbb7a412b9fe747e04b248d3bd303c1595baacd",
+  "prompts": {},
+  "sessions": {
+    "s_b49145118e9070": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a015da-1ad5-7f46-8509-94e8d13c14fe",
+        "model": "glm-5p2-fast"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
