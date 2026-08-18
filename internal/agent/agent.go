@@ -1537,6 +1537,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 // "aborted").
 func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userText string, maxOutputTokens int64) (string, string, error) {
 	largeModel := a.largeModel.Get()
+	systemPromptPrefix := a.systemPromptPrefix.Get()
 	agent := fantasy.NewAgent(
 		largeModel.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
@@ -1545,26 +1546,35 @@ func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userT
 	var sb strings.Builder
 	maxTokens := maxOutputTokens
 	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
+		// Send the prompt once. Setting both Prompt and Messages would
+		// duplicate it (fantasy's createPrompt appends both).
 		Prompt:          userText,
-		Messages:        []fantasy.Message{fantasy.NewUserMessage(userText)},
 		MaxOutputTokens: &maxTokens,
+		Headers:         sessionHeaders(a.currentSessionID),
+		ProviderOptions: a.getCacheControlOptions(),
 		ModelProvider:   func() fantasy.LanguageModel { return largeModel.Model },
+		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
+			prepared.Messages = options.Messages
+			if systemPromptPrefix != "" {
+				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(systemPromptPrefix)}, prepared.Messages...)
+			}
+			return callContext, prepared, nil
+		},
 		OnTextDelta: func(id, text string) error {
 			sb.WriteString(text)
 			return nil
 		},
 	})
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return sb.String(), "aborted", nil
-		}
-		return sb.String(), "error", err
+		// Fail closed: a cancelled context propagates as an error, never as
+		// "aborted, nil" (the escalation guard depends on this).
+		return sb.String(), string(fantasy.FinishReasonError), err
 	}
 	stopReason := "stop"
-	switch string(resp.Response.FinishReason) {
-	case "length", "max_tokens":
+	switch resp.Response.FinishReason {
+	case fantasy.FinishReasonLength:
 		stopReason = "length"
-	case "content_filter", "refusal":
+	case fantasy.FinishReasonContentFilter, fantasy.FinishReasonError:
 		stopReason = "error"
 	}
 	return sb.String(), stopReason, nil
