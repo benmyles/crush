@@ -53,6 +53,8 @@ func (m *mockSessionAgent) CurrentSessionID() string                      { retu
 func (m *mockSessionAgent) MapCompleter() func(context.Context, string) (string, error) {
 	return nil
 }
+func (m *mockSessionAgent) RequestCompaction(string, string) {}
+func (m *mockSessionAgent) HasCompactionRequest(string) bool { return false }
 
 // newTestCoordinator creates a minimal coordinator for unit testing runSubAgent.
 func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCfg config.ProviderConfig) *coordinator {

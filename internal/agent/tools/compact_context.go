@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"charm.land/fantasy"
@@ -15,7 +14,10 @@ const CompactContextToolName = "compact_context"
 // needs, defined here to avoid an import cycle with the agent package.
 type CompactContextAgent interface {
 	CurrentSessionID() string
-	Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error
+	// RequestCompaction sets a per-session flag; compaction runs at the next
+	// step boundary instead of synchronously (which would return ErrSessionBusy
+	// from inside a running tool call).
+	RequestCompaction(sessionID, instructions string)
 }
 
 const compactContextDescription = `Compact the conversation context now, at a natural milestone.
@@ -34,10 +36,11 @@ type CompactContextParams struct {
 	Instructions string `json:"instructions,omitempty" description:"Optional focus for what the checkpoint should emphasize"`
 }
 
-// NewCompactContextTool creates the agent-initiated compaction tool. It calls
-// the session agent's Summarize path (which routes to the compaction engine
-// when enabled). The agentResolver returns the current session's agent.
-func NewCompactContextTool(agentResolver func() CompactContextAgent, optsResolver func() fantasy.ProviderOptions) fantasy.AgentTool {
+// NewCompactContextTool creates the agent-initiated compaction tool. It sets
+// a per-session request flag (with optional instructions) instead of calling
+// Summarize directly; the engine runs the compaction at the next step boundary
+// so the tool call does not collide with the in-flight run (ErrSessionBusy).
+func NewCompactContextTool(agentResolver func() CompactContextAgent) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		CompactContextToolName,
 		compactContextDescription,
@@ -50,17 +53,8 @@ func NewCompactContextTool(agentResolver func() CompactContextAgent, optsResolve
 			if strings.TrimSpace(sessionID) == "" {
 				return fantasy.NewTextErrorResponse("no active session to compact"), nil
 			}
-			opts := fantasy.ProviderOptions{}
-			if optsResolver != nil {
-				opts = optsResolver()
-			}
-			// Custom instructions are recorded via the tool-call input; the
-			// engine reads them from the request. For now, run the standard
-			// compaction; the instructions param is surfaced in the response.
-			if err := a.Summarize(ctx, sessionID, opts, nil); err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("compaction failed: %v", err)), nil
-			}
-			msg := "Context compacted. The structured checkpoint, deterministic ledger, and exact-recovery index are now in your active context. Use recall_grep to recover any compacted detail."
+			a.RequestCompaction(sessionID, params.Instructions)
+			msg := "Compaction scheduled. The compaction engine will run at the next step boundary, compressing the older context into a structured checkpoint + deterministic ledger + exact-recovery index. Use recall_grep / recall_expand to recover any compacted detail."
 			if strings.TrimSpace(params.Instructions) != "" {
 				msg += "\nOperator focus for this compaction: " + params.Instructions
 			}

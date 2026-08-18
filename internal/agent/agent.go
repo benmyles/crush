@@ -156,6 +156,11 @@ type SessionAgent interface {
 	// MapCompleter returns a stateless completion function for llm_map, or
 	// nil if no model/engine is configured. Used by the operator tools.
 	MapCompleter() func(ctx context.Context, prompt string) (string, error)
+	// RequestCompaction sets a per-session flag requesting compaction at the
+	// next step boundary (used by the compact_context tool).
+	RequestCompaction(sessionID, instructions string)
+	// HasCompactionRequest reports whether a compaction request is pending.
+	HasCompactionRequest(sessionID string) bool
 }
 
 type Model struct {
@@ -195,6 +200,13 @@ type sessionAgent struct {
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, *activeCancel]
+
+	// compactionRequested holds per-session compaction requests initiated by
+	// the compact_context tool. The tool sets a flag (with optional
+	// instructions) instead of calling Summarize directly (which would return
+	// ErrSessionBusy from inside a running tool call); the StopWhen condition
+	// checks the flag and compactWithEngine consumes it.
+	compactionRequested *csync.Map[string, string]
 
 	// dispatchMu holds a per-session mutex that serializes the
 	// accepted -> (cancel-on-entry | queued | active) transition in
@@ -271,6 +283,7 @@ func NewSessionAgent(
 		runComplete:          opts.RunComplete,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, *activeCancel](),
+		compactionRequested:  csync.NewMap[string, string](),
 		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
 		acceptedRuns:         csync.NewMap[string, int](),
 		cancelMark:           csync.NewMap[string, uint64](),
@@ -1057,6 +1070,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		},
 		StopWhen: []fantasy.StopCondition{
 			func(_ []fantasy.StepResult) bool {
+				// Agent-initiated compaction request (compact_context tool):
+				// fire at the next step boundary without blocking the tool call.
+				if a.HasCompactionRequest(call.SessionID) {
+					shouldSummarize = true
+					return true
+				}
 				cw := int64(largeModel.CatwalkCfg.ContextWindow)
 				// If context window is unknown (0), skip auto-summarize
 				// to avoid immediately truncating custom/local models.
@@ -1669,6 +1688,7 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID string, 
 		FirstRetainedID:           firstRetainedID,
 		SeqOffset:                 seqOffset,
 		SplitTurn:                 len(turnPrefix) > 0,
+		CustomInstructions:        a.ConsumeCompactionRequest(sessionID),
 		TokensBefore:              tokensBefore,
 		ConsumerContextWindow:     window,
 		SystemPromptTokens:        8000,
@@ -2333,6 +2353,33 @@ func (a *sessionAgent) CancelAll() {
 
 func (a *sessionAgent) CurrentSessionID() string {
 	return a.currentSessionID
+}
+
+// RequestCompaction sets a per-session flag requesting compaction at the next
+// step boundary, with optional operator instructions. The compact_context
+// tool calls this instead of Summarize directly (which would return
+// ErrSessionBusy from inside a running tool call).
+func (a *sessionAgent) RequestCompaction(sessionID, instructions string) {
+	a.compactionRequested.Set(sessionID, instructions)
+}
+
+// ConsumeCompactionRequest returns and clears a pending compaction request's
+// instructions, or "" if none is pending. Called by compactWithEngine.
+func (a *sessionAgent) ConsumeCompactionRequest(sessionID string) string {
+	instructions, ok := a.compactionRequested.Get(sessionID)
+	if !ok {
+		return ""
+	}
+	a.compactionRequested.Del(sessionID)
+	return instructions
+}
+
+// HasCompactionRequest reports whether a compaction request is pending for the
+// session. Called by the StopWhen condition so a request fires at the next
+// step boundary.
+func (a *sessionAgent) HasCompactionRequest(sessionID string) bool {
+	_, ok := a.compactionRequested.Get(sessionID)
+	return ok
 }
 
 // MapCompleter returns a stateless completion function suitable for llm_map's
