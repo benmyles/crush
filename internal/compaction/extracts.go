@@ -17,6 +17,12 @@ type ExtractsLaneRequest struct {
 	// KeepContextMaxTotalChars caps total force-kept characters so golden
 	// spans cannot starve the rest.
 	KeepContextMaxTotalChars int
+	// TotalCharBudget is the hard cap on the total extractive output in
+	// characters, derived from plan.Extracts.TargetTokens. When > 0 the lane
+	// keeps golden spans first, then allocates the remaining budget over
+	// non-golden blocks (recency-weighted head/tail), dropping blocks below a
+	// floor. When 0 the legacy per-block/per-golden caps apply.
+	TotalCharBudget int
 }
 
 // ExtractsBlockMeta records metadata for one block sent to the compressor.
@@ -140,6 +146,12 @@ func RunExtractsLane(req ExtractsLaneRequest) ExtractsLaneResult {
 	// assistant statement (newest first), then error tails (newest first).
 	golden := map[int]string{} // "head" | "tail"
 	keptTotal := 0
+	// When a total budget is set, golden spans count against it too so they
+	// cannot starve the rest of the lane.
+	goldenCap := totalCap
+	if req.TotalCharBudget > 0 && req.TotalCharBudget < goldenCap {
+		goldenCap = req.TotalCharBudget
+	}
 	if req.KeepContext {
 		consider := func(idx int, mode string) {
 			body := bodies[idx]
@@ -147,7 +159,7 @@ func RunExtractsLane(req ExtractsLaneRequest) ExtractsLaneResult {
 			if kept > perBlockCap {
 				kept = perBlockCap
 			}
-			if kept <= 0 || keptTotal+kept > totalCap {
+			if kept <= 0 || keptTotal+kept > goldenCap {
 				return
 			}
 			golden[idx] = mode
@@ -176,12 +188,85 @@ func RunExtractsLane(req ExtractsLaneRequest) ExtractsLaneResult {
 	var metas []ExtractsBlockMeta
 	inputChars := 0
 	outputChars := 0
+
+	// When a total budget is set, golden spans are kept first and the
+	// remaining character budget is allocated over non-golden blocks with
+	// recency weighting (a head fraction from the oldest, a tail fraction
+	// from the newest), dropping blocks below a floor. Without a total
+	// budget the legacy behavior (emit every block, per-block caps on
+	// golden spans) is preserved.
+	totalBudget := req.TotalCharBudget
+	nonGoldenFloor := 200
+
+	// First pass: compute golden span cost and collect non-golden block
+	// indices + sizes so we can allocate the remainder.
+	type blockInfo struct {
+		idx  int
+		size int
+	}
+	goldenCost := 0
+	var nonGolden []blockInfo
 	for _, b := range req.Span.Blocks {
 		body := bodies[b.Index]
 		if strings.TrimSpace(body) == "" {
 			continue
 		}
 		inputChars += len(body)
+		if golden[b.Index] != "" || (b.Kind == BlockAssistantToolCalls && req.KeepContext) {
+			cost := len(body)
+			if cost > perBlockCap {
+				cost = perBlockCap
+			}
+			goldenCost += cost
+		} else {
+			nonGolden = append(nonGolden, blockInfo{idx: b.Index, size: len(body)})
+		}
+	}
+
+	// Decide which non-golden blocks to keep and how to truncate them.
+	keepNonGolden := map[int]string{} // idx -> "head" | "tail" | "full"
+	if totalBudget > 0 {
+		remaining := totalBudget - goldenCost
+		if remaining < 0 {
+			remaining = 0
+		}
+		// Recency weighting: 60% of the remainder to the tail (newest),
+		// 40% to the head (oldest).
+		tailBudget := int(float64(remaining) * 0.6)
+		headBudget := remaining - tailBudget
+
+		// Tail (newest first).
+		for i := len(nonGolden) - 1; i >= 0 && tailBudget > nonGoldenFloor; i-- {
+			nb := nonGolden[i]
+			if nb.size <= tailBudget {
+				keepNonGolden[nb.idx] = "tail"
+				tailBudget -= nb.size
+			} else if tailBudget > nonGoldenFloor {
+				keepNonGolden[nb.idx] = "tail"
+				tailBudget = nonGoldenFloor
+			}
+		}
+		// Head (oldest first).
+		for i := 0; i < len(nonGolden) && headBudget > nonGoldenFloor; i++ {
+			nb := nonGolden[i]
+			if _, already := keepNonGolden[nb.idx]; already {
+				continue
+			}
+			if nb.size <= headBudget {
+				keepNonGolden[nb.idx] = "head"
+				headBudget -= nb.size
+			} else if headBudget > nonGoldenFloor {
+				keepNonGolden[nb.idx] = "head"
+				headBudget = nonGoldenFloor
+			}
+		}
+	}
+
+	for _, b := range req.Span.Blocks {
+		body := bodies[b.Index]
+		if strings.TrimSpace(body) == "" {
+			continue
+		}
 		mode := golden[b.Index]
 		content := body
 		kept := false
@@ -194,6 +279,17 @@ func RunExtractsLane(req ExtractsLaneRequest) ExtractsLaneResult {
 		} else if mode == "tail" {
 			content = wrapTail(body, perBlockCap)
 			kept = true
+		} else if ngMode, ok := keepNonGolden[b.Index]; ok && totalBudget > 0 {
+			// Budgeted non-golden block: truncate to fit.
+			if ngMode == "head" {
+				content = wrapHead(body, perBlockCap)
+			} else {
+				content = wrapTail(body, perBlockCap)
+			}
+			kept = true
+		} else if totalBudget > 0 {
+			// Over budget and not selected: drop this block entirely.
+			continue
 		}
 		parts = append(parts, FormatBlockHeader(b, true)+":\n"+content)
 		metas = append(metas, ExtractsBlockMeta{
@@ -226,7 +322,7 @@ func wrapHead(text string, maxChars int) string {
 	if br := strings.LastIndex(cut, "\n"); br > maxChars/2 {
 		cut = cut[:br]
 	}
-	return keepOpen + "\n" + cut + "\n" + keepClose + text[len(cut):]
+	return keepOpen + "\n" + cut + "\n" + keepClose
 }
 
 func wrapTail(text string, maxChars int) string {
@@ -240,7 +336,7 @@ func wrapTail(text string, maxChars int) string {
 	if br := strings.Index(tail, "\n"); br >= 0 && br < maxChars/2 {
 		tail = tail[br+1:]
 	}
-	return text[:len(text)-len(tail)] + keepOpen + "\n" + tail + "\n" + keepClose
+	return keepOpen + "\n" + tail + "\n" + keepClose
 }
 
 func wrapToolCallHeaders(text string) string {
