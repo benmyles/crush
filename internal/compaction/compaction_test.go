@@ -112,10 +112,34 @@ func TestPlanBudget_DefaultsAndAllocation(t *testing.T) {
 		},
 	})
 	require.Greater(t, plan.AllowanceTokens, int64(0))
+	// The allowance must not collapse to the 6000-token floor: with a 200k
+	// window, fractional=30000 and halfHeadroom=77808, so the floor of the
+	// upper bounds is 30000, raised to max(6000, 30000) = 30000.
+	require.GreaterOrEqual(t, plan.AllowanceTokens, int64(30000), "allowance must not collapse to the min floor")
 	require.Greater(t, plan.Checkpoint.TargetTokens, int64(0))
 	require.Greater(t, plan.Extracts.TargetTokens, int64(0))
 	require.Greater(t, plan.Ledger.MaxChars, 0)
 	require.Greater(t, plan.Map.MaxChars, 0)
+}
+
+func TestPlanBudget_ClampsCheckpointToSummarizerMax(t *testing.T) {
+	t.Parallel()
+	// A low-DefaultMaxTokens model must not be asked for an impossible
+	// checkpoint length. With MaxOutputTokens=4096, the target is clamped to
+	// 60% = 2457, then raised to the 3000 floor.
+	plan := PlanBudget(BudgetInput{
+		ConsumerContextWindow:     200000,
+		KeepRecentTokens:          20000,
+		ReserveTokens:             16384,
+		SystemPromptTokens:        8000,
+		BudgetFraction:            0.15,
+		MaxSummaryTokens:          48000,
+		MinSummaryTokens:          6000,
+		SummarizerMaxOutputTokens: 4096,
+		Features:                  BudgetFeatures{Ledger: true, TranscriptMap: true},
+	})
+	cap := int64(4096 * 3 / 5)
+	require.LessOrEqual(t, plan.Checkpoint.TargetTokens, max64(3000, cap), "checkpoint target must be clamped to 60%% of summarizer max")
 }
 
 func TestExtractsRatioFor(t *testing.T) {

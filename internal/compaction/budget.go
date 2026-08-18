@@ -81,7 +81,12 @@ func PlanBudget(in BudgetInput) BudgetPlan {
 	}
 	fractional := int64(float64(window) * in.BudgetFraction)
 	halfHeadroom := headroom / 2
-	allowance := min64(min64(in.MinSummaryTokens, halfHeadroom), min64(min64(fractional, in.MaxSummaryTokens), halfHeadroom))
+	// Allowance is the floor of the upper bounds (fractional, MaxSummaryTokens,
+	// halfHeadroom), then raised to MinSummaryTokens so a tiny window still
+	// gets a usable budget. The previous formula took min(MinSummaryTokens,
+	// ...) which collapsed everything to the 6000-token floor.
+	upper := min64(min64(fractional, in.MaxSummaryTokens), halfHeadroom)
+	allowance := max64(in.MinSummaryTokens, upper)
 	if allowance < 2000 {
 		allowance = 2000
 	}
@@ -125,6 +130,11 @@ func PlanBudget(in BudgetInput) BudgetPlan {
 	summarizerMax := in.SummarizerMaxOutputTokens
 	if summarizerMax <= 0 {
 		summarizerMax = 65536
+	}
+	// Clamp the checkpoint target to 60% of the summarizer's max output so a
+	// low-DefaultMaxTokens model is never asked for an impossible length.
+	if cap := summarizerMax * 3 / 5; cap > 0 && plan.Checkpoint.TargetTokens > cap {
+		plan.Checkpoint.TargetTokens = cap
 	}
 	plan.Checkpoint.MaxOutputTokens = min64(summarizerMax, max64(plan.Checkpoint.TargetTokens*3, plan.Checkpoint.TargetTokens+reasoningHeadroomTokens))
 	summarizerWindow := in.SummarizerContextWindow
