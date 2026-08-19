@@ -1,0 +1,53 @@
+docs/hooks/README.md
+  s_e82c6b847451e1::t_4d09b578d5cc9e 20,190-191,202-246
+internal/agent/coordinator.go
+  s_e82c6b847451e1::t_af00dba369b03b 19,143-148,187-204,247-252,365-402
+internal/agent/coordinator_test.go
+  s_9829ab33b248cf::t_5fa32652d2de21 5,9-12,14,599-668
+internal/config/config.go
+  s_e82c6b847451e1::t_6907418d713eff 668
+internal/config/hook_fragments_test.go
+  s_e82c6b847451e1::t_9e40b4991cff43 1-155
+internal/config/load.go
+  s_e82c6b847451e1::t_d921e66a31ff25 30,83-93,1468,1472-1474,1480-1525
+internal/config/store.go
+  s_e82c6b847451e1::t_6427ba154d4e34 1347-1352
+internal/hookevent/event.go
+  s_e82c6b847451e1::t_96c5490101120d 1-10
+internal/hooks/hooks.go
+  s_e82c6b847451e1::t_9ef123c5f92c90 10,16-17
+internal/hooks/hooks_test.go
+  s_e82c6b847451e1::t_fe843edcb52893 5,7-8,761-819
+internal/hooks/input.go
+  s_e82c6b847451e1::t_d63779a1178d7c 31-53,101-116
+internal/hooks/runner.go
+  s_e82c6b847451e1::t_6b58b54fbac02f 95-120,122-129,141-149
+internal/skills/builtin/crush-config/SKILL.md
+  s_e82c6b847451e1::t_6e38c89449859a 223-244,255-256
+internal/skills/builtin/crush-hooks/SKILL.md
+  s_e82c6b847451e1::t_a7072328240eb0 19-21,24-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "aff693969c6bb9706f6aefcc0c9dea11c10ff89f",
+  "prompts": {},
+  "sessions": {
+    "s_9829ab33b248cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e82ef020-5527-4337-9925-d675c6f720a7",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
