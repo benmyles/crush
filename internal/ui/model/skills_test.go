@@ -10,6 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestInsertSkillReferenceInsertsIntoComposer verifies the reference text
+// lands in the composer at the cursor.
+func TestInsertSkillReferenceInsertsIntoComposer(t *testing.T) {
+	t.Parallel()
+
+	u := newTestUI()
+	_ = u.insertSkillReference("skill:foo=/path/to/SKILL.md")
+	require.Equal(t, "skill:foo=/path/to/SKILL.md ", u.textarea.Value())
+}
+
 // TestSkillStatusItemsIncludesBuiltinSkills verifies sidebar skills include
 // both runtime-discovered skill states and builtin skills that may not have
 // emitted a SkillState event yet.

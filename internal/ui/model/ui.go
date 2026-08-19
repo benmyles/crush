@@ -2168,6 +2168,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionAttachSkill:
 		m.dialog.CloseFrontDialog()
 		cmds = append(cmds, m.attachSkill(msg.ID, msg.Name))
+	case dialog.ActionInsertSkillReference:
+		m.dialog.CloseFrontDialog()
+		cmds = append(cmds, m.insertSkillReference(msg.Reference))
 	case dialog.ActionRunMCPPrompt:
 		if len(msg.Arguments) > 0 && msg.Args == nil {
 			m.dialog.CloseFrontDialog()
@@ -4181,6 +4184,14 @@ func (m *UI) attachSkill(skillID, name string) tea.Cmd {
 			Content:  content,
 		}
 	}
+}
+
+// insertSkillReference inserts a skill reference (e.g. skill:foo=bar) into
+// the composer at the current cursor position.
+func (m *UI) insertSkillReference(reference string) tea.Cmd {
+	prevHeight := m.textarea.Height()
+	m.textarea.InsertString(reference + " ")
+	return m.handleTextareaHeightChange(prevHeight)
 }
 
 // sendMessage sends a message with the given content and attachments.

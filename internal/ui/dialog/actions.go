@@ -113,6 +113,11 @@ type (
 		ID   string
 		Name string
 	}
+	// ActionInsertSkillReference is sent when a skill is selected from the
+	// commands dialog to insert a skill reference into the composer.
+	ActionInsertSkillReference struct {
+		Reference string
+	}
 	// ActionRunMCPPrompt is a message to run a custom command.
 	ActionRunMCPPrompt struct {
 		Title       string

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/list"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -156,4 +157,37 @@ func (c *CommandItem) Render(width int) string {
 		rendered = lipgloss.JoinVertical(lipgloss.Left, rendered, descStyle.Render(description+gap))
 	}
 	return rendered
+}
+
+// CommandSection is a non-selectable section header that divides groups of
+// commands (e.g. skills) inside the commands dialog list.
+type CommandSection struct {
+	*list.Versioned
+	title string
+	t     *styles.Styles
+}
+
+// NewCommandSection creates a new section header item.
+func NewCommandSection(t *styles.Styles, title string) *CommandSection {
+	return &CommandSection{
+		Versioned: list.NewVersioned(),
+		title:     title,
+		t:         t,
+	}
+}
+
+// Finished implements list.Item. Section headers are render-stable.
+func (c *CommandSection) Finished() bool {
+	return true
+}
+
+// Filter implements list.FilterableItem. Section headers never match a
+// query, so they are hidden while the list is being filtered.
+func (c *CommandSection) Filter() string {
+	return ""
+}
+
+// Render implements list.Item.
+func (c *CommandSection) Render(width int) string {
+	return common.Section(c.t, " "+c.title+" ", width)
 }

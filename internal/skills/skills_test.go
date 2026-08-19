@@ -518,3 +518,10 @@ func TestFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatReference(t *testing.T) {
+	t.Parallel()
+
+	s := &Skill{Name: "http-server", SkillFilePath: "/tmp/skills/http-server/SKILL.md"}
+	require.Equal(t, "skill:http-server=/tmp/skills/http-server/SKILL.md", s.FormatReference())
+}

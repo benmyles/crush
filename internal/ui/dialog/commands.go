@@ -69,6 +69,7 @@ type Commands struct {
 	windowWidth int
 
 	customCommands []commands.CustomCommand
+	skills         []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
 
 	dockerMCPAvailable     *bool
@@ -79,6 +80,7 @@ var _ Dialog = (*Commands)(nil)
 
 // NewCommands creates a new commands dialog.
 func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue bool, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt) (*Commands, error) {
+	skills, userCommands := splitCommands(customCommands)
 	c := &Commands{
 		com:            com,
 		selected:       SystemCommands,
@@ -86,7 +88,8 @@ func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, has
 		hasSession:     hasSession,
 		hasTodos:       hasTodos,
 		hasQueue:       hasQueue,
-		customCommands: customCommands,
+		customCommands: userCommands,
+		skills:         skills,
 		mcpPrompts:     mcpPrompts,
 	}
 
@@ -194,6 +197,7 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 			} else {
 				c.list.SelectPrev()
 			}
+			c.skipToClosestCommand(false)
 			c.list.ScrollToSelected()
 		case key.Matches(msg, c.keyMap.Next):
 			c.list.Focus()
@@ -202,6 +206,7 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 			} else {
 				c.list.SelectNext()
 			}
+			c.skipToClosestCommand(true)
 			c.list.ScrollToSelected()
 		case key.Matches(msg, c.keyMap.Select):
 			if selectedItem := c.list.SelectedItem(); selectedItem != nil {
@@ -394,6 +399,37 @@ func (c *Commands) previousCommandType() CommandType {
 	}
 }
 
+// splitCommands separates skill-backed commands from regular custom
+// commands. Skills are shown in their own section of the commands dialog.
+func splitCommands(customCommands []commands.CustomCommand) (skills, userCommands []commands.CustomCommand) {
+	for _, cmd := range customCommands {
+		if cmd.Skill != nil {
+			skills = append(skills, cmd)
+			continue
+		}
+		userCommands = append(userCommands, cmd)
+	}
+	return skills, userCommands
+}
+
+// skipToClosestCommand moves the selection to the nearest command item in
+// the given direction, skipping non-selectable items like section headers.
+func (c *Commands) skipToClosestCommand(forward bool) {
+	items := c.list.FilteredItems()
+	idx := c.list.Selected()
+	for idx >= 0 && idx < len(items) {
+		if _, ok := items[idx].(*CommandItem); ok {
+			c.list.SetSelected(idx)
+			return
+		}
+		if forward {
+			idx++
+		} else {
+			idx--
+		}
+	}
+}
+
 // setCommandItems sets the command items based on the specified command type.
 func (c *Commands) setCommandItems(commandType CommandType) {
 	c.selected = commandType
@@ -404,23 +440,22 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 		for _, cmd := range c.defaultCommands() {
 			commandItems = append(commandItems, cmd)
 		}
+		if len(c.skills) > 0 {
+			commandItems = append(commandItems, NewCommandSection(c.com.Styles, "Skills"))
+			for _, cmd := range c.skills {
+				item := NewCommandItem(c.com.Styles, "skill_"+cmd.Skill.Name, cmd.Skill.Name, "", ActionInsertSkillReference{
+					Reference: cmd.Skill.FormatReference(),
+				}).WithDescription(cmd.Skill.Description)
+				commandItems = append(commandItems, item)
+			}
+		}
 	case UserCommands:
 		for _, cmd := range c.customCommands {
-			var action Action
-			if cmd.Skill != nil {
-				action = ActionAttachSkill{ID: cmd.Skill.SkillFilePath, Name: cmd.Skill.Name}
-			} else {
-				action = ActionRunCustomCommand{
-					Content:   cmd.Content,
-					Arguments: cmd.Arguments,
-					Skill:     cmd.Skill,
-				}
+			action := ActionRunCustomCommand{
+				Content:   cmd.Content,
+				Arguments: cmd.Arguments,
 			}
-			item := NewCommandItem(c.com.Styles, "custom_"+cmd.ID, cmd.Name, "", action)
-			if cmd.Skill != nil {
-				item = item.WithDescription(cmd.Skill.Description)
-			}
-			commandItems = append(commandItems, item)
+			commandItems = append(commandItems, NewCommandItem(c.com.Styles, "custom_"+cmd.ID, cmd.Name, "", action))
 		}
 	case MCPPrompts:
 		for _, cmd := range c.mcpPrompts {

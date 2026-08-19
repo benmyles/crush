@@ -335,6 +335,12 @@ func (s *Skill) FormatInvocation() string {
 	return sb.String()
 }
 
+// FormatReference returns a chat reference identifying the skill, in the
+// form skill:<name>=<location>.
+func (s *Skill) FormatReference() string {
+	return "skill:" + s.Name + "=" + s.SkillFilePath
+}
+
 func escape(s string) string {
 	return promptReplacer.Replace(s)
 }
