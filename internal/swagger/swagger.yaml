@@ -1112,6 +1112,11 @@ definitions:
       yolo:
         type: boolean
     type: object
+  server.rewindSessionRequest:
+    properties:
+      message_id:
+        type: string
+    type: object
   time.Duration:
     enum:
     - -9223372036854775808
@@ -1568,6 +1573,45 @@ paths:
           schema:
             $ref: '#/definitions/proto.Error'
       summary: Get queued prompt status
+      tags:
+      - agent
+  /workspaces/{id}/agent/sessions/{sid}/rewind:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Session ID
+        in: path
+        name: sid
+        required: true
+        type: string
+      - description: Rewind target
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/server.rewindSessionRequest'
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Rewind session
       tags:
       - agent
   /workspaces/{id}/agent/sessions/{sid}/shell:

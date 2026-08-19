@@ -641,7 +641,13 @@ plus a deterministic ledger (your instructions, files, commands, errors), a
 transcript map, budgeted verbatim extracts, a working-set snapshot, and an
 exact-recovery note. Nothing is thrown away — the raw messages stay in the
 session store and the agent can search them (`recall_grep`), expand a summary
-(`recall_expand`), or compact early at a natural milestone (`compact_context`).
+(`recall_expand`), or compact early at a natural milestone (`compact_context`,
+or run `/compact` yourself).
+
+Want to back up instead? Select an earlier user message and press
+<kbd>ctrl+r</kbd> — or pick **Resume From Here** from the command palette — to
+truncate the session at that message (after confirming) and put its text back
+in the prompt.
 
 Everything about it is configurable from the TUI: open the command palette and
 choose **Compaction Settings** to toggle the engine, tune token budgets, pick
