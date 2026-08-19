@@ -1,0 +1,45 @@
+internal/agent/coordinator.go
+  s_e82c6b847451e1::t_495b066019cabf 115-119,1465-1532
+internal/backend/agent.go
+  s_e82c6b847451e1::t_54c1861deaefda 195-209
+internal/backend/agent_runcomplete_test.go
+  s_e82c6b847451e1::t_ecc57cb56d12c1 49
+internal/backend/agent_test.go
+  s_e82c6b847451e1::t_535d56890a034c 59
+internal/client/proto.go
+  s_e82c6b847451e1::t_e7bd126c1d6192 576-590
+internal/message/message.go
+  s_e82c6b847451e1::t_797a28c1fbfd57 57-61,152-161,170-214
+internal/server/proto.go
+  s_e82c6b847451e1::t_41933acc3a3857 952-990
+internal/server/server.go
+  s_e82c6b847451e1::t_e0b099e3b9273d 202
+internal/ui/chat/user.go
+  s_e82c6b847451e1::t_e2562245b93da7 162-166
+internal/ui/dialog/commands.go
+  s_e82c6b847451e1::t_d0f11c5c993324 62-65,163-175,514-520
+internal/ui/model/keys.go
+  s_e82c6b847451e1::t_7fd9ac795c91c5 50,257-260
+internal/workspace/app_workspace.go
+  s_e82c6b847451e1::t_4a25f99f0d12f0 236-242
+internal/workspace/client_workspace.go
+  s_e82c6b847451e1::t_c7151f9571f750 323-326
+internal/workspace/workspace.go
+  s_e82c6b847451e1::t_4df5bd59a4d245 161-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "5953b0c41cd0697133b139faab25e7ec2268cffd",
+  "prompts": {},
+  "sessions": {
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
