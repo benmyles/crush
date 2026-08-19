@@ -1,0 +1,29 @@
+internal/ui/dialog/commands_test.go
+  s_9829ab33b248cf::t_9a67c542efa35f 81,98
+internal/ui/model/skills_test.go
+  s_e82c6b847451e1::t_547675faa96b69 6-9,14,18,24-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "0271ad47f7f258db63e806d33569888288288ecd",
+  "prompts": {},
+  "sessions": {
+    "s_9829ab33b248cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e82ef020-5527-4337-9925-d675c6f720a7",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
