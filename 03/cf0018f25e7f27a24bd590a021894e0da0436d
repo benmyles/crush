@@ -1,0 +1,41 @@
+internal/agent/tools/terminal.go
+  s_e82c6b847451e1::t_288ef86690f0a0 1-52
+internal/agent/tools/terminal_input.go
+  s_e82c6b847451e1::t_f6c75176bca7b1 1-143
+internal/agent/tools/terminal_input.md
+  s_e82c6b847451e1::t_33b685a197ddfd 1-41
+internal/agent/tools/terminal_kill.go
+  s_e82c6b847451e1::t_3cc66a029f9404 1-85
+internal/agent/tools/terminal_kill.md
+  s_e82c6b847451e1::t_6a774e82cec6b9 1-9
+internal/agent/tools/terminal_output.md
+  s_e82c6b847451e1::t_14e305624684f3 1-35
+internal/agent/tools/terminal_resize.go
+  s_e82c6b847451e1::t_3a9eb6ac906271 1-44
+internal/agent/tools/terminal_resize.md
+  s_e82c6b847451e1::t_7b25c665736ac2 1-3
+internal/agent/tools/terminal_start.go
+  s_e82c6b847451e1::t_92690b9d1ee82b 1-93
+internal/agent/tools/terminal_start.md
+  s_e82c6b847451e1::t_69d0793742d79f 1-47
+internal/config/config.go
+  s_e82c6b847451e1::t_354c31039c2670 829-833
+internal/terminal/terminal.go
+  s_e82c6b847451e1::t_bd5813be1e3cd7 1-420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "03cf0018f25e7f27a24bd590a021894e0da0436d",
+  "prompts": {},
+  "sessions": {
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
