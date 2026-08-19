@@ -1,0 +1,39 @@
+internal/agent/queue_remove_test.go
+  s_e82c6b847451e1::t_cb09d8e9a74b67 1-88
+internal/client/proto.go
+  s_e82c6b847451e1::t_429d2c60d208c4 16,882-883,892-893,896-913
+internal/server/proto.go
+  s_e82c6b847451e1::t_4324455d00c32c 8,1033,1040,1045-1077
+internal/server/server.go
+  s_e82c6b847451e1::t_11660af737d6fb 200
+internal/ui/model/keys.go
+  s_e82c6b847451e1::t_81f6582e2fa1a7 34-35,195-202
+internal/ui/model/pills.go
+  s_e82c6b847451e1::t_5a2fd5be264340 9,153-156,162-163,168-173,263,270-289,406,421-423
+internal/ui/model/session_busy_test.go
+  s_e82c6b847451e1::t_6827565c0348fd 13,36,41-44,74,79-84,194,274,329,333,343,434,438,556,560,568,575,601
+internal/ui/model/workspace_cache.go
+  s_e82c6b847451e1::t_73094b2b67066c 33,94-110,242,285-287
+internal/ui/styles/quickstyle.go
+  s_e82c6b847451e1::t_d344d2cbe9f172 1055
+internal/ui/styles/styles.go
+  s_e82c6b847451e1::t_300cbb430461b6 591
+internal/workspace/client_workspace.go
+  s_e82c6b847451e1::t_53f36f8b2cb93c 14,302-303,305,308-317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "3c2f03dbd4b2d84f913ab51b63249bb50bf6e34c",
+  "prompts": {},
+  "sessions": {
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
