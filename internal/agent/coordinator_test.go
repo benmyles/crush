@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -606,8 +605,11 @@ func TestSessionStartHooksFireOncePerSession(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(isolated, ".local", "share"))
 
 	workDir := t.TempDir()
-	marker := filepath.Join(t.TempDir(), "starts.log")
-	command := `echo "$CRUSH_SESSION_ID" >> "` + marker + `"`
+	markerDir := t.TempDir()
+	// Each session logs to its own file: concurrent hook runs append to
+	// the same file in non-atomic chunks, so interleaving could merge two
+	// sessions onto one line and make the shared-marker assertion flaky.
+	command := `echo "$CRUSH_SESSION_ID" >> "` + markerDir + `/hook-$CRUSH_SESSION_ID"`
 	cfgJSON, err := json.Marshal(map[string]any{
 		"hooks": map[string]any{
 			"SessionStart": []any{map[string]any{
@@ -629,23 +631,20 @@ func TestSessionStartHooksFireOncePerSession(t *testing.T) {
 	c.fireSessionStartHooks("sess-1")
 	c.fireSessionStartHooks("sess-2")
 
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(marker)
+	// Hooks run on a background goroutine through the embedded shell, so
+	// under parallel suite load the spawn can lag. The window is generous
+	// while still failing fast when healthy.
+	hookLogged := func(sessionID string) bool {
+		data, err := os.ReadFile(filepath.Join(markerDir, "hook-"+sessionID))
 		if err != nil {
 			return false
 		}
-		var sessions []string
-		for _, line := range strings.Split(string(data), "\n") {
-			if line != "" {
-				sessions = append(sessions, line)
-			}
-		}
-		if len(sessions) != 2 {
-			return false
-		}
-		slices.Sort(sessions)
-		return sessions[0] == "sess-1" && sessions[1] == "sess-2"
-	}, 5*time.Second, 10*time.Millisecond)
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		return len(lines) == 1 && lines[0] == sessionID
+	}
+	require.Eventually(t, func() bool {
+		return hookLogged("sess-1") && hookLogged("sess-2")
+	}, 15*time.Second, 10*time.Millisecond)
 }
 
 func TestSessionStartHooksSkipWhenNoneConfigured(t *testing.T) {
