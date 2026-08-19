@@ -1,0 +1,49 @@
+internal/compaction/engine.go
+  s_aa37a23997ab22::t_c1252d7f85ff33 388-393,395-402,415,419-420,422-427
+internal/compaction/budget.go
+  s_aa37a23997ab22::t_70624c15f8ca30 93-97
+internal/compaction/extracts.go
+  s_aa37a23997ab22::t_5ecbabb0ccfcad 197,278,280-292,294-298,301,304,309,311,317-323,325,330-331,342,344,348-406,408
+  s_aa37a23997ab22::t_c7819ebb4f1e48 53-59
+  s_aa37a23997ab22::t_33155058186a72 324,326,328-329,332
+internal/compaction/engine_run_test.go
+  s_aa37a23997ab22::t_a466ed49b10286 292-307
+  s_aa37a23997ab22::t_1e13f546693e6f 346
+  s_aa37a23997ab22::t_a8e589134fd8db 318-335,337-343,345,347-351,353-394
+  s_aa37a23997ab22::t_6432d76fe60ea0 5,336,344,352
+internal/compaction/extracts_test.go
+  s_aa37a23997ab22::t_1172c1c986ff9a 126-127,131-165
+  s_e82c6b847451e1::t_1fcdd23787ca8b 166-167
+internal/compaction/compaction_test.go
+  s_aa37a23997ab22::t_276d5805e63b80 149-163
+internal/agent/agent.go
+  s_aa37a23997ab22::t_556309d5adb26a 136-141,1186-1196,1390
+internal/agent/compaction_reentry_test.go
+  s_aa37a23997ab22::t_ec5b7b154ee67c 158-175
+  s_aa37a23997ab22::t_470a2dd7214102 1-140,143-157,176
+  s_aa37a23997ab22::t_b6438f46698af0 141-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "242bc449ff38141b88c140aa2512d7c32295c696",
+  "prompts": {},
+  "sessions": {
+    "s_aa37a23997ab22": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01b7f-0972-7ea0-ac07-d9de5aebf336",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
