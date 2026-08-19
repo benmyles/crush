@@ -50,6 +50,13 @@ const (
 	keepClose = "</keepContext>"
 )
 
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // BuildExtractsQuery builds a deterministic focus query from user-authored
 // text only (never the generated checkpoint). Mirrors ShiftUp invariant 4.
 func BuildExtractsQuery(retainedUserMessages, spanUserMessages []string, customInstructions string) string {
@@ -187,7 +194,7 @@ func RunExtractsLane(req ExtractsLaneRequest) ExtractsLaneResult {
 	var parts []string
 	var metas []ExtractsBlockMeta
 	inputChars := 0
-	outputChars := 0
+	renderedChars := 0
 
 	// When a total budget is set, golden spans are kept first and the
 	// remaining character budget is allocated over non-golden blocks with
@@ -268,30 +275,61 @@ func RunExtractsLane(req ExtractsLaneRequest) ExtractsLaneResult {
 			continue
 		}
 		mode := golden[b.Index]
-		content := body
+		content := ""
 		kept := false
+		header := FormatBlockHeader(b, true) + ":\n"
+		contentBudget := 0
+		if totalBudget > 0 {
+			separatorChars := 0
+			if len(parts) > 0 {
+				separatorChars = 2
+			}
+			contentBudget = totalBudget - renderedChars - separatorChars - len(header)
+			if contentBudget <= 0 {
+				continue
+			}
+		}
+
 		if b.Kind == BlockAssistantToolCalls && req.KeepContext {
-			content = wrapToolCallHeaders(body)
+			if totalBudget > 0 {
+				content = wrapToolCallHeadersWithin(body, minInt(perBlockCap, contentBudget))
+			} else {
+				content = wrapToolCallHeaders(body)
+			}
 			kept = true
 		} else if mode == "head" {
-			content = wrapHead(body, perBlockCap)
+			content = wrapHeadWithin(body, perBlockCap, contentBudget)
 			kept = true
 		} else if mode == "tail" {
-			content = wrapTail(body, perBlockCap)
+			content = wrapTailWithin(body, perBlockCap, contentBudget)
 			kept = true
 		} else if ngMode, ok := keepNonGolden[b.Index]; ok && totalBudget > 0 {
 			// Budgeted non-golden block: truncate to fit.
 			if ngMode == "head" {
-				content = wrapHead(body, perBlockCap)
+				content = wrapHeadWithin(body, perBlockCap, contentBudget)
 			} else {
-				content = wrapTail(body, perBlockCap)
+				content = wrapTailWithin(body, perBlockCap, contentBudget)
 			}
 			kept = true
 		} else if totalBudget > 0 {
 			// Over budget and not selected: drop this block entirely.
 			continue
+		} else {
+			content = body
 		}
-		parts = append(parts, FormatBlockHeader(b, true)+":\n"+content)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		part := header + content
+		nextRenderedChars := renderedChars + len(part)
+		if len(parts) > 0 {
+			nextRenderedChars += 2
+		}
+		if totalBudget > 0 && nextRenderedChars > totalBudget {
+			continue
+		}
+		parts = append(parts, part)
+		renderedChars = nextRenderedChars
 		metas = append(metas, ExtractsBlockMeta{
 			SourceIndex: b.Index,
 			Kind:        b.Kind,
@@ -300,15 +338,74 @@ func RunExtractsLane(req ExtractsLaneRequest) ExtractsLaneResult {
 			KeepContext: kept,
 			Chars:       len(body),
 		})
-		outputChars += len(content)
 	}
+	text := strings.Join(parts, "\n\n")
 	return ExtractsLaneResult{
-		Text:        strings.Join(parts, "\n\n"),
+		Text:        text,
 		Blocks:      metas,
 		Query:       req.Query,
 		InputChars:  inputChars,
-		OutputChars: outputChars,
+		OutputChars: len(text),
 	}
+}
+
+func wrapHeadWithin(text string, perBlockCap, outputCap int) string {
+	if outputCap <= 0 {
+		return wrapHead(text, perBlockCap)
+	}
+	bodyCap := minInt(perBlockCap, outputCap-len(keepOpen)-len(keepClose)-2)
+	if bodyCap <= 0 {
+		return ""
+	}
+	return wrapHead(text, bodyCap)
+}
+
+func wrapTailWithin(text string, perBlockCap, outputCap int) string {
+	if outputCap <= 0 {
+		return wrapTail(text, perBlockCap)
+	}
+	bodyCap := minInt(perBlockCap, outputCap-len(keepOpen)-len(keepClose)-2)
+	if bodyCap <= 0 {
+		return ""
+	}
+	return wrapTail(text, bodyCap)
+}
+
+func wrapToolCallHeadersWithin(text string, maxChars int) string {
+	if maxChars <= 0 {
+		return ""
+	}
+	var out strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		rendered := line
+		if strings.HasPrefix(line, "- ") && strings.Contains(line, "(") {
+			rendered = keepOpen + "\n" + line + "\n" + keepClose
+		}
+		separator := 0
+		if out.Len() > 0 {
+			separator = 1
+		}
+		remaining := maxChars - out.Len() - separator
+		if remaining <= 0 {
+			break
+		}
+		if len(rendered) > remaining {
+			// Keep a byte-exact prefix of the last plain argument line. Never
+			// cut a labeled keepContext wrapper in half.
+			if rendered == line {
+				if separator > 0 {
+					out.WriteByte('\n')
+				}
+				out.WriteString(rendered[:remaining])
+			}
+			break
+		}
+		if separator > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(rendered)
+	}
+	return out.String()
 }
 
 func wrapHead(text string, maxChars int) string {

@@ -123,8 +123,46 @@ func TestRunExtractsLane_RespectsTotalCharBudget(t *testing.T) {
 	req := BuildExtractsLaneRequest(span, "query", ExtractsRenderBudget, true)
 	req.TotalCharBudget = 10000 // far below the ~100k input
 	res := RunExtractsLane(req)
-	require.Less(t, res.OutputChars, req.TotalCharBudget*2, "output must be bounded by the total budget, not emit every block")
+	require.LessOrEqual(t, len(res.Text), req.TotalCharBudget, "the total budget is a hard cap on the rendered lane")
+	require.Equal(t, len(res.Text), res.OutputChars)
 	require.Less(t, res.OutputChars, res.InputChars, "extracts must compress")
+}
+
+func TestRunExtractsLane_ForceKeptToolCallsRespectTotalCharBudget(t *testing.T) {
+	t.Parallel()
+	parts := make([]message.ContentPart, 0, 41)
+	for i := 0; i < 40; i++ {
+		parts = append(parts, message.ToolCall{
+			ID:       "call-" + strconv.Itoa(i),
+			Name:     "large_tool",
+			Input:    strings.Repeat("argument-value ", 2000),
+			Finished: true,
+		})
+	}
+	parts = append(parts, message.Finish{Reason: message.FinishReasonToolUse})
+	history := []message.Message{
+		{
+			ID:        "user",
+			Role:      message.User,
+			Parts:     []message.ContentPart{message.TextContent{Text: "Continue after inspecting these tool calls."}},
+			CreatedAt: 100,
+		},
+		{
+			ID:        "assistant",
+			Role:      message.Assistant,
+			Parts:     parts,
+			CreatedAt: 101,
+		},
+	}
+	span := BuildSpanModel(SpanInput{History: history})
+	req := BuildExtractsLaneRequest(span, "query", ExtractsRenderBudget, true)
+	req.TotalCharBudget = 5000
+	res := RunExtractsLane(req)
+
+	require.NotEmpty(t, res.Text)
+	require.Contains(t, res.Text, keepOpen)
+	require.LessOrEqual(t, len(res.Text), req.TotalCharBudget, "force-kept tool-call headers must not bypass the lane budget")
+	require.Equal(t, len(res.Text), res.OutputChars)
 }
 
 func TestRunExtractsLane_OlderLaneDecays(t *testing.T) {

@@ -90,6 +90,11 @@ func PlanBudget(in BudgetInput) BudgetPlan {
 	if allowance < 2000 {
 		allowance = 2000
 	}
+	// MaxSummaryTokens is an absolute operator cap, even for a conflicting
+	// configuration whose minimum is larger than its maximum.
+	if in.MaxSummaryTokens > 0 && allowance > in.MaxSummaryTokens {
+		allowance = in.MaxSummaryTokens
+	}
 
 	var plan BudgetPlan
 	plan.ConsumerContextWindow = window

@@ -146,6 +146,21 @@ func TestPlanBudget_ClampsCheckpointToSummarizerMax(t *testing.T) {
 	require.LessOrEqual(t, plan.Checkpoint.TargetTokens, max64(3000, cap), "checkpoint target must be clamped to 60%% of summarizer max")
 }
 
+func TestPlanBudget_MaxSummaryTokensIsHardCap(t *testing.T) {
+	t.Parallel()
+	plan := PlanBudget(BudgetInput{
+		ConsumerContextWindow: 200000,
+		KeepRecentTokens:      20000,
+		ReserveTokens:         16384,
+		SystemPromptTokens:    8000,
+		BudgetFraction:        0.15,
+		MaxSummaryTokens:      4000,
+		MinSummaryTokens:      6000,
+		Features:              BudgetFeatures{Ledger: true, Extracts: true},
+	})
+	require.Equal(t, int64(4000), plan.AllowanceTokens, "the minimum must not override the configured hard cap")
+}
+
 func TestExtractsRatioFor(t *testing.T) {
 	t.Parallel()
 	r := ExtractsRatioFor(3000, 30000, 0.3)

@@ -133,6 +133,12 @@ type SessionAgentCall struct {
 	// paths treat as covered by any present mark, preserving the
 	// pre-sequence behavior.
 	acceptSeq uint64
+	// resumedAfterCompaction marks the recursive continuation of this same
+	// logical user turn. Automatic or agent-requested compaction may stop a
+	// streaming tool loop once, but must not stop every resumed step and
+	// recursively compact forever when usage remains above the threshold.
+	// Fresh calls start false, so the next user turn may compact normally.
+	resumedAfterCompaction bool
 	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
 	// fails with an authentication error (HTTP 401). The callback should
 	// refresh credentials and return nil on success, in which case
@@ -1177,6 +1183,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		},
 		StopWhen: []fantasy.StopCondition{
 			func(_ []fantasy.StepResult) bool {
+				// A compaction continuation belongs to the same logical user turn.
+				// It must be allowed to finish even if the provider's next usage
+				// snapshot remains over threshold; otherwise every tool step stops,
+				// compacts, and recursively starts this call again. Consume a repeated
+				// compact_context request too so it cannot leak into the next turn.
+				if call.resumedAfterCompaction {
+					if a.HasCompactionRequest(call.SessionID) {
+						a.ConsumeCompactionRequest(call.SessionID)
+					}
+					return false
+				}
 				// Agent-initiated compaction request (compact_context tool):
 				// fire at the next step boundary without blocking the tool call.
 				if a.HasCompactionRequest(call.SessionID) {
@@ -1370,6 +1387,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				existing = []SessionAgentCall{}
 			}
 			call.Prompt = fmt.Sprintf("Earlier conversation context was compacted into a session summary (the full history is recoverable with recall_grep and recall_expand). The original user request was: `%s`", call.Prompt)
+			call.resumedAfterCompaction = true
 			existing = append(existing, call)
 			a.messageQueue.Set(call.SessionID, existing)
 		}

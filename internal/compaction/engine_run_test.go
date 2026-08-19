@@ -2,6 +2,7 @@ package compaction
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -288,6 +289,22 @@ func TestEngineRun_ExtractsAreBudgeted(t *testing.T) {
 	}
 	result, err := e.Run(ctx, req)
 	require.NoError(t, err)
+	plan := PlanBudget(BudgetInputFromConfig(
+		req.Cfg,
+		req.ConsumerContextWindow,
+		req.SystemPromptTokens,
+		req.SummarizerContextWindow,
+		req.SummarizerMaxOutputTokens,
+		req.KeepRecentTokens,
+		req.ReserveTokens,
+		BudgetFeatures{
+			Ledger:        true,
+			TranscriptMap: true,
+			Restore:       true,
+			Extracts:      true,
+		},
+	))
+	require.LessOrEqual(t, result.TokenCount, plan.AllowanceTokens, "the whole compaction entry must respect the governor allowance")
 
 	bounds, ok := result.Layout["extracts"]
 	require.True(t, ok, "the extracts section must be present in the composed summary")
@@ -297,4 +314,81 @@ func TestEngineRun_ExtractsAreBudgeted(t *testing.T) {
 	require.Less(t, len(result.SummaryText), spanChars, "the composed summary must be smaller than the span it replaces")
 	require.Contains(t, result.SummaryText, result.SummaryID, "the recovery note cites the summary id")
 	require.Contains(t, result.SummaryText, "seq 1", "seq anchors are session-absolute and start at SeqOffset")
+}
+
+// TestEngineRun_WholeSummaryRespectsAllowance covers force-kept tool-call
+// blocks whose rendered headers can exceed the extracts lane's nominal share.
+// The whole-entry governor is the final safety boundary: no combination of
+// lanes may produce a summary larger than its allowance.
+func TestEngineRun_WholeSummaryRespectsAllowance(t *testing.T) {
+	t.Parallel()
+	completer := func(_ context.Context, _, _ string, _ int64) (string, string, error) {
+		return "<checkpoint>\n## Goal & User Intent\nTest goal\n## Progress\n### Done\n- thing\n## Next Action\n1. do next\n</checkpoint>\n", "stop", nil
+	}
+	e, q := newTestEngine(t, completer)
+	ctx := context.Background()
+	_, err := q.CreateSession(ctx, db.CreateSessionParams{ID: "summary-budget", Title: "test"})
+	require.NoError(t, err)
+
+	var history []message.Message
+	for turn := 0; turn < 8; turn++ {
+		history = append(history, message.Message{
+			ID:        fmt.Sprintf("budget-user-%d", turn),
+			Role:      message.User,
+			Parts:     []message.ContentPart{message.TextContent{Text: "Inspect the tool output and continue."}},
+			CreatedAt: int64(100 + turn*2),
+		})
+		parts := make([]message.ContentPart, 0, 41)
+		for call := 0; call < 40; call++ {
+			parts = append(parts, message.ToolCall{
+				ID:       fmt.Sprintf("call-%d-%d", turn, call),
+				Name:     "large_tool",
+				Input:    strings.Repeat("argument-value ", 2000),
+				Finished: true,
+			})
+		}
+		parts = append(parts, message.Finish{Reason: message.FinishReasonToolUse})
+		history = append(history, message.Message{
+			ID:        fmt.Sprintf("budget-assistant-%d", turn),
+			Role:      message.Assistant,
+			Parts:     parts,
+			CreatedAt: int64(101 + turn*2),
+		})
+	}
+
+	cfg := compactionTestConfig()
+	cfg.Verify = string(config.VerificationChecks)
+	req := CompactionRequest{
+		SessionID:                 "summary-budget",
+		History:                   history,
+		FirstRetainedSeq:          len(history) + 1,
+		FirstRetainedID:           "retained",
+		SeqOffset:                 1,
+		ConsumerContextWindow:     200000,
+		SystemPromptTokens:        8000,
+		SummarizerContextWindow:   200000,
+		SummarizerMaxOutputTokens: 8192,
+		KeepRecentTokens:          20000,
+		ReserveTokens:             16384,
+		Cfg:                       cfg,
+	}
+	result, err := e.Run(ctx, req)
+	require.NoError(t, err)
+
+	plan := PlanBudget(BudgetInputFromConfig(
+		req.Cfg,
+		req.ConsumerContextWindow,
+		req.SystemPromptTokens,
+		req.SummarizerContextWindow,
+		req.SummarizerMaxOutputTokens,
+		req.KeepRecentTokens,
+		req.ReserveTokens,
+		BudgetFeatures{
+			Ledger:        true,
+			TranscriptMap: true,
+			Restore:       true,
+			Extracts:      true,
+		},
+	))
+	require.LessOrEqual(t, result.TokenCount, plan.AllowanceTokens, "the whole compaction entry must respect the governor allowance")
 }

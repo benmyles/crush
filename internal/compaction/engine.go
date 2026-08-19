@@ -385,13 +385,21 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 	}
 	composed, layout := composeSummary(summaryParts)
 
-	// 8b. Convergence guard: the composed summary must be smaller than the
-	// span it replaces. If it is not (e.g. the extracts lane emitted too much,
-	// or the checkpoint ran long), drop parts in priority order until it fits,
-	// and fail closed if it still cannot converge. This guarantees compaction
-	// never makes the active context larger.
+	// 8b. Final size guard: the composed summary must fit both the governor's
+	// whole-entry allowance and the convergence bound for the span it replaces.
+	// Individual lane budgets are not sufficient on their own because wrappers,
+	// headings, or force-kept content can make a lane render long. Drop optional
+	// parts in priority order until both bounds hold, and fail closed if the
+	// mandatory checkpoint and recovery material cannot fit.
 	composedTokens := int64(EstimateTokens(len(composed)))
-	if spanTokens > 0 && composedTokens >= spanTokens {
+	maxComposedTokens := plan.AllowanceTokens
+	if spanTokens > 0 && (maxComposedTokens <= 0 || spanTokens-1 < maxComposedTokens) {
+		maxComposedTokens = spanTokens - 1
+	}
+	if maxComposedTokens <= 0 {
+		return nil, fmt.Errorf("compaction: no positive output budget (allowance %d tokens, span %d tokens)", plan.AllowanceTokens, spanTokens)
+	}
+	if composedTokens > maxComposedTokens {
 		dropOrder := []string{"extracts", "workingSet", "map", "ledger"}
 		for _, dropKey := range dropOrder {
 			kept := make([]struct{ key, text string }, 0, len(summaryParts))
@@ -404,14 +412,19 @@ func (e *Engine) Run(ctx context.Context, req CompactionRequest) (*CompactionRes
 			summaryParts = kept
 			composed, layout = composeSummary(summaryParts)
 			composedTokens = int64(EstimateTokens(len(composed)))
-			if composedTokens < spanTokens {
+			if composedTokens <= maxComposedTokens {
 				break
 			}
 		}
-		if composedTokens >= spanTokens {
-			return nil, fmt.Errorf("compaction: convergence failure: composed summary (%d tokens) >= span (%d tokens) even after dropping all optional parts", composedTokens, spanTokens)
+		if composedTokens > maxComposedTokens {
+			return nil, fmt.Errorf("compaction: final summary (%d tokens) exceeds output limit (%d tokens; allowance %d, span %d) even after dropping all optional parts", composedTokens, maxComposedTokens, plan.AllowanceTokens, spanTokens)
 		}
-		slog.Debug("compaction: convergence guard dropped optional parts", "dropped_to_tokens", composedTokens, "span_tokens", spanTokens)
+		slog.Debug(
+			"Compaction final size guard dropped optional parts",
+			"dropped_to_tokens", composedTokens,
+			"allowance_tokens", plan.AllowanceTokens,
+			"span_tokens", spanTokens,
+		)
 	}
 
 	// 9. Persist the summary DAG node + causality edges. Both the history and
