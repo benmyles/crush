@@ -443,9 +443,10 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 		if len(c.skills) > 0 {
 			commandItems = append(commandItems, NewCommandSection(c.com.Styles, "Skills"))
 			for _, cmd := range c.skills {
-				item := NewCommandItem(c.com.Styles, "skill_"+cmd.Skill.Name, cmd.Skill.Name, "", ActionInsertSkillReference{
+				title := "Skill: " + cmd.Skill.Name
+				item := NewCommandItem(c.com.Styles, "skill_"+cmd.Skill.Name, title, "", ActionInsertSkillReference{
 					Reference: cmd.Skill.FormatReference(),
-				}).WithDescription(cmd.Skill.Description)
+				}).WithDescription(cmd.Skill.Description).WithAliases(cmd.Skill.Name)
 				commandItems = append(commandItems, item)
 			}
 		}
@@ -598,10 +599,11 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	return commands
 }
 
-// SetCustomCommands sets the custom commands and refreshes the view if user commands are currently displayed.
+// SetCustomCommands sets the custom commands and refreshes the view if user
+// commands or skills are currently displayed.
 func (c *Commands) SetCustomCommands(customCommands []commands.CustomCommand) {
-	c.customCommands = customCommands
-	if c.selected == UserCommands {
+	c.skills, c.customCommands = splitCommands(customCommands)
+	if c.selected == UserCommands || c.selected == SystemCommands {
 		c.setCommandItems(c.selected)
 	}
 }

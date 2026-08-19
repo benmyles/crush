@@ -78,6 +78,7 @@ func TestCommands_SkillsSection(t *testing.T) {
 		case *CommandItem:
 			if item.ID() == "skill_http-server" {
 				skillIdx = i
+				require.Equal(t, "Skill: http-server", item.title)
 			}
 		}
 	}
@@ -94,7 +95,7 @@ func TestCommands_SkillsSection(t *testing.T) {
 	action := d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter})
 	insert, ok := action.(ActionInsertSkillReference)
 	require.True(t, ok, "enter on skill emits an insert action, got %T", action)
-	require.Equal(t, "skill:http-server=/tmp/skills/http-server/SKILL.md", insert.Reference)
+	require.Equal(t, "[skill:http-server]", insert.Reference)
 
 	// Skills are not repeated in the user commands tab, and plain custom
 	// commands remain there.

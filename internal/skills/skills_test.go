@@ -523,5 +523,28 @@ func TestFormatReference(t *testing.T) {
 	t.Parallel()
 
 	s := &Skill{Name: "http-server", SkillFilePath: "/tmp/skills/http-server/SKILL.md"}
-	require.Equal(t, "skill:http-server=/tmp/skills/http-server/SKILL.md", s.FormatReference())
+	require.Equal(t, "[skill:http-server]", s.FormatReference())
+}
+
+func TestExpandReferences(t *testing.T) {
+	t.Parallel()
+
+	locations := map[string]string{
+		"http-server": "/tmp/skills/http-server/SKILL.md",
+		"jq":          "crush://skills/jq/SKILL.md",
+	}
+
+	content := "blah blah [skill:http-server] blah [skill:jq]"
+	require.Equal(t,
+		"blah blah [use skill /tmp/skills/http-server/SKILL.md] blah [use skill crush://skills/jq/SKILL.md]",
+		ExpandReferences(content, locations),
+	)
+
+	// Unknown or malformed tokens are left alone.
+	require.Equal(t, "[skill:nope]", ExpandReferences("[skill:nope]", locations))
+	require.Equal(t, "[skill:bad_name] [not-a-token]", ExpandReferences("[skill:bad_name] [not-a-token]", locations))
+
+	// No tokens: content returned verbatim.
+	require.Equal(t, "no refs", ExpandReferences("no refs", locations))
+	require.Equal(t, "[skill:jq]", ExpandReferences("[skill:jq]", nil))
 }

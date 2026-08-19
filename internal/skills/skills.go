@@ -335,10 +335,31 @@ func (s *Skill) FormatInvocation() string {
 	return sb.String()
 }
 
-// FormatReference returns a chat reference identifying the skill, in the
-// form skill:<name>=<location>.
+// ReferencePattern matches skill reference tokens in the composer, e.g.
+// [skill:crush-config].
+var ReferencePattern = regexp.MustCompile(`\[skill:([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)\]`)
+
+// FormatReference returns a composer chip token for the skill, in the form
+// [skill:<name>]. ExpandReferences turns the token into the prompt form.
 func (s *Skill) FormatReference() string {
-	return "skill:" + s.Name + "=" + s.SkillFilePath
+	return "[skill:" + s.Name + "]"
+}
+
+// ExpandReferences expands skill chip tokens in the prompt into the
+// instruction form the model receives, e.g. [use skill <location>]. Tokens
+// whose name is not in locations are left untouched.
+func ExpandReferences(content string, locations map[string]string) string {
+	if len(locations) == 0 || !strings.Contains(content, "[skill:") {
+		return content
+	}
+	return ReferencePattern.ReplaceAllStringFunc(content, func(token string) string {
+		name := strings.TrimSuffix(strings.TrimPrefix(token, "[skill:"), "]")
+		location, ok := locations[name]
+		if !ok {
+			return token
+		}
+		return "[use skill " + location + "]"
+	})
 }
 
 func escape(s string) string {

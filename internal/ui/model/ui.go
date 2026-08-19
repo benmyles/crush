@@ -689,7 +689,7 @@ func (m *UI) loadCustomCommands() tea.Cmd {
 		if err != nil {
 			slog.Error("Failed to load custom commands", "error", err)
 		}
-		// Append user-invocable skills as commands.
+		// Append available skills as commands for the skills section.
 		skillEntries, err := m.com.Workspace.ListSkills(context.Background())
 		if err != nil {
 			slog.Error("Failed to load skill commands", "error", err)
@@ -4105,9 +4105,47 @@ func (m *UI) renderEditorView(width int) string {
 	}
 	return strings.Join([]string{
 		attachmentsView,
-		m.textarea.View(),
+		m.chipifySkillReferences(m.textarea.View()),
 		"", // margin at bottom of editor
 	}, "\n")
+}
+
+// chipStyleEscape matches ANSI SGR escape sequences.
+var chipStyleEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// chipifySkillReferences restyles skill reference chips ([skill:name]) in
+// the rendered editor view without changing its width, so the terminal
+// cursor position stays correct.
+func (m *UI) chipifySkillReferences(view string) string {
+	if !strings.Contains(view, "[skill:") {
+		return view
+	}
+	chip := m.com.Styles.Attachments.Normal.UnsetPadding().Bold(true)
+
+	// Find the SGR sequence active at each token so the surrounding line
+	// style can be restored after the chip.
+	matches := skills.ReferencePattern.FindAllStringIndex(view, -1)
+	if len(matches) == 0 {
+		return view
+	}
+
+	var sb strings.Builder
+	cursor := 0
+	for _, idx := range matches {
+		start, end := idx[0], idx[1]
+		restore := ""
+		if prev := chipStyleEscape.FindAllStringIndex(view[cursor:start], -1); len(prev) > 0 {
+			last := prev[len(prev)-1]
+			restore = (view[cursor:start])[last[0]:last[1]]
+		}
+		sb.WriteString(view[cursor:start])
+		sb.WriteString("\x1b[0m")
+		sb.WriteString(chip.Render(view[start:end]))
+		sb.WriteString(restore)
+		cursor = end
+	}
+	sb.WriteString(view[cursor:])
+	return sb.String()
 }
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
@@ -4186,16 +4224,33 @@ func (m *UI) attachSkill(skillID, name string) tea.Cmd {
 	}
 }
 
-// insertSkillReference inserts a skill reference (e.g. skill:foo=bar) into
-// the composer at the current cursor position.
+// insertSkillReference inserts a skill reference (e.g. [skill:foo]) into
+// the composer at the current cursor position. The chip resolves to
+// [use skill <location>] when the prompt is sent.
 func (m *UI) insertSkillReference(reference string) tea.Cmd {
 	prevHeight := m.textarea.Height()
 	m.textarea.InsertString(reference + " ")
 	return m.handleTextareaHeightChange(prevHeight)
 }
 
+// skillLocationMap returns the location for each known skill name, used to
+// expand skill reference chips when a prompt is sent.
+func (m *UI) skillLocationMap() map[string]string {
+	locations := make(map[string]string, len(m.customCommands))
+	for _, cmd := range m.customCommands {
+		if cmd.Skill == nil || cmd.Skill.Name == "" || cmd.Skill.SkillFilePath == "" {
+			continue
+		}
+		if _, exists := locations[cmd.Skill.Name]; !exists {
+			locations[cmd.Skill.Name] = cmd.Skill.SkillFilePath
+		}
+	}
+	return locations
+}
+
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
+	content = skills.ExpandReferences(content, m.skillLocationMap())
 	if err := m.com.Workspace.AgentReadyErr(); err != nil {
 		return util.ReportError(err)
 	}

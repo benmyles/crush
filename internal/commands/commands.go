@@ -61,14 +61,11 @@ func LoadCustomCommands(cfg *config.Config) ([]CustomCommand, error) {
 	return loadAll(buildCommandSources(cfg))
 }
 
-// FromSkillCatalog converts user-invocable catalog entries into custom
-// command entries for the command palette.
+// FromSkillCatalog converts catalog entries into custom command entries for
+// the command palette.
 func FromSkillCatalog(entries []skills.CatalogEntry) []CustomCommand {
 	commands := make([]CustomCommand, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.UserInvocable {
-			continue
-		}
 		name := entry.Label
 		if name == "" {
 			name = userCommandPrefix + entry.Name

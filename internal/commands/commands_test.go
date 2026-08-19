@@ -54,7 +54,7 @@ func TestLoadAll_MixedSources(t *testing.T) {
 	require.Equal(t, "user:cmd", cmds[0].ID)
 }
 
-func TestFromSkillCatalog_UserInvocableOnly(t *testing.T) {
+func TestFromSkillCatalog_IncludesAllSkills(t *testing.T) {
 	t.Parallel()
 
 	cmds := FromSkillCatalog([]skills.CatalogEntry{
@@ -74,12 +74,15 @@ func TestFromSkillCatalog_UserInvocableOnly(t *testing.T) {
 		},
 	})
 
-	require.Len(t, cmds, 1)
+	require.Len(t, cmds, 2)
 	require.Equal(t, "user:on", cmds[0].ID)
 	require.Equal(t, "user:on", cmds[0].Name)
 	require.Equal(t, "on", cmds[0].Skill.Name)
 	require.Equal(t, "Enabled.", cmds[0].Skill.Description)
 	require.Equal(t, "/skills/on/SKILL.md", cmds[0].Skill.SkillFilePath)
+	require.Equal(t, "user:off", cmds[1].ID)
+	require.Equal(t, "off", cmds[1].Skill.Name)
+	require.Equal(t, "/skills/off/SKILL.md", cmds[1].Skill.SkillFilePath)
 }
 
 func TestFromSkillCatalog_UsesDiscoveredSymlinkedSkills(t *testing.T) {
@@ -107,8 +110,14 @@ func TestFromSkillCatalog_UsesDiscoveredSymlinkedSkills(t *testing.T) {
 	entries := skills.Catalog(activeSkills, []string{root}, "")
 	cmds := FromSkillCatalog(entries)
 
-	require.Len(t, cmds, 1)
-	require.Equal(t, "user:linked-skill", cmds[0].ID)
-	require.Equal(t, "linked-skill", cmds[0].Skill.Name)
-	require.Equal(t, filepath.Join(link, skills.SkillFileName), cmds[0].Skill.SkillFilePath)
+	var linked *CustomCommand
+	for i := range cmds {
+		if cmds[i].Skill.Name == "linked-skill" {
+			linked = &cmds[i]
+		}
+	}
+	require.NotNil(t, linked, "discovered symlinked skill missing from catalog")
+	require.Equal(t, "user:linked-skill", linked.ID)
+	require.Equal(t, "linked-skill", linked.Skill.Name)
+	require.Equal(t, filepath.Join(link, skills.SkillFileName), linked.Skill.SkillFilePath)
 }
