@@ -378,6 +378,12 @@ type UI struct {
 	// compactSpinner is the tick driver for the compaction pulse.
 	compactSpinner spinner.Model
 
+	// compactLive is the transient chat item streaming the compaction
+	// model's checkpoint generation live; compactMsg is the message it
+	// renders. Both are nil when no compaction is streaming.
+	compactLive *chat.CompactionLiveItem
+	compactMsg  *message.Message
+
 	// mouse highlighting related state
 	lastClickTime time.Time
 	hoverX        int
@@ -789,6 +795,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.setSessionMessages(msgs); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		// The rebuilt list drops any transient compaction stream item;
+		// clear the pointer so late events don't touch stale state.
+		m.endLiveCompaction()
 		if cmd := m.restoreModelFromSession(msgs); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -4697,6 +4706,10 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 	switch n.Type {
 	case notify.TypeAgentFinished:
 		common.StopTurn()
+		// A finished turn is a natural upper bound on any compaction that
+		// started this turn: clear the pulse pill and the live stream item
+		// as a failsafe in case TypeCompactionFinished was never published.
+		m.clearCompactionState()
 		cmds = append(cmds, m.sendNotification(notification.Notification{
 			Title:   "Crush is waiting...",
 			Message: fmt.Sprintf("Agent's turn completed in \"%s\"", n.SessionTitle),
@@ -4715,22 +4728,32 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 		return m.handleAWSSSOAuthResult(n.Message)
 	case notify.TypeCompactionStarted:
 		// The compaction engine is running: light the pulsing "Compacting"
-		// pill. Deliberately not the busy→idle edge, so skip the
-		// invalidation below. The tick command starts the pulse loop.
+		// pill and open the transient chat item that streams the
+		// checkpoint generation live. Deliberately not the busy→idle edge,
+		// so skip the invalidation below. The tick command starts the
+		// pulse loop.
 		m.compacting = true
 		m.compactPulse = 0
 		m.compactTokensDown = 0
 		m.renderPills()
+		if m.hasSession() && n.SessionID == m.session.ID {
+			if cmd := m.startLiveCompaction(n.SessionID); cmd != nil {
+				return tea.Batch(m.compactSpinner.Tick, cmd)
+			}
+		}
 		return m.compactSpinner.Tick
+	case notify.TypeCompactionStream:
+		if cmd := m.applyCompactionStream(n); cmd != nil {
+			return cmd
+		}
+		return nil
 	case notify.TypeCompactionProgress:
 		// Live token stats for the pulse pill: tokens removed so far.
 		m.compactTokensDown = n.TokensDown
 		m.renderPills()
 		return nil
 	case notify.TypeCompactionFinished:
-		m.compacting = false
-		m.compactTokensDown = 0
-		m.renderPills()
+		m.clearCompactionState()
 		return nil
 	default:
 		return nil
@@ -4748,6 +4771,84 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
+}
+
+// startLiveCompaction opens the transient chat item that streams the
+// compaction model's checkpoint generation for the displayed session.
+func (m *UI) startLiveCompaction(sessionID string) tea.Cmd {
+	m.compactMsg = &message.Message{
+		ID:        chat.LiveCompactionMessageID,
+		Role:      message.Assistant,
+		SessionID: sessionID,
+	}
+	m.compactLive = chat.NewCompactionLiveItem(m.com.Styles, m.compactMsg)
+	m.chat.AppendMessages(m.compactLive)
+	var cmds []tea.Cmd
+	if cmd := m.compactLive.StartAnimation(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if m.chat.Follow() {
+		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Sequence(cmds...)
+}
+
+// applyCompactionStream applies one live compaction stream event to the
+// transient chat item. Events for other sessions or with no open live item
+// are ignored.
+func (m *UI) applyCompactionStream(n notify.Notification) tea.Cmd {
+	if m.compactLive == nil || m.compactMsg == nil || n.CompactionStream == nil {
+		return nil
+	}
+	if !m.hasSession() || n.SessionID != m.session.ID {
+		return nil
+	}
+	ev := n.CompactionStream
+	switch ev.Kind {
+	case notify.CompactionStreamReset:
+		// A lane attempt restarts (escalation, retry, deterministic
+		// fallback): start from a clean slate.
+		m.compactMsg = &message.Message{
+			ID:        chat.LiveCompactionMessageID,
+			Role:      message.Assistant,
+			SessionID: n.SessionID,
+		}
+	case notify.CompactionStreamReasoningDelta:
+		m.compactMsg.AppendReasoningContent(ev.Text)
+	case notify.CompactionStreamReasoningEnd:
+		m.compactMsg.FinishThinking()
+	case notify.CompactionStreamTextDelta:
+		m.compactMsg.AppendContent(ev.Text)
+	}
+	cmd := m.compactLive.SetMessage(m.compactMsg)
+	if m.chat.Follow() {
+		if scrollCmd := m.chat.ScrollToBottom(); scrollCmd != nil {
+			return tea.Batch(cmd, scrollCmd)
+		}
+	}
+	return cmd
+}
+
+// clearCompactionState clears the compaction pulse pill and the transient
+// live stream item. It is the single teardown used by
+// TypeCompactionFinished and by the TypeAgentFinished failsafe.
+func (m *UI) clearCompactionState() {
+	m.compacting = false
+	m.compactTokensDown = 0
+	m.renderPills()
+	m.endLiveCompaction()
+}
+
+// endLiveCompaction removes the transient compaction stream item once the
+// engine finishes. The persisted summary message replaces it.
+func (m *UI) endLiveCompaction() {
+	if m.compactLive != nil {
+		m.chat.RemoveMessage(chat.LiveCompactionMessageID)
+	}
+	m.compactLive = nil
+	m.compactMsg = nil
 }
 
 func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {

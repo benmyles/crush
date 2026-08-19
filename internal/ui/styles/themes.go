@@ -97,6 +97,13 @@ func CharmtonePantera() Styles {
 	s.Editor.PromptBangDotsBlurred = s.Editor.PromptBangDotsBlurred.
 		Foreground(charmtone.Larple)
 
+	// Compaction identity: a Larple→Hazy purple glow for the pulsing pill
+	// bolt and the live compaction message frame and spinner.
+	s.CompactGradFromColor = charmtone.Larple
+	s.CompactGradToColor = charmtone.Hazy
+	s.Messages.CompactionLiveBox = s.Messages.CompactionLiveBox.
+		BorderForeground(charmtone.Larple)
+
 	// Shell bar/prompt overrides - use Charple/Iron/Hazy colors.
 	s.Messages.ShellBarFocused = s.Messages.ShellBarFocused.
 		BorderForeground(charmtone.Charple)

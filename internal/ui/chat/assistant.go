@@ -183,6 +183,10 @@ type AssistantMessageItem struct {
 	anim              *anim.Anim
 	thinkingViewMode  thinkingViewMode
 	thinkingBoxHeight int // Tracks the rendered thinking box height for click detection.
+	// liveCompaction marks the transient item that streams a running
+	// compaction's checkpoint generation: the spinner reads "Compacting"
+	// and uses the compaction gradient.
+	liveCompaction bool
 
 	// Incremental FNV-64a hash of the thinking text. Avoids
 	// re-hashing the entire accumulated text on every streaming
@@ -629,7 +633,9 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 }
 
 func (a *AssistantMessageItem) renderSpinning() string {
-	if a.message.IsThinking() {
+	if a.liveCompaction {
+		a.anim.SetLabel("Compacting")
+	} else if a.message.IsThinking() {
 		a.anim.SetLabel("Thinking")
 	} else if a.message.IsSummaryMessage {
 		a.anim.SetLabel("Summarizing")

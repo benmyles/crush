@@ -34,7 +34,38 @@ const (
 	// TypeCompactionProgress carries live token stats for a running
 	// compaction (TokensDown/TokensOut), used to update the TUI pulse pill.
 	TypeCompactionProgress Type = "compaction_progress"
+	// TypeCompactionStream carries a live stream event from the compaction
+	// model (reasoning or text deltas) as it generates the checkpoint. The
+	// TUI renders them into a transient message in the chat, like any other
+	// streaming assistant turn. Payload: CompactionStream.
+	TypeCompactionStream Type = "compaction_stream"
 )
+
+// CompactionStreamKind identifies the kind of a live compaction stream
+// event.
+type CompactionStreamKind string
+
+const (
+	// CompactionStreamReset clears previously streamed output: the lane
+	// attempt is starting over (escalation, retry, deterministic fallback).
+	CompactionStreamReset CompactionStreamKind = "reset"
+	// CompactionStreamReasoningDelta appends a reasoning delta.
+	CompactionStreamReasoningDelta CompactionStreamKind = "reasoning_delta"
+	// CompactionStreamReasoningEnd marks the end of the reasoning block.
+	CompactionStreamReasoningEnd CompactionStreamKind = "reasoning_end"
+	// CompactionStreamTextDelta appends a text delta.
+	CompactionStreamTextDelta CompactionStreamKind = "text_delta"
+)
+
+// CompactionStreamEvent is the payload of TypeCompactionStream.
+type CompactionStreamEvent struct {
+	Kind CompactionStreamKind
+	// Lane names the producing lane ("checkpoint").
+	Lane string
+	// Text carries the delta for the delta kinds, and the complete body
+	// when a non-streaming fallback emits output.
+	Text string
+}
 
 // Notification represents a domain event published by the agent.
 type Notification struct {
@@ -62,6 +93,9 @@ type Notification struct {
 	// TokensOut carries the live estimated tokens composed into the summary
 	// so far for TypeCompactionProgress.
 	TokensOut int64
+	// CompactionStream carries the live stream event for
+	// TypeCompactionStream. Nil for every other type.
+	CompactionStream *CompactionStreamEvent
 }
 
 // RunComplete is the authoritative end-of-run signal for a session.

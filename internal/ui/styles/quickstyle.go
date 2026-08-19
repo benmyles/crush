@@ -101,6 +101,11 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.WorkingLabelColor = o.fgMostSubtle
 	s.WorkingTimerColor = o.fgMostSubtle
 
+	// Compaction indicator gradient starts from the brand tokens; themes
+	// override the endpoints when they want a distinct identity.
+	s.CompactGradFromColor = o.primary
+	s.CompactGradToColor = o.secondary
+
 	s.TextInput = textinput.Styles{
 		Focused: textinput.StyleState{
 			Text:        base,
@@ -855,6 +860,10 @@ func quickStyle(o quickStyleOpts) Styles {
 	}
 
 	s.Messages.NoContent = lipgloss.NewStyle().Foreground(o.fgBase)
+	s.Messages.CompactionLiveBox = base.
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(o.primary).
+		Padding(0, 1)
 	s.Messages.UserBlurred = s.Messages.NoContent.PaddingLeft(1).BorderLeft(true).
 		BorderForeground(o.primary).BorderStyle(lipgloss.NormalBorder())
 	s.Messages.UserFocused = s.Messages.NoContent.PaddingLeft(1).BorderLeft(true).

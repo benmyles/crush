@@ -203,6 +203,11 @@ type Styles struct {
 	WorkingLabelColor    color.Color // Label text color next to the indicator
 	WorkingTimerColor    color.Color // Elapsed timer suffix color
 
+	// Compact indicator gradient (context compaction: the pulsing pill bolt
+	// and the live compaction message spinner).
+	CompactGradFromColor color.Color
+	CompactGradToColor   color.Color
+
 	// Section Title
 	Section struct {
 		Title lipgloss.Style
@@ -312,6 +317,10 @@ type Styles struct {
 		AssistantInfoProvider  lipgloss.Style
 		AssistantInfoDuration  lipgloss.Style
 		AssistantCanceled      lipgloss.Style // Italic "Canceled" footer
+
+		// CompactionLiveBox frames the transient message that streams the
+		// compaction model's checkpoint generation live.
+		CompactionLiveBox lipgloss.Style
 	}
 
 	// Tool - styles for tool call rendering

@@ -41,6 +41,36 @@ func TestPublishCompactionProgress_ForwardsTokenStats(t *testing.T) {
 	}
 }
 
+// TestPublishCompactionStream_ForwardsLaneEvents verifies the stream
+// publisher maps engine lane events onto compaction_stream notifications for
+// the checkpoint lane and drops anything else.
+func TestPublishCompactionStream_ForwardsLaneEvents(t *testing.T) {
+	t.Parallel()
+	broker := pubsub.NewBroker[notify.Notification]()
+	a := &sessionAgent{notify: broker}
+	notifications := broker.Subscribe(context.Background())
+
+	a.publishCompactionStream("s1", compaction.StreamEvent{
+		Kind: compaction.StreamTextDelta, Lane: compaction.LaneCheckpoint, Text: "## Goal",
+	})
+	ev := <-notifications
+	require.Equal(t, notify.TypeCompactionStream, ev.Payload.Type)
+	require.Equal(t, "s1", ev.Payload.SessionID)
+	require.NotNil(t, ev.Payload.CompactionStream)
+	require.Equal(t, notify.CompactionStreamTextDelta, ev.Payload.CompactionStream.Kind)
+	require.Equal(t, compaction.LaneCheckpoint, ev.Payload.CompactionStream.Lane)
+	require.Equal(t, "## Goal", ev.Payload.CompactionStream.Text)
+
+	// Non-checkpoint lanes and unknown kinds must not publish.
+	a.publishCompactionStream("s1", compaction.StreamEvent{Kind: compaction.StreamTextDelta, Lane: "verification", Text: "x"})
+	a.publishCompactionStream("s1", compaction.StreamEvent{Kind: compaction.StreamKind(99), Lane: compaction.LaneCheckpoint})
+	select {
+	case ev := <-notifications:
+		t.Fatalf("unexpected notification: %+v", ev.Payload)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 // TestCompact_EngineDisabledReturnsError verifies the /compact entry point
 // fails loudly (no legacy fallback) when the engine is not wired.
 func TestCompact_EngineDisabledReturnsError(t *testing.T) {
@@ -136,17 +166,34 @@ func TestCompact_RunsEngineAndAttachesOverview(t *testing.T) {
 	require.Equal(t, 0, part.Checkpoint.Blocked)
 	require.Equal(t, 1, part.Checkpoint.NextActions)
 
-	// The UI pulse rides on these two notifications, in order.
-	var got []notify.Type
-	for len(got) < 2 {
+	// The pulse pill rides on started/finished; live stream events (lane
+	// resets and, with a streaming model, reasoning/text deltas) publish
+	// between them.
+	var got []notify.Notification
+collect:
+	for {
 		select {
 		case ev := <-notifications:
-			got = append(got, ev.Payload.Type)
+			n := ev.Payload
+			got = append(got, n)
+			if n.Type == notify.TypeCompactionFinished {
+				break collect
+			}
 		case <-time.After(2 * time.Second):
 			t.Fatalf("timed out waiting for compaction notifications, got %v", got)
 		}
 	}
-	require.Equal(t, []notify.Type{notify.TypeCompactionStarted, notify.TypeCompactionFinished}, got)
+	require.NotEmpty(t, got)
+	require.Equal(t, notify.TypeCompactionStarted, got[0].Type)
+	require.Equal(t, notify.TypeCompactionFinished, got[len(got)-1].Type)
+	streamed := false
+	for _, n := range got[1 : len(got)-1] {
+		require.Equal(t, notify.TypeCompactionStream, n.Type, "only stream events publish between started and finished")
+		if n.CompactionStream != nil && n.CompactionStream.Kind == notify.CompactionStreamReset && n.CompactionStream.Lane == compaction.LaneCheckpoint {
+			streamed = true
+		}
+	}
+	require.True(t, streamed, "the checkpoint lane must publish live stream events")
 }
 
 // TestSummarize_FallsBackToLegacyWhenEngineMissing keeps the legacy path

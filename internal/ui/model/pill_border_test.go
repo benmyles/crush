@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // roundedBorderRunes are chars that only appear when a pill has a visible
@@ -97,6 +98,21 @@ func TestEffectiveFocusedSectionFallsThrough(t *testing.T) {
 				t.Fatalf("effectiveFocusedSection() = %d, want %d", got, tc.expected)
 			}
 		})
+	}
+}
+
+// TestCompactPillLabelWidthIsStableAcrossFrames pins the resize-bug fix: the
+// label must not grow/shrink as the pulse animates (the old suffix-dot
+// animation changed width every frame and made the pill reflow).
+func TestCompactPillLabelWidthIsStableAcrossFrames(t *testing.T) {
+	u := newTestUI()
+	widths := make(map[int]struct{})
+	for frame := range 64 {
+		pill := compactPill(frame, 0, u.com.Styles)
+		widths[ansi.StringWidth(ansi.Strip(pill))] = struct{}{}
+	}
+	if len(widths) != 1 {
+		t.Fatalf("compact pill width must not change across animation frames, got widths %v", widths)
 	}
 }
 

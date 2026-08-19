@@ -462,6 +462,9 @@ func (e *Engine) runCheckpointLane(ctx context.Context, plan BudgetPlan, previou
 		if e.completer == nil {
 			return "", "error", fmt.Errorf("no completer configured")
 		}
+		// The model streams this attempt live; a fresh attempt (escalation
+		// or transient retry) must start from a clean slate in the TUI.
+		emitStream(ctx, req.SessionID, StreamEvent{Kind: StreamReset, Lane: LaneCheckpoint})
 		// For level 2 (bullet points), append a tighter instruction.
 		if level == LevelBulletPoints {
 			input = input + "\n\n[escalation: produce a terse bullet-point checkpoint at half the target length; drop prose.]"
@@ -486,6 +489,13 @@ func (e *Engine) runCheckpointLane(ctx context.Context, plan BudgetPlan, previou
 	}, userText, complete, ledgerText, recentText)
 	if err != nil {
 		return EscalationResult{}, err
+	}
+	// The deterministic fallback generates without a model call, so nothing
+	// streamed: emit its body as a single live text delta so the TUI shows
+	// what actually became the checkpoint.
+	if esc.Level == LevelDeterministic {
+		emitStream(ctx, req.SessionID, StreamEvent{Kind: StreamReset, Lane: LaneCheckpoint})
+		emitStream(ctx, req.SessionID, StreamEvent{Kind: StreamTextDelta, Lane: LaneCheckpoint, Text: esc.Text})
 	}
 	return esc, nil
 }

@@ -62,19 +62,20 @@ func queuePill(queue int, t *styles.Styles) string {
 }
 
 // compactPill renders the pulsing "Compacting" indicator shown while the
-// context compaction engine runs. The label breathes between the working
+// context compaction engine runs. The label breathes between the compaction
 // gradient endpoints on a triangle wave, so it reads as a glow rather than a
-// static badge. tokensDown, when positive, appends the live "↓ 34K" stat from
-// the engine's progress notifications.
+// static badge. The label text is fixed-width on purpose: animating suffix
+// dots made the pill resize every frame. tokensDown, when positive, appends
+// the live "↓ 34K" stat from the engine's progress notifications.
 func compactPill(frame int, tokensDown int64, t *styles.Styles) string {
 	const pulseFrames = 16
 	idx := frame % (2 * (pulseFrames - 1))
 	if idx >= pulseFrames {
 		idx = 2*(pulseFrames-1) - idx
 	}
-	ramp := lipgloss.Blend1D(pulseFrames, t.WorkingGradFromColor, t.WorkingGradToColor)
+	ramp := lipgloss.Blend1D(pulseFrames, t.CompactGradFromColor, t.CompactGradToColor)
 	col := ramp[idx]
-	text := "Compacting" + strings.Repeat(".", frame%4)
+	text := "Compacting"
 	if tokensDown > 0 {
 		text += " · ↓ " + shortTokens(tokensDown)
 	}

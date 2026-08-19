@@ -338,6 +338,37 @@ func (a *sessionAgent) publishCompactionProgress(sessionID string, p compaction.
 	})
 }
 
+// publishCompactionStream forwards live engine stream events (checkpoint
+// reasoning and text deltas) to the TUI via the agent notification channel.
+// A nil publisher (tests, headless clients) makes it a no-op.
+func (a *sessionAgent) publishCompactionStream(sessionID string, ev compaction.StreamEvent) {
+	if a.notify == nil || ev.Lane != compaction.LaneCheckpoint {
+		return
+	}
+	var kind notify.CompactionStreamKind
+	switch ev.Kind {
+	case compaction.StreamReset:
+		kind = notify.CompactionStreamReset
+	case compaction.StreamReasoningDelta:
+		kind = notify.CompactionStreamReasoningDelta
+	case compaction.StreamReasoningEnd:
+		kind = notify.CompactionStreamReasoningEnd
+	case compaction.StreamTextDelta:
+		kind = notify.CompactionStreamTextDelta
+	default:
+		return
+	}
+	a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+		SessionID: sessionID,
+		Type:      notify.TypeCompactionStream,
+		CompactionStream: &notify.CompactionStreamEvent{
+			Kind: kind,
+			Lane: ev.Lane,
+			Text: ev.Text,
+		},
+	})
+}
+
 // AcceptedRun owns exactly one accept reservation taken by
 // BeginAccepted. It is the only carrier of accept-state across the
 // backend.runAgent / Coordinator.Run / sessionAgent.Run layers: a
@@ -1676,6 +1707,21 @@ func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userT
 		model = *hooks.model
 		systemPromptPrefix = hooks.systemPromptPrefix
 	}
+	// Live streaming: forward reasoning and text deltas to the observer the
+	// engine attached for the TUI. The stream is dropped when the session id
+	// is unknown (no way to route it).
+	streamObs, _ := compaction.StreamFrom(ctx)
+	streamSessionID := ""
+	if hooks != nil {
+		streamSessionID = hooks.sessionID
+	} else {
+		streamSessionID = tools.GetSessionFromContext(ctx)
+	}
+	emit := func(kind compaction.StreamKind, text string) {
+		if streamObs != nil && streamSessionID != "" {
+			streamObs(streamSessionID, compaction.StreamEvent{Kind: kind, Lane: compaction.LaneCheckpoint, Text: text})
+		}
+	}
 	agent := fantasy.NewAgent(
 		model.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
@@ -1706,8 +1752,17 @@ func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userT
 			}
 			return callContext, prepared, nil
 		},
+		OnReasoningDelta: func(id, text string) error {
+			emit(compaction.StreamReasoningDelta, text)
+			return nil
+		},
+		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
+			emit(compaction.StreamReasoningEnd, "")
+			return nil
+		},
 		OnTextDelta: func(id, text string) error {
 			sb.WriteString(text)
+			emit(compaction.StreamTextDelta, text)
 			return nil
 		},
 	}
@@ -1895,6 +1950,8 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 		sessionID:          sessionID,
 	}
 	runCtx := withCompactionCallHooks(genCtx, hooks)
+	// Stream the checkpoint lane's reasoning and text live to the TUI.
+	runCtx = compaction.WithStream(runCtx, a.publishCompactionStream)
 	summarizerWindow := int64(summarizer.CatwalkCfg.ContextWindow)
 	if summarizerWindow <= 0 {
 		summarizerWindow = window
