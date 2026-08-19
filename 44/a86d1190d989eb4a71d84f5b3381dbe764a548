@@ -1,0 +1,19 @@
+internal/ui/model/ui.go
+  s_e82c6b847451e1::t_86b2a620910914 30,3255,3279-3306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "44a86d1190d989eb4a71d84f5b3381dbe764a548",
+  "prompts": {},
+  "sessions": {
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
