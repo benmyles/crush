@@ -1,5 +1,12 @@
 basePath: /v1
 definitions:
+  agent.QueuedPromptItem:
+    properties:
+      prompt:
+        type: string
+      queue_id:
+        type: integer
+    type: object
   catwalk.Model:
     properties:
       can_reason:
@@ -1484,6 +1491,38 @@ paths:
       summary: Cancel agent session
       tags:
       - agent
+  /workspaces/{id}/agent/sessions/{sid}/prompts/{qid}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Session ID
+        in: path
+        name: sid
+        required: true
+        type: string
+      - description: Queue ID
+        in: path
+        name: qid
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Remove queued prompt
+      tags:
+      - agent
   /workspaces/{id}/agent/sessions/{sid}/prompts/clear:
     post:
       parameters:
@@ -1531,7 +1570,7 @@ paths:
           description: OK
           schema:
             items:
-              type: string
+              $ref: '#/definitions/agent.QueuedPromptItem'
             type: array
         "404":
           description: Not Found

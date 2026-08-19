@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 
+	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/lsp"
@@ -32,10 +33,14 @@ type countingWorkspace struct {
 	ready     bool
 	agentBusy bool
 	yolo      bool
-	queued    []string
+	queued    []agent.QueuedPromptItem
 	model     workspace.AgentModel
 	lspStates map[string]workspace.LSPClientInfo
 	lspDiags  map[string]lsp.DiagnosticCounts
+
+	removeQueueCalls  int
+	removeQueueID     uint64
+	removeQueueResult bool
 
 	readyCalls      int
 	agentBusyCalls  int
@@ -66,9 +71,15 @@ func (w *countingWorkspace) AgentQueuedPrompts(string) int {
 	return len(w.queued)
 }
 
-func (w *countingWorkspace) AgentQueuedPromptsList(string) []string {
+func (w *countingWorkspace) AgentQueuedPromptsList(string) []agent.QueuedPromptItem {
 	w.queueListCalls++
 	return w.queued
+}
+
+func (w *countingWorkspace) AgentRemoveQueuedPrompt(_ string, queueID uint64) bool {
+	w.removeQueueCalls++
+	w.removeQueueID = queueID
+	return w.removeQueueResult
 }
 
 func (w *countingWorkspace) PermissionSkipRequests() bool { w.permCalls++; return w.yolo }
@@ -180,7 +191,7 @@ func runCmds(m *UI, cmd tea.Cmd) {
 		for _, c := range msg {
 			runCmds(m, c)
 		}
-	case busyStateMsg, promptQueueMsg, agentRunSubmittedMsg, lspStatesMsg, agentModelChangedMsg:
+	case busyStateMsg, promptQueueMsg, queuedPromptRemovedMsg, agentRunSubmittedMsg, lspStatesMsg, agentModelChangedMsg:
 		_, next := m.Update(msg)
 		runCmds(m, next)
 	}
@@ -260,7 +271,7 @@ func TestStreamingUpdatedEventsDoNotProbe(t *testing.T) {
 func TestMessageCreatedEventRefreshesBusyAndQueue(t *testing.T) {
 	pinTTLs(t)
 
-	ws := &countingWorkspace{ready: true, agentBusy: true, queued: []string{"queued prompt"}}
+	ws := &countingWorkspace{ready: true, agentBusy: true, queued: []agent.QueuedPromptItem{{QueueID: 1, Prompt: "queued prompt"}}}
 	m := newBusyUI(ws)
 	warmCaches(m, false)
 	ws.resetCounters()
@@ -315,11 +326,11 @@ func TestAgentTerminalNotificationsRefreshBusy(t *testing.T) {
 func TestSessionSwitchRefreshesQueueAndBusy(t *testing.T) {
 	pinTTLs(t)
 
-	ws := &countingWorkspace{ready: true, queued: []string{"a", "b"}}
+	ws := &countingWorkspace{ready: true, queued: []agent.QueuedPromptItem{{QueueID: 1, Prompt: "a"}, {QueueID: 2, Prompt: "b"}}}
 	m := newBusyUI(ws)
 	warmCaches(m, true)
 	m.promptQueue = 5 // stale queue pill from the previous session
-	m.promptQueueItems = []string{"x", "y", "z", "w", "v"}
+	m.promptQueueItems = []agent.QueuedPromptItem{{QueueID: 1, Prompt: "x"}, {QueueID: 2, Prompt: "y"}, {QueueID: 3, Prompt: "z"}, {QueueID: 4, Prompt: "w"}, {QueueID: 5, Prompt: "v"}}
 	ws.resetCounters()
 
 	_, cmd := m.Update(loadSessionMsg{session: &session.Session{ID: "s2"}})
@@ -329,7 +340,7 @@ func TestSessionSwitchRefreshesQueueAndBusy(t *testing.T) {
 
 	runCmds(m, cmd)
 	require.Equal(t, 2, m.promptQueue, "the new session's queue must be fetched")
-	require.Equal(t, []string{"a", "b"}, m.promptQueueItems)
+	require.Equal(t, []agent.QueuedPromptItem{{QueueID: 1, Prompt: "a"}, {QueueID: 2, Prompt: "b"}}, m.promptQueueItems)
 }
 
 // TestToggleYoloWritesThroughCache: both yolo toggle paths share
@@ -420,11 +431,11 @@ func TestSendMessageSetsOptimisticBusy(t *testing.T) {
 func TestCancelAgentClearsQueueFromCachedCount(t *testing.T) {
 	pinTTLs(t)
 
-	ws := &countingWorkspace{ready: true, queued: []string{"a"}}
+	ws := &countingWorkspace{ready: true, queued: []agent.QueuedPromptItem{{QueueID: 1, Prompt: "a"}}}
 	m := newBusyUI(ws)
 	warmCaches(m, true)
 	m.promptQueue = 1
-	m.promptQueueItems = []string{"a"}
+	m.promptQueueItems = []agent.QueuedPromptItem{{QueueID: 1, Prompt: "a"}}
 	ws.resetCounters()
 
 	cmd := m.cancelAgent()
@@ -542,11 +553,11 @@ func TestStaleBusyRefreshDiscardedAndReDispatched(t *testing.T) {
 func TestStalePromptQueueDiscardedAndReDispatched(t *testing.T) {
 	pinTTLs(t)
 
-	ws := &countingWorkspace{ready: true, queued: []string{"real"}}
+	ws := &countingWorkspace{ready: true, queued: []agent.QueuedPromptItem{{QueueID: 1, Prompt: "real"}}}
 	m := newBusyUI(ws)
 	warmCaches(m, false)
 	m.promptQueue = 1
-	m.promptQueueItems = []string{"real"}
+	m.promptQueueItems = []agent.QueuedPromptItem{{QueueID: 1, Prompt: "real"}}
 
 	// A fetch is in flight; capture its generation, then a newer transition
 	// (esc clears the queue) supersedes it.
@@ -554,13 +565,14 @@ func TestStalePromptQueueDiscardedAndReDispatched(t *testing.T) {
 	staleGen := m.promptQueueGen
 	m.invalidatePromptQueue()
 	m.promptQueue = 0
+	m.queueCursor = 0
 	m.promptQueueItems = nil
 
 	// The stale fetch (still saw one prompt) lands for the same session.
 	cmds := m.applyPromptQueue(promptQueueMsg{
 		forSession: "s1",
 		gen:        staleGen,
-		prompts:    []string{"stale"},
+		prompts:    []agent.QueuedPromptItem{{QueueID: 1, Prompt: "stale"}},
 	})
 	require.Zero(t, m.promptQueue,
 		"a stale queue result must not repopulate the cleared queue")
@@ -586,7 +598,7 @@ func TestStalePromptQueuePreservesSessionScoping(t *testing.T) {
 	cmds := m.applyPromptQueue(promptQueueMsg{
 		forSession: "other",
 		gen:        gen,
-		prompts:    []string{"from other session"},
+		prompts:    []agent.QueuedPromptItem{{QueueID: 1, Prompt: "from other session"}},
 	})
 	require.Zero(t, m.promptQueue,
 		"a result from a different session must never populate the queue")

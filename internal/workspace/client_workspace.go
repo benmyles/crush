@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/app"
@@ -298,12 +299,22 @@ func (w *ClientWorkspace) AgentQueuedPrompts(sessionID string) int {
 	return count
 }
 
-func (w *ClientWorkspace) AgentQueuedPromptsList(sessionID string) []string {
-	prompts, err := w.client.GetAgentSessionQueuedPromptsList(context.Background(), w.workspaceID(), sessionID)
+func (w *ClientWorkspace) AgentQueuedPromptsList(sessionID string) []agent.QueuedPromptItem {
+	items, err := w.client.GetAgentSessionQueuedPromptsList(context.Background(), w.workspaceID(), sessionID)
 	if err != nil {
+		slog.Debug("Failed to fetch queued prompts", "error", err)
 		return nil
 	}
-	return prompts
+	return items
+}
+
+func (w *ClientWorkspace) AgentRemoveQueuedPrompt(sessionID string, queueID uint64) bool {
+	removed, err := w.client.RemoveAgentSessionQueuedPrompt(context.Background(), w.workspaceID(), sessionID, queueID)
+	if err != nil {
+		slog.Debug("Failed to remove queued prompt", "error", err)
+		return false
+	}
+	return removed
 }
 
 func (w *ClientWorkspace) AgentClearQueue(sessionID string) {

@@ -1052,6 +1052,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Pills.Focused = base.Padding(0, 1).BorderStyle(lipgloss.RoundedBorder()).BorderForeground(o.bgMostVisible)
 	s.Pills.QueueItemPrefix = lipgloss.NewStyle().Foreground(o.fgMoreSubtle).SetString("  •")
 	s.Pills.QueueItemText = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Pills.QueueItemSelected = lipgloss.NewStyle().Foreground(o.fgBase).Bold(true)
 	s.Pills.QueueLabel = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Pills.QueueIconBase = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Pills.QueueGradFromColor = o.error

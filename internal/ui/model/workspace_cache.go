@@ -30,6 +30,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/workspace"
 )
 
@@ -90,7 +91,23 @@ type promptQueueMsg struct {
 	// busyStateMsg.gen it guards against a stale in-flight result
 	// overwriting newer optimistic or invalidated queue state.
 	gen     uint64
-	prompts []string
+	prompts []agent.QueuedPromptItem
+}
+
+// queuedPromptRemovedMsg reports the result of removing a single queued
+// prompt via AgentRemoveQueuedPrompt. removed is false when the item no
+// longer exists (it already drained and started running), in which case
+// the caller re-fetches the authoritative queue.
+type queuedPromptRemovedMsg struct {
+	// forSession is the session the removal was scoped to; a result that
+	// raced a session switch is ignored.
+	forSession string
+	queueID    uint64
+	removed    bool
+	// recall marks a removal that pulled the prompt back into the
+	// composer; when the item turns out to have already started, the
+	// user is told the prompt is in flight.
+	recall bool
 }
 
 // agentRunSubmittedMsg reports that AgentRun accepted a prompt (it either
@@ -222,6 +239,7 @@ func (m *UI) dispatchPromptQueueRefresh() tea.Cmd {
 	if !m.hasSession() {
 		m.promptQueueItems = nil
 		m.promptQueueCheckedAt = time.Now()
+		m.queueCursor = 0
 		// Bump the generation so any in-flight fetch scoped to the
 		// now-departed session is discarded rather than repopulating the
 		// queue.
@@ -264,6 +282,9 @@ func (m *UI) applyPromptQueue(msg promptQueueMsg) []tea.Cmd {
 	countChanged := len(msg.prompts) != m.promptQueue
 	m.promptQueueItems = msg.prompts
 	m.promptQueue = len(msg.prompts)
+	if m.queueCursor >= m.promptQueue {
+		m.queueCursor = max(0, m.promptQueue-1)
+	}
 	if countChanged {
 		m.updateLayoutAndSize()
 	} else if itemsChanged {

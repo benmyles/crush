@@ -86,8 +86,14 @@ type SessionAgentCall struct {
 	// reliable completion contract (e.g. `crush run` against a
 	// session that may be busy) MUST set it; SessionID alone is
 	// ambiguous when concurrent turns share the same session.
-	RunID            string
-	Prompt           string
+	RunID  string
+	Prompt string
+	// QueueID identifies the call while it sits in the session's
+	// message queue, so callers (e.g. the TUI) can remove or recall a
+	// specific queued item. It is assigned when the call is enqueued
+	// and is otherwise unused. Zero means the call never entered the
+	// queue.
+	QueueID          uint64
 	ProviderOptions  fantasy.ProviderOptions
 	Attachments      []message.Attachment
 	MaxOutputTokens  int64
@@ -135,6 +141,14 @@ type SessionAgentCall struct {
 	OnAuthRefresh func(ctx context.Context, err *fantasy.ProviderError) error
 }
 
+// QueuedPromptItem is a single queued prompt exposed to callers. It
+// carries the prompt text plus the stable QueueID assigned when the
+// call entered the queue.
+type QueuedPromptItem struct {
+	QueueID uint64 `json:"queue_id"`
+	Prompt  string `json:"prompt"`
+}
+
 type SessionAgent interface {
 	Run(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)
 	BeginAccepted(sessionID string) *AcceptedRun
@@ -150,7 +164,8 @@ type SessionAgent interface {
 	IsSessionBusy(sessionID string) bool
 	IsBusy() bool
 	QueuedPrompts(sessionID string) int
-	QueuedPromptsList(sessionID string) []string
+	QueuedPromptsList(sessionID string) []QueuedPromptItem
+	RemoveQueuedPrompt(sessionID string, queueID uint64) bool
 	ClearQueue(sessionID string)
 	// Summarize runs context compaction: the new lossless engine when
 	// enabled, else the legacy single-shot summary.
@@ -212,7 +227,11 @@ type sessionAgent struct {
 	notify               pubsub.Publisher[notify.Notification]
 	runComplete          pubsub.Publisher[notify.RunComplete]
 
-	messageQueue   *csync.Map[string, []SessionAgentCall]
+	messageQueue *csync.Map[string, []SessionAgentCall]
+	// queueSeq assigns QueueIDs to SessionAgentCalls as they enter the
+	// queue. The counter is atomic: enqueueCall can run concurrently
+	// with drains, and QueueIDs must be unique per session.
+	queueSeq       *csync.Map[string, *atomic.Uint64]
 	activeRequests *csync.Map[string, *activeCancel]
 
 	// compactionRequested holds per-session compaction requests initiated by
@@ -309,6 +328,7 @@ func NewSessionAgent(
 		notify:               opts.Notify,
 		runComplete:          opts.RunComplete,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
+		queueSeq:             csync.NewMap[string, *atomic.Uint64](),
 		activeRequests:       csync.NewMap[string, *activeCancel](),
 		compactionRequested:  csync.NewMap[string, string](),
 		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
@@ -482,8 +502,21 @@ func (a *sessionAgent) enqueueCall(call SessionAgentCall) {
 	}
 	queued.OnComplete = nil
 	queued.Accepted = nil
+	queued.QueueID = a.nextQueueID(call.SessionID)
 	existing = append(existing, queued)
 	a.messageQueue.Set(call.SessionID, existing)
+}
+
+// nextQueueID returns the next QueueID for the session's queue.
+// QueueIDs are per-session and monotonically increasing so concurrent
+// callers can reference a specific queued item without racing a drain.
+func (a *sessionAgent) nextQueueID(sessionID string) uint64 {
+	counter, ok := a.queueSeq.Get(sessionID)
+	if !ok {
+		counter = &atomic.Uint64{}
+		a.queueSeq.Set(sessionID, counter)
+	}
+	return counter.Add(1)
 }
 
 // drainQueueForStep partitions the session's queued calls for the current
@@ -2623,6 +2656,37 @@ func (a *sessionAgent) ClearQueue(sessionID string) {
 	}
 }
 
+// RemoveQueuedPrompt removes a single queued prompt by QueueID. It
+// takes the per-session dispatch mutex so the removal is atomic with
+// respect to queue drains and cancels. A removed prompt that carried a
+// RunID gets its terminal cancelled RunComplete published so callers
+// waiting on that RunID (e.g. `crush run`) do not hang. It reports
+// whether the item was found and removed.
+func (a *sessionAgent) RemoveQueuedPrompt(sessionID string, queueID uint64) bool {
+	mu := a.sessionMu(sessionID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	queued, ok := a.messageQueue.Get(sessionID)
+	if !ok {
+		return false
+	}
+	for i, call := range queued {
+		if call.QueueID != queueID {
+			continue
+		}
+		rest := append(append([]SessionAgentCall{}, queued[:i]...), queued[i+1:]...)
+		if len(rest) == 0 {
+			a.messageQueue.Del(sessionID)
+		} else {
+			a.messageQueue.Set(sessionID, rest)
+		}
+		a.publishCanceledQueueDrops([]SessionAgentCall{call})
+		return true
+	}
+	return false
+}
+
 func (a *sessionAgent) CancelAll() {
 	if !a.IsBusy() {
 		return
@@ -2743,16 +2807,16 @@ func (a *sessionAgent) QueuedPrompts(sessionID string) int {
 	return len(l)
 }
 
-func (a *sessionAgent) QueuedPromptsList(sessionID string) []string {
+func (a *sessionAgent) QueuedPromptsList(sessionID string) []QueuedPromptItem {
 	l, ok := a.messageQueue.Get(sessionID)
 	if !ok {
 		return nil
 	}
-	prompts := make([]string, len(l))
+	items := make([]QueuedPromptItem, len(l))
 	for i, call := range l {
-		prompts[i] = call.Prompt
+		items[i] = QueuedPromptItem{QueueID: call.QueueID, Prompt: call.Prompt}
 	}
-	return prompts
+	return items
 }
 
 func (a *sessionAgent) SetModels(large Model, small Model) {

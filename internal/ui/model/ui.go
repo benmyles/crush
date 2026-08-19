@@ -342,8 +342,11 @@ type UI struct {
 	// They are event-driven with a TTL backstop, fetched off-thread by
 	// dispatchPromptQueueRefresh (see workspace_cache.go); promptQueue is
 	// always len(promptQueueItems).
-	promptQueue          int
-	promptQueueItems     []string
+	promptQueue      int
+	promptQueueItems []agent.QueuedPromptItem
+	// queueCursor selects an item in the expanded queue pill list. It is
+	// only meaningful while the queue section is focused.
+	queueCursor          int
 	promptQueueCheckedAt time.Time
 	promptQueueInFlight  bool
 	// promptQueueGen is bumped by every queue state transition; an
@@ -748,6 +751,22 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.applyBusyState(msg)...)
 	case promptQueueMsg:
 		cmds = append(cmds, m.applyPromptQueue(msg)...)
+	case queuedPromptRemovedMsg:
+		if msg.forSession != m.currentSessionID() {
+			break
+		}
+		if !msg.removed {
+			// The item already drained (it started running) or vanished:
+			// re-fetch the authoritative queue and, for recalls, tell the
+			// user the prompt is already in flight.
+			m.invalidatePromptQueue()
+			if cmd := m.dispatchPromptQueueRefresh(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if msg.recall {
+				cmds = append(cmds, util.ReportInfo("That prompt already started; review the composer before resending"))
+			}
+		}
 	case lspStatesMsg:
 		if cmd := m.applyLSPStates(msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -2921,6 +2940,14 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 		case uiFocusMain:
 			switch {
+			case m.queueSectionFocused() && key.Matches(msg, m.keyMap.Chat.Up):
+				m.moveQueueCursor(-1)
+			case m.queueSectionFocused() && key.Matches(msg, m.keyMap.Chat.Down):
+				m.moveQueueCursor(1)
+			case m.queueSectionFocused() && key.Matches(msg, m.keyMap.Chat.QueueRecall):
+				cmds = append(cmds, m.recallQueuedPrompt())
+			case m.queueSectionFocused() && key.Matches(msg, m.keyMap.Chat.QueueRemove):
+				cmds = append(cmds, m.removeSelectedQueuedPrompt(false))
 			case key.Matches(msg, m.keyMap.Tab):
 				m.focus = uiFocusEditor
 				m.sidebarScrollbarVisible = false
@@ -4510,6 +4537,59 @@ func (m *UI) runShellCommandInternal(command string, isFirstMessage bool) tea.Cm
 }
 
 const cancelTimerDuration = 2 * time.Second
+
+// recallQueuedPrompt pulls the selected queued prompt back into the
+// composer (prepended to any existing draft), removes it from the queue,
+// and focuses the editor so the user can change it before resending.
+func (m *UI) recallQueuedPrompt() tea.Cmd {
+	if !m.queueSectionFocused() || m.queueCursor >= len(m.promptQueueItems) {
+		return nil
+	}
+	item := m.promptQueueItems[m.queueCursor]
+	draft := m.textarea.Value()
+	newValue := item.Prompt
+	if strings.TrimSpace(draft) != "" {
+		newValue = item.Prompt + "\n" + draft
+	}
+	m.textarea.SetValue(newValue)
+	m.closeCompletions()
+	m.focus = uiFocusEditor
+	m.setEditorPrompt(m.yoloModeCached())
+	m.updateLayoutAndSize()
+	return m.removeSelectedQueuedPrompt(true)
+}
+
+// removeSelectedQueuedPrompt removes the selected queued prompt from the
+// queue. The memoized queue is updated optimistically and the removal is
+// confirmed off-thread; when the item is already gone (it drained and
+// started running) the authoritative queue is re-fetched.
+func (m *UI) removeSelectedQueuedPrompt(recall bool) tea.Cmd {
+	if !m.queueSectionFocused() || m.queueCursor >= len(m.promptQueueItems) {
+		return nil
+	}
+	sessionID := m.session.ID
+	item := m.promptQueueItems[m.queueCursor]
+
+	// Optimistic removal: drop the item from the memoized queue and bump
+	// the generation so an in-flight fetch cannot repopulate it.
+	m.promptQueueItems = slices.Delete(m.promptQueueItems, m.queueCursor, m.queueCursor+1)
+	m.promptQueue = len(m.promptQueueItems)
+	if m.promptQueue > 0 && m.queueCursor > 0 {
+		m.queueCursor--
+	}
+	m.invalidatePromptQueue()
+	m.renderPills()
+	m.updateLayoutAndSize()
+
+	return func() tea.Msg {
+		return queuedPromptRemovedMsg{
+			forSession: sessionID,
+			queueID:    item.QueueID,
+			removed:    m.com.Workspace.AgentRemoveQueuedPrompt(sessionID, item.QueueID),
+			recall:     recall,
+		}
+	}
+}
 
 // cancelTimerCmd creates a command that expires the cancel timer.
 func cancelTimerCmd() tea.Cmd {

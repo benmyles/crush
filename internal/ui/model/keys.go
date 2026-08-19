@@ -31,6 +31,8 @@ type KeyMap struct {
 		TogglePills    key.Binding
 		PillLeft       key.Binding
 		PillRight      key.Binding
+		QueueRecall    key.Binding
+		QueueRemove    key.Binding
 		Down           key.Binding
 		Up             key.Binding
 		UpDown         key.Binding
@@ -189,6 +191,14 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.PillRight = key.NewBinding(
 		key.WithKeys("right"),
 		key.WithHelp("←/→", "switch section"),
+	)
+	km.Chat.QueueRecall = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "edit queued"),
+	)
+	km.Chat.QueueRemove = key.NewBinding(
+		key.WithKeys("x"),
+		key.WithHelp("x", "remove queued"),
 	)
 
 	km.Chat.Down = key.NewBinding(

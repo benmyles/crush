@@ -42,7 +42,8 @@ func (c *errorCoordinator) CancelAll()                                        {}
 func (c *errorCoordinator) IsBusy() bool                                      { return false }
 func (c *errorCoordinator) IsSessionBusy(string) bool                         { return false }
 func (c *errorCoordinator) QueuedPrompts(string) int                          { return 0 }
-func (c *errorCoordinator) QueuedPromptsList(string) []string                 { return nil }
+func (c *errorCoordinator) QueuedPromptsList(string) []agent.QueuedPromptItem { return nil }
+func (c *errorCoordinator) RemoveQueuedPrompt(string, uint64) bool            { return false }
 func (c *errorCoordinator) ClearQueue(string)                                 {}
 func (c *errorCoordinator) Summarize(context.Context, string) error           { return nil }
 func (c *errorCoordinator) Compact(context.Context, string) error             { return nil }

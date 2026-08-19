@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
+	"github.com/charmbracelet/crush/internal/agent"
 	mcptools "github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/commands"
 	"github.com/charmbracelet/crush/internal/config"
@@ -151,7 +152,10 @@ type Workspace interface {
 	// both cases into "agent offline".
 	AgentReadyErr() error
 	AgentQueuedPrompts(sessionID string) int
-	AgentQueuedPromptsList(sessionID string) []string
+	AgentQueuedPromptsList(sessionID string) []agent.QueuedPromptItem
+	// AgentRemoveQueuedPrompt removes a single queued prompt by queue ID
+	// and reports whether it was found.
+	AgentRemoveQueuedPrompt(sessionID string, queueID uint64) bool
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
 	// AgentCompact runs the context compaction engine explicitly

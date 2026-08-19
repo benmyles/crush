@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/charmbracelet/crush/internal/backend"
 	"github.com/charmbracelet/crush/internal/proto"
@@ -1029,19 +1030,51 @@ func (c *controllerV1) handlePostWorkspaceAgentSessionShell(w http.ResponseWrite
 //	@Produce		json
 //	@Param			id	path		string		true	"Workspace ID"
 //	@Param			sid	path		string		true	"Session ID"
-//	@Success		200	{array}		string
+//	@Success		200	{array}		agent.QueuedPromptItem
 //	@Failure		404	{object}	proto.Error
 //	@Failure		500	{object}	proto.Error
 //	@Router			/workspaces/{id}/agent/sessions/{sid}/prompts/list [get]
 func (c *controllerV1) handleGetWorkspaceAgentSessionPromptList(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sid := r.PathValue("sid")
-	prompts, err := c.backend.QueuedPromptsList(id, sid)
+	items, err := c.backend.QueuedPromptsList(id, sid)
 	if err != nil {
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, prompts)
+	jsonEncode(w, items)
+}
+
+// handleDeleteWorkspaceAgentSessionQueuedPrompt removes a single queued
+// prompt from the session's queue by queue ID.
+//
+//	@Summary		Remove queued prompt
+//	@Tags			agent
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Param			sid	path	string	true	"Session ID"
+//	@Param			qid	path	integer	true	"Queue ID"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/prompts/{qid} [delete]
+func (c *controllerV1) handleDeleteWorkspaceAgentSessionQueuedPrompt(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	queueID, err := strconv.ParseUint(r.PathValue("qid"), 10, 64)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	removed, err := c.backend.RemoveQueuedPrompt(id, sid, queueID)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	if !removed {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleGetWorkspaceAgentDefaultSmallModel returns the default small model for a provider.

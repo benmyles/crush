@@ -607,7 +607,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "type": "string"
+                                "$ref": "#/definitions/agent.QueuedPromptItem"
                             }
                         }
                     },
@@ -657,6 +657,54 @@ const docTemplate = `{
                         "schema": {
                             "type": "object"
                         }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/workspaces/{id}/agent/sessions/{sid}/prompts/{qid}": {
+            "delete": {
+                "tags": [
+                    "agent"
+                ],
+                "summary": "Remove queued prompt",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Queue ID",
+                        "name": "qid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
                     },
                     "404": {
                         "description": "Not Found",
@@ -3197,6 +3245,17 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "agent.QueuedPromptItem": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string"
+                },
+                "queue_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "catwalk.Model": {
             "type": "object",
             "properties": {

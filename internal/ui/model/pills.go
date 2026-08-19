@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/chat"
 	"github.com/charmbracelet/crush/internal/ui/styles"
@@ -149,20 +150,27 @@ func todoList(sessionTodos []session.Todo, spinnerView string, t *styles.Styles,
 	return chat.FormatTodosList(t, sessionTodos, spinnerView, width)
 }
 
-// queueList renders the expanded queue items list.
-func queueList(queueItems []string, t *styles.Styles) string {
+// queueList renders the expanded queue items list. The item at cursor is
+// highlighted; pass -1 when nothing is selected (the queue section is not
+// focused).
+func queueList(queueItems []agent.QueuedPromptItem, cursor int, t *styles.Styles) string {
 	if len(queueItems) == 0 {
 		return ""
 	}
 
 	var lines []string
-	for _, item := range queueItems {
-		text := item
+	for i, item := range queueItems {
+		text := item.Prompt
 		if ansi.StringWidth(text) > maxQueueDisplayLength {
 			text = ansi.Truncate(text, maxQueueDisplayLength-1, "…")
 		}
 		prefix := t.Pills.QueueItemPrefix.Render() + " "
-		lines = append(lines, prefix+t.Pills.QueueItemText.Render(text))
+		textStyle := t.Pills.QueueItemText
+		if i == cursor {
+			prefix = t.Pills.QueueItemSelected.Render("›") + " "
+			textStyle = t.Pills.QueueItemSelected
+		}
+		lines = append(lines, prefix+textStyle.Render(text))
 	}
 
 	return strings.Join(lines, "\n")
@@ -252,10 +260,31 @@ func (m *UI) switchPillSection(dir int) tea.Cmd {
 	}
 	if dir > 0 && m.focusedPillSection == pillSectionTodos && hasQueue {
 		m.focusedPillSection = pillSectionQueue
+		m.queueCursor = 0
 		m.updateLayoutAndSize()
 		return nil
 	}
 	return nil
+}
+
+// queueSectionFocused reports whether the expanded pills panel has the
+// queue section focused with a non-empty queue, the mode in which the
+// cursor, edit, and remove keys operate on queue items.
+func (m *UI) queueSectionFocused() bool {
+	return m.hasSession() && m.pillsExpanded &&
+		m.effectiveFocusedSection() == pillSectionQueue && m.promptQueue > 0
+}
+
+// moveQueueCursor moves the queue item selection within the expanded
+// queue list, clamping to the valid range.
+func (m *UI) moveQueueCursor(delta int) {
+	n := len(m.promptQueueItems)
+	if n == 0 {
+		m.queueCursor = 0
+		return
+	}
+	m.queueCursor = max(0, min(n-1, m.queueCursor+delta))
+	m.renderPills()
 }
 
 // effectiveFocusedSection returns the pill section that should be treated as
@@ -374,7 +403,7 @@ func (m *UI) renderPills() {
 			// workspace_cache.go): renderPills runs on the Update/View
 			// path and must never block on a workspace round-trip.
 			if len(m.promptQueueItems) > 0 {
-				expandedList = queueList(m.promptQueueItems, t)
+				expandedList = queueList(m.promptQueueItems, m.queueCursor, t)
 			}
 		}
 	}
@@ -388,6 +417,9 @@ func (m *UI) renderPills() {
 	helpDesc := "open"
 	if m.pillsExpanded {
 		helpDesc = "close"
+	}
+	if queueFocused && hasQueue {
+		helpDesc += "  enter edit  x remove"
 	}
 	helpKey := t.Pills.HelpKey.Render("ctrl+t")
 	helpText := t.Pills.HelpText.Render(helpDesc)

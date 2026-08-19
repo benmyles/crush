@@ -588,6 +588,7 @@ type Styles struct {
 		Focused            lipgloss.Style // Pill with visible rounded border
 		QueueItemPrefix    lipgloss.Style // Prefix for queue list items
 		QueueItemText      lipgloss.Style // Queue list item body text
+		QueueItemSelected  lipgloss.Style // Selected queue list item (cursor)
 		QueueLabel         lipgloss.Style // "N Queued" label text
 		QueueIconBase      lipgloss.Style // Base style for queue gradient triangles
 		QueueGradFromColor color.Color    // Start color for queue indicator gradient

@@ -107,7 +107,8 @@ type Coordinator interface {
 	IsSessionBusy(sessionID string) bool
 	IsBusy() bool
 	QueuedPrompts(sessionID string) int
-	QueuedPromptsList(sessionID string) []string
+	QueuedPromptsList(sessionID string) []QueuedPromptItem
+	RemoveQueuedPrompt(sessionID string, queueID uint64) bool
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
 	// Compact runs the context compaction engine explicitly (/compact);
@@ -1406,8 +1407,12 @@ func (c *coordinator) QueuedPrompts(sessionID string) int {
 	return c.currentAgent.QueuedPrompts(sessionID)
 }
 
-func (c *coordinator) QueuedPromptsList(sessionID string) []string {
+func (c *coordinator) QueuedPromptsList(sessionID string) []QueuedPromptItem {
 	return c.currentAgent.QueuedPromptsList(sessionID)
+}
+
+func (c *coordinator) RemoveQueuedPrompt(sessionID string, queueID uint64) bool {
+	return c.currentAgent.RemoveQueuedPrompt(sessionID, queueID)
 }
 
 // Compact is the explicit compaction-engine entry point (the /compact

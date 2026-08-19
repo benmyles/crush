@@ -234,9 +234,9 @@ func (b *Backend) ClearQueue(workspaceID, sessionID string) error {
 	return nil
 }
 
-// QueuedPromptsList returns the list of queued prompt strings for a
+// QueuedPromptsList returns the list of queued prompt items for a
 // session.
-func (b *Backend) QueuedPromptsList(workspaceID, sessionID string) ([]string, error) {
+func (b *Backend) QueuedPromptsList(workspaceID, sessionID string) ([]agent.QueuedPromptItem, error) {
 	ws, err := b.GetWorkspace(workspaceID)
 	if err != nil {
 		return nil, err
@@ -247,6 +247,21 @@ func (b *Backend) QueuedPromptsList(workspaceID, sessionID string) ([]string, er
 	}
 
 	return ws.AgentCoordinator.QueuedPromptsList(sessionID), nil
+}
+
+// RemoveQueuedPrompt removes a single queued prompt by queue ID and
+// reports whether it was found.
+func (b *Backend) RemoveQueuedPrompt(workspaceID, sessionID string, queueID uint64) (bool, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return false, err
+	}
+
+	if ws.AgentCoordinator == nil {
+		return false, nil
+	}
+
+	return ws.AgentCoordinator.RemoveQueuedPrompt(sessionID, queueID), nil
 }
 
 // GetDefaultSmallModel returns the default small model for a provider.
