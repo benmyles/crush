@@ -224,6 +224,12 @@ func NewToolMessageItem(
 		item = NewJobOutputToolMessageItem(sty, toolCall, result, canceled)
 	case tools.JobKillToolName:
 		item = NewJobKillToolMessageItem(sty, toolCall, result, canceled)
+	case tools.TerminalStartToolName,
+		tools.TerminalInputToolName,
+		tools.TerminalOutputToolName,
+		tools.TerminalResizeToolName,
+		tools.TerminalKillToolName:
+		item = NewTerminalToolMessageItem(sty, toolCall, result, canceled)
 	case tools.ViewToolName:
 		item = NewViewToolMessageItem(sty, toolCall, result, canceled)
 	case tools.WriteToolName:

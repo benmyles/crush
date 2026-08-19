@@ -43,6 +43,7 @@ import (
 	"github.com/charmbracelet/crush/internal/question"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/terminal"
 	"golang.org/x/sync/errgroup"
 
 	"charm.land/fantasy/providers/anthropic"
@@ -785,6 +786,10 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		hookRunner = hooks.NewRunner(preToolHooks, c.cfg.WorkingDir(), c.cfg.WorkingDir())
 	}
 
+	// Interactive terminals keep their sessions in a dedicated tmux
+	// server, so they persist in the data directory across restarts.
+	terminalController := terminal.NewController(c.cfg.Config().Options.DataDirectory)
+
 	allTools = append(
 		allTools,
 		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Options.Attribution, modelID),
@@ -792,6 +797,11 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		tools.NewCrushLogsTool(logFile),
 		tools.NewJobOutputTool(),
 		tools.NewJobKillTool(),
+		tools.NewTerminalStartTool(c.permissions, c.cfg.WorkingDir(), terminalController),
+		tools.NewTerminalInputTool(c.permissions, c.cfg.WorkingDir(), terminalController),
+		tools.NewTerminalOutputTool(terminalController),
+		tools.NewTerminalResizeTool(terminalController),
+		tools.NewTerminalKillTool(c.permissions, c.cfg.WorkingDir(), terminalController),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
