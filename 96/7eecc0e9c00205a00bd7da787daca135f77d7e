@@ -1,0 +1,29 @@
+internal/agent/agent.go
+  s_e82c6b847451e1::t_6861f33f638259 1479,1486-1501,1511-1514,1902-1913,1917,1919-1921,1924,1927,2056-2061,2063-2064
+internal/agent/compaction_command_test.go
+  s_e82c6b847451e1::t_e074ee61f6d12d 199-265
+internal/ui/chat/compaction.go
+  s_e82c6b847451e1::t_02b780f129f770 14-18,21-24,31-32,35-38,61-78,80,83,85,88-90,93-112,114-120,125,131,133-136,168-169,187,194-195
+internal/ui/chat/compaction_test.go
+  s_e82c6b847451e1::t_f8e50c787f9c93 13-14,43-50,52,59,69-104,124-145,171-172,194
+internal/ui/model/compact_live_test.go
+  s_e82c6b847451e1::t_cd13124ffee7ed 8,105-158
+internal/ui/model/ui.go
+  s_e82c6b847451e1::t_f9d0f8a4f47a5f 1510-1524,1659-1667
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "967eecc0e9c00205a00bd7da787daca135f77d7e",
+  "prompts": {},
+  "sessions": {
+    "s_e82c6b847451e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01353-c8b0-7470-996b-05342fe2aae6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
