@@ -1507,6 +1507,21 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	if cmd := m.chat.RestartPausedVisibleAnimations(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+
+	// A persisted compaction summary means the engine finished its work
+	// and the summary replaced the live stream item. Clear the pulsing
+	// "Compacting" pill here as a failsafe: the finished notification can
+	// be lost (or arrive late) and the pill must never outlive the
+	// summary message. clearCompactionState is idempotent.
+	for _, msg := range msgPtrs {
+		if msg.IsSummaryMessage {
+			if _, ok := msg.CompactionPart(); ok {
+				m.clearCompactionState()
+				break
+			}
+		}
+	}
+
 	m.chat.SelectLast()
 	return tea.Sequence(cmds...)
 }
@@ -1641,6 +1656,15 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	case message.Assistant:
+		// A persisted compaction summary means the engine finished its
+		// work (the message is only created after the engine completes).
+		// Clear the pulsing pill here too: this is the live arrival
+		// path, while setSessionMessages covers reloads.
+		if msg.IsSummaryMessage {
+			if _, ok := msg.CompactionPart(); ok {
+				m.clearCompactionState()
+			}
+		}
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.com.Workspace.WorkingDir())
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {

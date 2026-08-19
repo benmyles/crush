@@ -196,6 +196,73 @@ collect:
 	require.True(t, streamed, "the checkpoint lane must publish live stream events")
 }
 
+// TestCompact_PublishesFinishedIndependentlyOfQueueDrain verifies the
+// finished notification is emitted the moment the engine completes, not
+// deferred behind a queued prompt: the finished event appears exactly once
+// even when the drained prompt fails to run, and the drain error propagates
+// without suppressing the finished event.
+func TestCompact_PublishesFinishedIndependentlyOfQueueDrain(t *testing.T) {
+	completer := func(_ context.Context, _, _ string, _ int64) (string, string, error) {
+		return "## Goal & User Intent\nG\n## Progress\n### Done\n- x\n## Next Action\n1. y", "stop", nil
+	}
+	a, _, sessions, messages, _ := newCompactionTestAgent(t, completer)
+	broker := pubsub.NewBroker[notify.Notification]()
+	a.notify = broker
+	notifications := broker.Subscribe(context.Background())
+
+	ctx := context.Background()
+	sess, err := sessions.Create(ctx, "drain-order")
+	require.NoError(t, err)
+	for n := 1; n <= 12; n++ {
+		body := strings.Repeat(fmt.Sprintf("MARK-%02d ", n), 2000)
+		_, err := messages.Create(ctx, sess.ID, message.CreateMessageParams{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: body}}})
+		require.NoError(t, err)
+		_, err = messages.Create(ctx, sess.ID, message.CreateMessageParams{Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: body}, message.Finish{Reason: message.FinishReasonEndTurn}}})
+		require.NoError(t, err)
+	}
+
+	// Two queued prompts that fail Run validation instantly (no prompt, no
+	// attachment): the drain dequeues them and the error surfaces.
+	a.messageQueue.Set(sess.ID, []SessionAgentCall{
+		{SessionID: sess.ID},
+		{SessionID: sess.ID},
+	})
+
+	err = a.Compact(ctx, sess.ID, fantasy.ProviderOptions{}, nil)
+	require.Error(t, err, "the queued prompt fails validation, proving the drain ran after the engine finished")
+
+	// The drain consumed exactly the first queued prompt.
+	remaining, ok := a.messageQueue.Get(sess.ID)
+	require.True(t, ok)
+	require.Len(t, remaining, 1)
+
+	// Collected notifications must show started ... finished, with finished
+	// published exactly once despite the drain error.
+	var got []notify.Notification
+	drain := notifications
+collect:
+	for {
+		select {
+		case ev := <-drain:
+			got = append(got, ev.Payload)
+			if ev.Payload.Type == notify.TypeCompactionFinished {
+				break collect
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for compaction notifications, got %v", got)
+		}
+	}
+	require.Equal(t, notify.TypeCompactionStarted, got[0].Type)
+	finishedCount := 0
+	for _, n := range got {
+		if n.Type == notify.TypeCompactionFinished {
+			finishedCount++
+		}
+	}
+	require.Equal(t, 1, finishedCount, "finished must publish exactly once")
+	require.Equal(t, notify.TypeCompactionFinished, got[len(got)-1].Type)
+}
+
 // TestSummarize_FallsBackToLegacyWhenEngineMissing keeps the legacy path
 // reachable through the original entry point when the engine is absent.
 func TestSummarize_FallsBackToLegacyWhenEngineMissing(t *testing.T) {

@@ -11,23 +11,31 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-var _ MessageItem = (*CompactionMessageItem)(nil)
+var (
+	_ MessageItem         = (*CompactionMessageItem)(nil)
+	_ Expandable          = (*CompactionMessageItem)(nil)
+	_ list.MouseClickable = (*CompactionMessageItem)(nil)
+)
 
 // CompactionMessageItem renders the structured digest of an engine-produced
-// compaction summary as an always-expanded tree: checkpoint counts, ledger
-// tallies, extracts, working set, and the recovery note (Option A of the
-// overview designs). It replaces the plain assistant render for summary
+// compaction summary. It is collapsed to a one-line header by default and
+// only expands to the full tree (checkpoint counts, ledger tallies,
+// extracts, working set, recovery note) when the user clicks it or presses
+// the expand key. It replaces the plain assistant render for summary
 // messages that carry a CompactionContent part.
 type CompactionMessageItem struct {
 	*list.Versioned
 	sty  *styles.Styles
 	msg  *message.Message
 	part message.CompactionContent
+
+	expanded bool
 }
 
-// NewCompactionMessageItem builds a compaction overview item. The item is
-// immutable after construction, so it reports Finished immediately and the
-// F6 list cache can freeze it.
+// NewCompactionMessageItem builds a compaction overview item, collapsed so
+// the always-large summary does not dominate the chat. The item reports
+// Finished immediately and the F6 list cache can freeze it; toggling
+// expansion bumps the version so the cache re-renders.
 func NewCompactionMessageItem(sty *styles.Styles, msg *message.Message, part message.CompactionContent) *CompactionMessageItem {
 	return &CompactionMessageItem{
 		Versioned: list.NewVersioned(),
@@ -50,43 +58,86 @@ func (c *CompactionMessageItem) Finished() bool {
 	return true
 }
 
-// Render renders the overview tree inside a section shell.
+// ToggleExpanded flips the collapsed state and bumps the render version so
+// the list cache repaints the item. It returns whether the item is now
+// expanded.
+func (c *CompactionMessageItem) ToggleExpanded() bool {
+	c.expanded = !c.expanded
+	c.Bump()
+	return c.expanded
+}
+
+// HandleMouseClick implements list.MouseClickable. The whole summary line
+// is the expand toggle, so any left click on the item expands or collapses
+// it via the generic Expandable path.
+func (c *CompactionMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) bool {
+	return btn == ansi.MouseLeft
+}
+
+// Render renders the header and, when expanded, the overview tree inside a
+// section shell.
 func (c *CompactionMessageItem) Render(width int) string {
-	return common.Section(c.sty, c.tree(width), width)
+	return common.Section(c.sty, c.render(width), width)
 }
 
-// RawRender renders the tree without the section shell.
+// RawRender renders the header and tree without the section shell.
 func (c *CompactionMessageItem) RawRender(width int) string {
-	return c.tree(width)
+	return c.render(width)
 }
 
-// tree builds the mock-A layout: a header line with model, level, and token
-// counts, then one branch per lane with leaf counts.
-func (c *CompactionMessageItem) tree(width int) string {
+// render builds the collapsed one-line header or the full tree depending on
+// the expansion state.
+func (c *CompactionMessageItem) render(width int) string {
 	label := c.sty.Messages.AssistantInfoModel
 	dim := c.sty.Messages.AssistantInfoProvider
-	part := c.part
+	header := ansi.Truncate(c.headerLine(), width, "…")
 
+	var b strings.Builder
+	if !c.expanded {
+		suffix := dim.Render(" · click to expand")
+		prefix := "▸ "
+		head := c.headerLine()
+		// Reserve space for the prefix and the hint so the finished line
+		// fits the render width.
+		head = ansi.Truncate(head, width-ansi.StringWidth(prefix)-ansi.StringWidth(suffix), "…")
+		b.WriteString(prefix)
+		b.WriteString(label.Render(head))
+		b.WriteString(suffix)
+		return ansi.Truncate(b.String(), width, "…")
+	}
+
+	b.WriteString("▾ ")
+	b.WriteString(label.Render(header))
+	b.WriteString("\n")
+	c.tree(&b)
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// headerLine is the single-line summary: completion marker, model, level,
+// and token counts.
+func (c *CompactionMessageItem) headerLine() string {
+	part := c.part
 	levelName := fmt.Sprintf("level %d", part.Level)
 	if name := compactionLevelName(part.Level); name != "" {
 		levelName = name
 	}
-	header := strings.Join([]string{
+	return strings.Join([]string{
 		"⚡ Compaction complete",
 		fmt.Sprintf("· %s", part.ModelID),
 		fmt.Sprintf("· %s", levelName),
 		fmt.Sprintf("· %d tokens", part.TokenCount),
 	}, " ")
-	header = ansi.Truncate(header, width, "…")
+}
 
+// tree writes the overview tree: a branch per lane with leaf counts.
+func (c *CompactionMessageItem) tree(b *strings.Builder) {
+	part := c.part
+	dim := c.sty.Messages.AssistantInfoProvider
 	br := func(label, detail string) string {
 		return fmt.Sprintf("%s %s", dim.Render(label), detail)
 	}
 
-	var b strings.Builder
-	b.WriteString("▾ ")
-	b.WriteString(label.Render(header))
-	b.WriteString("\n")
 	checkpoint := part.Checkpoint
 	cp := []string{
 		br("Goal & User Intent", fmt.Sprintf("· %d items", checkpoint.Goals)),
@@ -114,8 +165,8 @@ func (c *CompactionMessageItem) tree(width int) string {
 	b.WriteString(dim.Render("Ledger"))
 	b.WriteString("\n")
 	b.WriteString("│  └─ ")
-	b.WriteString(fmt.Sprintf("%d instructions · %d errors · %d commands · %d files",
-		ledger.Instructions, ledger.Errors, ledger.Commands, ledger.Files))
+	fmt.Fprintf(b, "%d instructions · %d errors · %d commands · %d files",
+		ledger.Instructions, ledger.Errors, ledger.Commands, ledger.Files)
 	b.WriteString("\n")
 
 	extracts := fmt.Sprintf("%d/%d golden spans kept", part.ExtractsKeptBlocks, part.ExtractsTotalBlocks)
@@ -133,22 +184,20 @@ func (c *CompactionMessageItem) tree(width int) string {
 	b.WriteString(dim.Render("Working set"))
 	b.WriteString("\n")
 	b.WriteString("│  └─ ")
-	b.WriteString(fmt.Sprintf("%d files snapped", part.WorkingSetFiles))
+	fmt.Fprintf(b, "%d files snapped", part.WorkingSetFiles)
 	b.WriteString("\n")
 
 	b.WriteString("├─ 🔍 ")
 	b.WriteString(dim.Render("Recovery"))
 	b.WriteString("\n")
 	b.WriteString("│  └─ ")
-	b.WriteString(fmt.Sprintf("seq %d–%d · %d messages compacted",
-		part.SeqStart, part.SeqEnd, part.CompactedMessages))
+	fmt.Fprintf(b, "seq %d–%d · %d messages compacted",
+		part.SeqStart, part.SeqEnd, part.CompactedMessages)
 	b.WriteString("\n")
 
 	b.WriteString("└─ ")
 	b.WriteString(dim.Render(fmt.Sprintf("recall_grep / recall_expand ready · summary %s", part.SummaryID)))
 	b.WriteString("\n")
-
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // compactionLevelName maps an escalation level to its display name.

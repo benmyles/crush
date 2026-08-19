@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/crush/internal/agent/notify"
+	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/chat"
 	"github.com/charmbracelet/x/ansi"
@@ -98,6 +99,60 @@ func TestLiveCompactionMessageLifecycle(t *testing.T) {
 	}
 	if u.compactTokensDown != 0 {
 		t.Fatalf("clearCompactionState must clear live token stats")
+	}
+}
+
+// TestCompactionPillClearsOnSummaryArrival covers the failsafe in
+// setSessionMessages: when the persisted compaction summary message arrives
+// (even if the finished notification is lost or late), the pulsing
+// "Compacting" pill must clear.
+func TestCompactionPillClearsOnSummaryArrival(t *testing.T) {
+	ws := &countingWorkspace{ready: true, agentBusy: false}
+	u := newBusyUI(ws)
+
+	u.compacting = true
+	u.compactTokensDown = 123
+
+	summaryMsg := message.Message{
+		ID:               "sum-1",
+		Role:             message.Assistant,
+		SessionID:        "s1",
+		IsSummaryMessage: true,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "summary text"},
+			message.CompactionContent{SummaryID: "sum-1"},
+		},
+	}
+	_ = u.setSessionMessages([]message.Message{summaryMsg})
+
+	if u.compacting {
+		t.Fatalf("the Compacting pill must clear when the summary message arrives")
+	}
+	if u.compactTokensDown != 0 {
+		t.Fatalf("live token stats must clear with the pill")
+	}
+	if u.chat.MessageItem(chat.LiveCompactionMessageID) != nil {
+		t.Fatalf("the live stream item must not survive the summary rebuild")
+	}
+
+	// The live arrival path (appendSessionMessage) must clear it too.
+	u.compacting = true
+	u.compactTokensDown = 42
+	_ = u.appendSessionMessage(message.Message{
+		ID:               "sum-2",
+		Role:             message.Assistant,
+		SessionID:        "s1",
+		IsSummaryMessage: true,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "summary text"},
+			message.CompactionContent{SummaryID: "sum-2"},
+		},
+	})
+	if u.compacting {
+		t.Fatalf("the live compaction summary arrival must clear the pill")
+	}
+	if u.compactTokensDown != 0 {
+		t.Fatalf("live token stats must clear on live arrival")
 	}
 }
 

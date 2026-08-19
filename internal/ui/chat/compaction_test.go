@@ -10,13 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCompactionMessageItemRendersTree asserts that a summary message with a
-// CompactionContent part renders the always-expanded overview tree (Option A)
-// instead of the plain assistant render, with all lane branches and counts.
-func TestCompactionMessageItemRendersTree(t *testing.T) {
-	t.Parallel()
-
-	sty := styles.CharmtonePantera()
+// testCompactionPart builds the CompactionContent used across the tests.
+func testCompactionPart() message.CompactionContent {
 	part := message.CompactionContent{
 		SummaryID:           "summary-42",
 		Level:               1,
@@ -45,14 +40,23 @@ func TestCompactionMessageItemRendersTree(t *testing.T) {
 	part.Ledger.Errors = 1
 	part.Ledger.Files = 9
 	part.Ledger.Commands = 7
+	return part
+}
 
+// TestCompactionMessageItemCollapsedByDefault asserts that a summary message
+// with a CompactionContent part renders as a one-line collapsed header until
+// the user expands it.
+func TestCompactionMessageItemCollapsedByDefault(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.CharmtonePantera()
 	msg := &message.Message{
 		ID:               "msg-1",
 		Role:             message.Assistant,
 		IsSummaryMessage: true,
 		Parts: []message.ContentPart{
 			message.TextContent{Text: "summary text"},
-			part,
+			testCompactionPart(),
 			message.Finish{Reason: message.FinishReasonEndTurn},
 		},
 	}
@@ -62,6 +66,42 @@ func TestCompactionMessageItemRendersTree(t *testing.T) {
 	item, ok := items[0].(*CompactionMessageItem)
 	require.True(t, ok, "summary messages with a digest must render as the compaction tree")
 
+	// Collapsed by default: the one-line header only, no tree branches.
+	out := item.Render(90)
+	for _, want := range []string{
+		"Compaction complete",
+		"click to expand",
+	} {
+		require.Contains(t, out, want)
+	}
+	require.NotContains(t, out, "Checkpoint")
+	require.NotContains(t, out, "Ledger")
+
+	require.Equal(t, "compaction-summary-42", item.ID())
+	require.True(t, item.Finished(), "the overview is static and can be frozen by the list cache")
+}
+
+// TestCompactionMessageItemExpandsOnToggle asserts that toggling the item
+// expands the full overview tree and toggling again collapses it back.
+func TestCompactionMessageItemExpandsOnToggle(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.CharmtonePantera()
+	msg := &message.Message{
+		ID:               "msg-1",
+		Role:             message.Assistant,
+		IsSummaryMessage: true,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "summary text"},
+			testCompactionPart(),
+			message.Finish{Reason: message.FinishReasonEndTurn},
+		},
+	}
+
+	items := ExtractMessageItems(&sty, msg, nil, "")
+	item := items[0].(*CompactionMessageItem)
+
+	require.True(t, item.ToggleExpanded(), "first toggle expands")
 	out := item.Render(90)
 	for _, want := range []string{
 		"Compaction complete",
@@ -81,8 +121,28 @@ func TestCompactionMessageItemRendersTree(t *testing.T) {
 		require.Contains(t, out, want)
 	}
 
-	require.Equal(t, "compaction-summary-42", item.ID())
-	require.True(t, item.Finished(), "the overview is static and can be frozen by the list cache")
+	require.False(t, item.ToggleExpanded(), "second toggle collapses")
+	require.NotContains(t, item.Render(90), "Checkpoint")
+}
+
+// TestCompactionMessageItemHandleMouseClick asserts left clicks anywhere on
+// the item claim it so the generic Expandable path can toggle it.
+func TestCompactionMessageItemHandleMouseClick(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.CharmtonePantera()
+	msg := &message.Message{
+		ID:               "msg-3",
+		Role:             message.Assistant,
+		IsSummaryMessage: true,
+		Parts: []message.ContentPart{
+			message.CompactionContent{SummaryID: "s"},
+		},
+	}
+	item := ExtractMessageItems(&sty, msg, nil, "")[0].(*CompactionMessageItem)
+
+	require.True(t, item.HandleMouseClick(ansi.MouseButton1, 0, 0))
+	require.False(t, item.HandleMouseClick(ansi.MouseButton3, 0, 0), "only left clicks toggle")
 }
 
 // TestLegacySummaryMessageStillRendersAssistant asserts that a summary
@@ -108,8 +168,8 @@ func TestLegacySummaryMessageStillRendersAssistant(t *testing.T) {
 	require.False(t, ok, "legacy summaries must not render as the compaction tree")
 }
 
-// TestCompactionMessageItemTruncatesHeader asserts the header line never
-// exceeds the render width.
+// TestCompactionMessageItemTruncatesHeader asserts the collapsed line never
+// exceeds the render width, even for absurdly long model IDs.
 func TestCompactionMessageItemTruncatesHeader(t *testing.T) {
 	t.Parallel()
 
@@ -131,6 +191,5 @@ func TestCompactionMessageItemTruncatesHeader(t *testing.T) {
 	require.Len(t, items, 1)
 	lines := strings.Split(items[0].RawRender(40), "\n")
 	require.NotEmpty(t, lines)
-	// The "▾ " prefix plus the truncated header must stay inside the width.
-	require.LessOrEqual(t, ansi.StringWidth(lines[0]), 42, "header must be truncated to the render width")
+	require.LessOrEqual(t, ansi.StringWidth(lines[0]), 40, "collapsed line must be truncated to the render width")
 }

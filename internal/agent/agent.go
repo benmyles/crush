@@ -1476,11 +1476,27 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		if err := a.compactWithEngine(ctx, sessionID, instructions, opts, onAuthRefresh); err != nil {
 			slog.Error("Compaction engine failed; falling back to legacy summarize", "error", err)
 		} else {
-			return nil
+			return a.drainQueuedPrompt(ctx, sessionID)
 		}
 	}
 
 	return a.legacySummarize(ctx, sessionID, opts, onAuthRefresh)
+}
+
+// drainQueuedPrompt runs the next queued prompt for sessionID, if any. It
+// replaces the in-engine drain that used to run before the finished event
+// was published: the engine now returns control first so the "Compacting"
+// indicator clears at completion, then queued work resumes through the
+// normal Run path.
+func (a *sessionAgent) drainQueuedPrompt(ctx context.Context, sessionID string) error {
+	queued, ok := a.messageQueue.Get(sessionID)
+	if !ok || len(queued) == 0 {
+		return nil
+	}
+	first := queued[0]
+	a.messageQueue.Set(sessionID, queued[1:])
+	_, err := a.Run(ctx, first)
+	return err
 }
 
 // Compact is the engine-only compaction entry point (the /compact command).
@@ -1492,7 +1508,10 @@ func (a *sessionAgent) Compact(ctx context.Context, sessionID string, opts fanta
 		return fmt.Errorf("the context compaction engine is disabled (set options.compaction.enabled to true, or use the legacy summarize command)")
 	}
 	instructions := a.ConsumeCompactionRequest(sessionID)
-	return a.compactWithEngine(ctx, sessionID, instructions, opts, onAuthRefresh)
+	if err := a.compactWithEngine(ctx, sessionID, instructions, opts, onAuthRefresh); err != nil {
+		return err
+	}
+	return a.drainQueuedPrompt(ctx, sessionID)
 }
 
 func (a *sessionAgent) legacySummarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions, onAuthRefresh func(context.Context, *fantasy.ProviderError) error) error {
@@ -1880,19 +1899,32 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 		}
 	}()
 	// TUI lifecycle events: the pulse indicator rides on the started
-	// event and clears on finished (success or failure).
+	// event and clears on finished (success or failure). Finished must be
+	// published the moment the engine's own work is done (see
+	// publishFinished in the successful path below): the queue drain that
+	// follows returns control to queued prompts, and the pulse must not
+	// stay lit while a resuming turn runs for minutes. The deferred call
+	// is only the failsafe for early-return/error paths.
+	finishedOnce := false
+	publishFinished := func() {
+		if a.notify == nil || finishedOnce {
+			return
+		}
+		finishedOnce = true
+		a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+			SessionID:    sessionID,
+			SessionTitle: currentSession.Title,
+			Type:         notify.TypeCompactionFinished,
+		})
+	}
 	if a.notify != nil {
 		a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
 			SessionID:    sessionID,
 			SessionTitle: currentSession.Title,
 			Type:         notify.TypeCompactionStarted,
 		})
-		defer a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
-			SessionID:    sessionID,
-			SessionTitle: currentSession.Title,
-			Type:         notify.TypeCompactionFinished,
-		})
 	}
+	defer publishFinished()
 
 	cfg := config.ResolveCompactionConfig(a.cfg.Config())
 	window := int64(largeModel.CatwalkCfg.ContextWindow)
@@ -2021,17 +2053,15 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 		return err
 	}
 
+	// The engine's own work is complete: the summary is persisted and the
+	// session counters are reset. Publish the finished event before the
+	// queued-prompt drain begins so the "Compacting" indicator clears at
+	// completion, not after a resuming turn. The queue itself is drained
+	// by the caller (Summarize/Compact), which is also where the outer
+	// run's continuation handoff happens.
 	a.activeRequests.Del(sessionID)
-	cancel()
-
-	queuedMessages, ok := a.messageQueue.Get(sessionID)
-	if !ok || len(queuedMessages) == 0 {
-		return nil
-	}
-	firstQueuedMessage := queuedMessages[0]
-	a.messageQueue.Set(sessionID, queuedMessages[1:])
-	_, qErr := a.Run(ctx, firstQueuedMessage)
-	return qErr
+	publishFinished()
+	return nil
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
