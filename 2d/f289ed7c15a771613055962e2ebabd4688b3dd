@@ -1,0 +1,22 @@
+internal/agent/agent.go
+  h_9b4a5c940a23e2 193-196,2731-2757
+internal/agent/compaction_support_test.go
+  h_9b4a5c940a23e2 61-87
+internal/agent/coordinator_test.go
+  h_9b4a5c940a23e2 20,74-76
+internal/agent/tools/compact_context.go
+  h_9b4a5c940a23e2 5,18-19,21-39,51-52,77-91
+internal/agent/tools/compact_context_test.go
+  h_9b4a5c940a23e2 1-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "2df289ed7c15a771613055962e2ebabd4688b3dd",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
