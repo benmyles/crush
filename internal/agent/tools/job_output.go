@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	_ "embed"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/shell"
@@ -12,14 +14,18 @@ import (
 
 const (
 	JobOutputToolName = "job_output"
+
+	jobOutputDefaultWaitMS = 30000
+	jobOutputMaxWaitMS     = 30000
 )
 
 //go:embed job_output.md
 var jobOutputDescription string
 
 type JobOutputParams struct {
-	ShellID string `json:"shell_id" description:"The ID of the background shell to retrieve output from"`
-	Wait    bool   `json:"wait" description:"If true, block until the background shell completes before returning output"`
+	ShellID   string `json:"shell_id" description:"The shell to retrieve output from"`
+	Wait      bool   `json:"wait,omitempty" description:"If true, block until the shell completes OR timeout_ms elapses, then return the output collected so far (default false)."`
+	TimeoutMs int    `json:"timeout_ms,omitempty" description:"How long to wait in milliseconds when wait=true before returning whatever output was collected (default 30000, max 30000)."`
 }
 
 type JobOutputResponseMetadata struct {
@@ -45,8 +51,16 @@ func NewJobOutputTool() fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
 			}
 
+			waitLog := ""
 			if params.Wait {
-				bgShell.WaitContext(ctx)
+				timeoutMS := cmp.Or(params.TimeoutMs, jobOutputDefaultWaitMS)
+				if timeoutMS < 1 || timeoutMS > jobOutputMaxWaitMS {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("timeout_ms must be between 1 and %d (got %d)", jobOutputMaxWaitMS, timeoutMS)), nil
+				}
+				waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
+				bgShell.WaitContext(waitCtx)
+				cancel()
+				waitLog = fmt.Sprintf(" (waited up to %dms)", timeoutMS)
 			}
 
 			stdout, stderr, done, err := bgShell.GetOutput()
@@ -85,7 +99,10 @@ func NewJobOutputTool() fantasy.AgentTool {
 				output = BashNoOutput
 			}
 
-			result := fmt.Sprintf("Status: %s\n\n%s", status, output)
+			result := fmt.Sprintf("Status: %s%s\n\n%s", status, waitLog, output)
+			if status == "running" && params.Wait {
+				result += fmt.Sprintf("\n\nThe shell is still running. The output above is everything captured so far. Call job_output again with wait=true to collect the next %d seconds.", jobOutputMaxWaitMS/1000)
+			}
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
 		},
 	)

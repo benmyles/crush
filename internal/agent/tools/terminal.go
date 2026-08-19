@@ -15,8 +15,7 @@ const (
 	TerminalKillToolName   = "terminal_kill"
 
 	terminalDefaultSettleMS = 300
-	terminalDefaultWaitMS   = 10000
-	terminalMaxWaitMS       = 60000
+	terminalMaxWaitMS       = 30000
 )
 
 // TerminalResponseMetadata is attached to every terminal tool response so

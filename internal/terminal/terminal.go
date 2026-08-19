@@ -42,7 +42,11 @@ const (
 
 	// capture history options.
 	// maxCaptureWait bounds the time WaitFor polls for a match.
-	maxCaptureWait = 60 * time.Second
+	maxCaptureWait = 30 * time.Second
+
+	// maxCommandTime bounds a single tmux invocation so a hung tmux
+	// server or wedged pane can never stall an agent tool.
+	maxCommandTime = 30 * time.Second
 
 	// fastFailDelay is how long Start waits before checking whether a
 	// freshly spawned session survived its first moments.
@@ -77,6 +81,10 @@ type Controller struct {
 	// fastFailDelay mirrors the package constant so tests can skip the
 	// settle wait. Never mutate it from outside this package.
 	fastFailDelay time.Duration
+
+	// commandTimeout mirrors maxCommandTime so tests can exercise the
+	// hang path quickly. Never mutate it from outside this package.
+	commandTimeout time.Duration
 }
 
 // NewController returns a Controller whose tmux socket lives under
@@ -90,8 +98,9 @@ func NewController(dataDir string) *Controller {
 		TmuxDir: filepath.Join(dataDir, "tmux"),
 		// Never set tmuxBin to an absolute path: keeping it "tmux" lets
 		// each exec.Command resolve PATH at call time.
-		tmuxBin:       "tmux",
-		fastFailDelay: fastFailDelay,
+		tmuxBin:        "tmux",
+		fastFailDelay:  fastFailDelay,
+		commandTimeout: maxCommandTime,
 	}
 }
 
@@ -142,6 +151,11 @@ func (c *Controller) run(ctx context.Context, args ...string) (string, error) {
 	if err := c.EnsureDir(); err != nil {
 		return "", err
 	}
+
+	// Bound every tmux invocation so a hung server or wedged pane can
+	// never block an agent tool indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, c.commandTimeout)
+	defer cancel()
 
 	fullArgs := make([]string, 0, len(args)+2)
 	fullArgs = append(fullArgs, "-L", SocketName)
@@ -316,7 +330,7 @@ func (c *Controller) WaitFor(ctx context.Context, id, match string, wait time.Du
 		return "", false, errors.New("wait_for: match is required")
 	}
 	if wait <= 0 {
-		wait = 10 * time.Second
+		wait = 30 * time.Second
 	}
 	if wait > maxCaptureWait {
 		wait = maxCaptureWait

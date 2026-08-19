@@ -28,6 +28,25 @@ list active terminals and their IDs.
 - `terminal_resize` — change the TTY dimensions
 - `terminal_kill` — end the session (use it when you are done)
 
+## Long-running sessions
+
+30 seconds is the longest any single terminal_* call blocks. For
+anything slower, drive the session step by step:
+
+- Long ssh session: terminal_start, then wait for the password or
+  host prompt with terminal_output wait_for (at most 30 seconds per
+  call), send credentials with terminal_input, and after each remote
+  command loop terminal_output until the prompt (or an expected
+  marker) returns.
+- Slow boot: right after terminal_start, poll terminal_output
+  wait_for for the program's ready banner instead of assuming startup
+  is instant.
+- Long job inside the terminal (migrations, remote builds): send it
+  with terminal_input, then repeatedly terminal_output wait_for its
+  completion marker, re-calling until it appears.
+- Non-interactive work does not belong in a terminal at all: use bash
+  (with run_in_background plus job_output for long jobs).
+
 ## When to use and not use
 
 Use terminal_* for interactive sessions. For non-interactive commands

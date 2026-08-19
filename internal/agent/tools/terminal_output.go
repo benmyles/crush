@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"cmp"
 	"context"
 	_ "embed"
 	"errors"
@@ -20,7 +19,7 @@ type TerminalOutputParams struct {
 	TerminalID string `json:"terminal_id,omitempty" description:"The terminal to read. Omit to list all active terminals and their IDs (useful for reconnecting)."`
 	History    bool   `json:"history,omitempty" description:"If true, include the full scrollback history instead of only the current visible screen. Use when long output scrolled past the bottom."`
 	WaitFor    string `json:"wait_for,omitempty" description:"Optional text to wait for. Polls the terminal until this text appears anywhere in its output, then returns the full history. Essential for ssh: wait for prompts like 'password:' or a shell prompt such as '$ ' before sending the next input."`
-	TimeoutMs  int    `json:"timeout_ms,omitempty" description:"How long to wait for wait_for in milliseconds (default 10000, max 60000)."`
+	TimeoutMs  int    `json:"timeout_ms" description:"How long to wait for wait_for in milliseconds. Required, clamped to a maximum of 30000."`
 }
 
 func NewTerminalOutputTool(ctrl *terminal.Controller) fantasy.AgentTool {
@@ -47,10 +46,11 @@ func NewTerminalOutputTool(ctrl *terminal.Controller) fantasy.AgentTool {
 			)
 			switch {
 			case params.WaitFor != "":
-				timeoutMS := cmp.Or(params.TimeoutMs, terminalDefaultWaitMS)
-				timeoutMS = min(timeoutMS, terminalMaxWaitMS)
+				if params.TimeoutMs < 1 || params.TimeoutMs > terminalMaxWaitMS {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("timeout_ms must be between 1 and %d (got %d)", terminalMaxWaitMS, params.TimeoutMs)), nil
+				}
 				waitedFor = true
-				screen, matched, err = ctrl.WaitFor(ctx, params.TerminalID, params.WaitFor, time.Duration(timeoutMS)*time.Millisecond)
+				screen, matched, err = ctrl.WaitFor(ctx, params.TerminalID, params.WaitFor, time.Duration(params.TimeoutMs)*time.Millisecond)
 			default:
 				screen, err = ctrl.Capture(ctx, params.TerminalID, params.History)
 			}
@@ -72,13 +72,16 @@ func NewTerminalOutputTool(ctrl *terminal.Controller) fantasy.AgentTool {
 				if matched {
 					fmt.Fprintf(&b, ", wait_for %q matched", params.WaitFor)
 				} else {
-					fmt.Fprintf(&b, ", wait_for %q not found before timeout", params.WaitFor)
+					fmt.Fprintf(&b, ", wait_for %q not found within %dms", params.WaitFor, params.TimeoutMs)
 				}
 			}
 			b.WriteString("\n\n")
 			b.WriteString(TruncateOutput(screen))
+			if waitedFor && !matched {
+				fmt.Fprintf(&b, "\n\nTerminal %s is still running. The screen above is everything captured so far. Call terminal_output again with the same wait_for to keep waiting for the next %d seconds.", params.TerminalID, terminalMaxWaitMS/1000)
+			}
 
-			meta := TerminalResponseMetadata{TerminalID: params.TerminalID, Running: matched || err == nil}
+			meta := TerminalResponseMetadata{TerminalID: params.TerminalID, Running: true}
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(b.String()), meta), nil
 		},
 	)

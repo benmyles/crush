@@ -301,7 +301,46 @@ func TestTerminalOutput_WaitForTimeout(t *testing.T) {
 		TimeoutMs:  200,
 	})
 	require.False(t, resp.IsError, resp.Content)
-	require.Contains(t, resp.Content, `wait_for "never-appears" not found before timeout`)
+	require.Contains(t, resp.Content, `wait_for "never-appears" not found within 200ms`)
+	require.Contains(t, resp.Content, "is still running")
+	require.Contains(t, resp.Content, "Call terminal_output again with the same wait_for")
+}
+
+func TestTerminalOutput_TimeoutMsValidation(t *testing.T) {
+	ctx := terminalCtx()
+	ctrl, start, _, _, _ := newTerminalToolsTest(t)
+	output := NewTerminalOutputTool(ctrl)
+	id := startTerminal(t, ctx, start, "")
+
+	for _, timeout := range []int{0, -5, 30001} {
+		resp := runTerminalTool(t, output, ctx, TerminalOutputParams{
+			TerminalID: id,
+			WaitFor:    "anything",
+			TimeoutMs:  timeout,
+		})
+		require.True(t, resp.IsError)
+		require.Contains(t, resp.Content, "timeout_ms must be between 1 and 30000", "timeout %d", timeout)
+	}
+
+	// A timeout value is only checked when wait_for is actually used.
+	resp := runTerminalTool(t, output, ctx, TerminalOutputParams{TerminalID: id})
+	require.False(t, resp.IsError, resp.Content)
+}
+
+func TestTerminalInput_SettleMsValidation(t *testing.T) {
+	ctx := terminalCtx()
+	_, start, input, _, _ := newTerminalToolsTest(t)
+	id := startTerminal(t, ctx, start, "")
+
+	for _, settle := range []int{-1, 30001} {
+		resp := runTerminalTool(t, input, ctx, TerminalInputParams{
+			TerminalID: id,
+			Text:       "ls",
+			SettleMS:   settle,
+		})
+		require.True(t, resp.IsError)
+		require.Contains(t, resp.Content, "settle_ms must be between 0 and 30000", "settle %d", settle)
+	}
 }
 
 func TestTerminalOutput_NotFound(t *testing.T) {

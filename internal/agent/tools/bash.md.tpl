@@ -10,7 +10,7 @@ Common shell builtins and core utils available on Windows.
 1. Directory Verification: If creating directories/files, use LS tool to verify parent exists
 2. Security Check: Banned commands ({{ .BannedCommands }}) return error - explain to user. Safe read-only commands execute without prompts
 3. Command Execution: Execute with proper quoting, capture output
-4. Auto-Background: Commands exceeding 1 minute (default, configurable via `auto_background_after`) automatically move to background and return shell ID
+4. Auto-Background: Commands exceeding 30 seconds (default, configurable via `auto_background_after`) automatically move to background and return shell ID; 30 seconds is the longest a foreground command runs, so poll long work with job_output (each of its waits also yields after 30 seconds)
 5. Output Processing: Truncate if exceeds {{ .MaxOutputLength }} characters
 6. Return Result: Include errors, metadata with <cwd></cwd> tags
 </execution_steps>
@@ -27,9 +27,9 @@ Common shell builtins and core utils available on Windows.
 </usage_notes>
 
 <background_execution>
-- Set run_in_background=true to run commands in a separate background shell
+- Set run_in_background=true to run commands in a separate background shell - use it for anything expected to run longer than 30 seconds (long test suites, servers, heavy scripts)
 - Returns a shell ID for managing the background process
-- Use job_output tool to view current output from background shell
+- Use job_output tool to view current output from a background shell (wait=true yields at most every 30 seconds; call again for the next 30-second chunk)
 - Use job_kill tool to terminate a background shell
 - IMPORTANT: NEVER use `&` at the end of commands to run in background - use run_in_background parameter instead
 - Commands that should run in background:
@@ -39,7 +39,7 @@ Common shell builtins and core utils available on Windows.
   * Any command expected to run indefinitely
 - Commands that should NOT run in background:
   * Build commands (e.g., `npm run build`, `go build`)
-  * Test suites (e.g., `npm test`, `pytest`)
+  * Quick test suites (e.g., `npm test`, `pytest`) - suites that run longer than 30 seconds belong in the background, polled with job_output
   * Git operations
   * File operations
   * Short-lived scripts

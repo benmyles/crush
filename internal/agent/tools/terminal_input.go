@@ -22,7 +22,7 @@ type TerminalInputParams struct {
 	Text       string   `json:"text,omitempty" description:"Text to type into the terminal, sent literally (e.g. 'ls -la')."`
 	Keys       []string `json:"keys,omitempty" description:"Optional control keys to press after the text, e.g. [\"Enter\"], [\"C-c\"], [\"Up\", \"Enter\"]. Supported: enter, esc, tab, backspace, delete, up, down, left, right, home, end, pgup, pgdown, space, f1-f12, ctrl-a..ctrl-z."`
 	Enter      bool     `json:"enter,omitempty" description:"If true, press Enter after sending the text (same as adding \"enter\" to keys)."`
-	SettleMS   int      `json:"settle_ms,omitempty" description:"How long to wait in milliseconds before reading the screen back, giving the program time to react (default 300)."`
+	SettleMS   int      `json:"settle_ms,omitempty" description:"How long to wait in milliseconds before reading the screen back, giving the program time to react (default 300, max 30000)."`
 	ReadBack   bool     `json:"read_back,omitempty" description:"If true (default), the current screen is returned after sending input so you can see the result. Set to false for rapid multi-step sequences, then read the screen once with terminal_output."`
 }
 
@@ -109,6 +109,10 @@ func NewTerminalInputTool(permissions permission.Service, workingDir string, ctr
 			names, err := normalizeKeys(params.Keys)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+
+			if params.SettleMS < 0 || params.SettleMS > terminalMaxWaitMS {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("settle_ms must be between 0 and %d (got %d)", terminalMaxWaitMS, params.SettleMS)), nil
 			}
 
 			if params.Text == "" && len(names) == 0 && !params.Enter {

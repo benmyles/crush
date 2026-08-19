@@ -32,6 +32,20 @@ matter, send each step with `read_back: false`, then read once with
 terminal_output. For example: send password, wait for prompt, send a
 command.
 
+## Blocking is capped
+
+Nothing a terminal_* tool does ever blocks the agent for longer than
+30 seconds. `settle_ms` waits at most 30 seconds (default 300 ms) for
+the program to react to your input. For anything slower, poll:
+
+1. terminal_input to send a command (read_back: false is fine)
+2. terminal_output wait_for="$ " (or any expected prompt/marker text)
+   to wait for the program's response, at most 30 seconds per call
+3. repeat, re-calling terminal_output until the text appears
+
+This input then wait_for loop is the canonical way to drive ssh
+sessions, REPLs, and any slow interactive program.
+
 ## Notes
 
 - Sending input requires user approval via the permission prompt unless

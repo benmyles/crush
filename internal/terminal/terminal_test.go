@@ -22,6 +22,8 @@ echo "$@" >> "${CRUSH_STUB_LOG:?}"
 state="${CRUSH_STUB_DIR:?}/sessions"
 sub="${3:-}"
 
+if [ "${CRUSH_STUB_HANG:-}" = "$sub" ]; then exec sleep 60; fi
+
 case "$sub" in
 new-session)
     last=""
@@ -310,6 +312,23 @@ func TestController_Kill(t *testing.T) {
 	exists, err := c.Exists(ctx, s.ID)
 	require.NoError(t, err)
 	require.False(t, exists)
+}
+
+// TestController_CommandTimeout verifies a hung tmux invocation is
+// killed instead of blocking the agent.
+func TestController_CommandTimeout(t *testing.T) {
+	ctx := context.Background()
+	c := newTestController(t)
+	c.commandTimeout = 2 * time.Second
+	t.Setenv("CRUSH_STUB_HANG", "capture-pane")
+
+	s, err := c.Start(ctx, "", "/work", "sh", 0, 0)
+	require.NoError(t, err)
+
+	started := time.Now()
+	_, err = c.Capture(ctx, s.ID, false)
+	require.Error(t, err)
+	require.Less(t, time.Since(started), 15*time.Second)
 }
 
 func TestController_KillAll(t *testing.T) {
