@@ -1344,6 +1344,12 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		}
 	}
 
+	// Merge hook fragments the same way Load does so a reload picks up
+	// newly installed integration hooks.
+	if err := applyHookFragments(cfg, s.workingDir, &loadedPaths); err != nil {
+		return fmt.Errorf("failed to apply hook fragments on reload: %w", err)
+	}
+
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
 	if err := cfg.ValidateHooks(); err != nil {

@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/charmbracelet/crush/internal/hookevent"
 	"github.com/tidwall/sjson"
 )
 
 // Hook event name constants.
 const (
-	EventPreToolUse = "PreToolUse"
+	EventPreToolUse   = hookevent.PreToolUse
+	EventSessionStart = hookevent.SessionStart
 )
 
 // HaltExitCode is the exit code that halts the whole turn. 2 blocks the

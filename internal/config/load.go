@@ -27,6 +27,7 @@ import (
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/home"
+	"github.com/charmbracelet/crush/internal/hookevent"
 	"github.com/charmbracelet/crush/internal/shellconfig"
 	powernapConfig "github.com/charmbracelet/x/powernap/pkg/config"
 	"github.com/qjebbs/go-jsons"
@@ -78,6 +79,17 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 			store.loadedPaths = append(store.loadedPaths, store.workspacePath)
 		}
 	}
+
+	// Load hook fragments after every other source so integrations can
+	// register hooks without editing the user's crushrc or crush.json.
+	// Fragments live under <global config dir>/hooks/*.json and carry the
+	// same shape as crush.json. A fragment that cannot be read or parsed
+	// is skipped with a warning: integrations must never be able to brick
+	// startup, and a stale fragment is safer inert than fatal.
+	if err := applyHookFragments(cfg, workingDir, &store.loadedPaths); err != nil {
+		return nil, err
+	}
+	store.config = cfg
 
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.
@@ -1453,14 +1465,62 @@ func isAppleTerminal() bool { return os.Getenv("TERM_PROGRAM") == "Apple_Termina
 
 // normalizeHookEvent maps user-provided event names to their canonical
 // form. Matching is case-insensitive and accepts snake_case variants
-// (e.g. "pre_tool_use" → "PreToolUse").
+// (e.g. "pre_tool_use" → "PreToolUse", "session_start" → "SessionStart").
 func normalizeHookEvent(name string) string {
 	switch strings.ToLower(strings.ReplaceAll(name, "_", "")) {
 	case "pretooluse":
-		return "PreToolUse"
+		return hookevent.PreToolUse
+	case "sessionstart":
+		return hookevent.SessionStart
 	default:
 		return name
 	}
+}
+
+// hookFragmentPaths returns the sorted list of hook fragment files under
+// the global config directory's hooks/ subdirectory. Fragments carry the
+// shape of crush.json (typically only a "hooks" key) and are merged after
+// every other config source so integrations can register hooks without
+// editing the user's crushrc or crush.json.
+func hookFragmentPaths() []string {
+	dir := filepath.Join(filepath.Dir(GlobalConfig()), "hooks")
+	paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return nil
+	}
+	slices.Sort(paths)
+	return paths
+}
+
+// applyHookFragments merges valid hook fragment files into cfg and
+// appends their paths to loadedPaths. Invalid fragments are skipped with
+// a warning. Returns an error only for conditions that must abort startup
+// (none today, reserved for stricter validation if that ever changes).
+func applyHookFragments(cfg *Config, workingDir string, loadedPaths *[]string) error {
+	if fragmentPaths := hookFragmentPaths(); len(fragmentPaths) > 0 {
+		var fragmentBytes [][]byte
+		for _, path := range fragmentPaths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			if len(data) == 0 || !json.Valid(data) {
+				slog.Warn("Skipping invalid hook fragment", "path", path)
+				continue
+			}
+			fragmentBytes = append(fragmentBytes, data)
+			*loadedPaths = append(*loadedPaths, path)
+		}
+		if len(fragmentBytes) > 0 {
+			merged, mergeErr := loadFromBytes(append([][]byte{mustMarshalConfig(cfg)}, fragmentBytes...))
+			if mergeErr == nil {
+				dataDir := cfg.Options.DataDirectory
+				*cfg = *merged
+				cfg.setDefaults(workingDir, dataDir)
+			}
+		}
+	}
+	return nil
 }
 
 // ValidateHooks normalizes event names and checks that every configured

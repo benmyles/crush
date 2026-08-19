@@ -16,8 +16,19 @@ need to author correct hooks.
 
 ## Supported Events
 
-Only `PreToolUse` is currently supported. Event names are case-insensitive and
+### PreToolUse
+
+Fires before every top-level tool call. Event names are case-insensitive and
 accept snake_case (`PreToolUse`, `pretooluse`, `pre_tool_use` all work).
+
+### SessionStart
+
+Fires once per session per process, the first time the session runs; covers
+both fresh sessions and resumed ones (`crush --continue`, `--session <id>`).
+It receives the common stdin payload only (no `tool_name`/`tool_input`) and no
+tool-specific env vars. Hooks without a `matcher` fire; tool-name matchers do
+not match. Lifecycle hooks are informational: they cannot deny, halt, or
+rewrite input, run asynchronously, and failures are logged and ignored.
 
 ## Configuration
 

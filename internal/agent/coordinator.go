@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -139,6 +140,12 @@ type coordinator struct {
 	activeSkills []*skills.Skill // Post-filter: active skills only.
 	skillTracker *skills.Tracker
 
+	// Sessions whose SessionStart hooks already fired in this process.
+	// Shot once per session so resuming a session mid-conversation does
+	// not re-announce its start.
+	sessionStartedMu sync.Mutex
+	sessionsStarted  map[string]struct{}
+
 	readyWg errgroup.Group
 }
 
@@ -177,23 +184,24 @@ func NewCoordinator(ctx context.Context, opts CoordinatorOptions) (Coordinator, 
 	skillTracker := skills.NewTracker(activeSkills)
 
 	c := &coordinator{
-		cfg:          opts.Config,
-		sessions:     opts.Sessions,
-		messages:     opts.Messages,
-		permissions:  opts.Permissions,
-		questions:    opts.Questions,
-		history:      opts.History,
-		filetracker:  opts.FileTracker,
-		lspManager:   opts.LSPManager,
-		notify:       opts.Notify,
-		runComplete:  opts.RunComplete,
-		querier:      opts.Querier,
-		dbConn:       opts.DBConn,
-		agents:       make(map[string]SessionAgent),
-		allSkills:    allSkills,
-		activeSkills: activeSkills,
-		skillTracker: skillTracker,
-		interactive:  opts.Interactive,
+		cfg:             opts.Config,
+		sessions:        opts.Sessions,
+		messages:        opts.Messages,
+		permissions:     opts.Permissions,
+		questions:       opts.Questions,
+		history:         opts.History,
+		filetracker:     opts.FileTracker,
+		lspManager:      opts.LSPManager,
+		notify:          opts.Notify,
+		runComplete:     opts.RunComplete,
+		querier:         opts.Querier,
+		dbConn:          opts.DBConn,
+		agents:          make(map[string]SessionAgent),
+		allSkills:       allSkills,
+		activeSkills:    activeSkills,
+		skillTracker:    skillTracker,
+		interactive:     opts.Interactive,
+		sessionsStarted: make(map[string]struct{}),
 	}
 
 	agentCfg, ok := opts.Config.Config().Agents[config.AgentCoder]
@@ -235,6 +243,12 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 	if err := c.readyWg.Wait(); err != nil {
 		return nil, err
 	}
+
+	// Fire SessionStart hooks the first time this process runs a session,
+	// covering both fresh sessions and resumed ones (--continue,
+	// --session). Hooks run asynchronously so a slow hook cannot stall the
+	// first prompt; per-hook timeouts still bound their execution.
+	c.fireSessionStartHooks(sessionID)
 
 	// MCP servers connect asynchronously (see mcp.Initialize).
 	//
@@ -346,6 +360,44 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 		MarkRunCompletePublished(ctx)
 	}
 	return result, originalErr
+}
+
+// fireSessionStartHooks fires lifecycle SessionStart hooks once per
+// session per process. Hooks are read from the live config at fire time
+// so config reloads pick up new registrations, mirroring how PreToolUse
+// hooks are rebuilt per run.
+func (c *coordinator) fireSessionStartHooks(sessionID string) {
+	c.sessionStartedMu.Lock()
+	if c.sessionsStarted == nil {
+		// Defensive init: NewCoordinator always initializes the map, but
+		// test helpers and embedders may construct a coordinator literal.
+		c.sessionsStarted = make(map[string]struct{})
+	}
+	if _, fired := c.sessionsStarted[sessionID]; fired {
+		c.sessionStartedMu.Unlock()
+		return
+	}
+	c.sessionsStarted[sessionID] = struct{}{}
+	c.sessionStartedMu.Unlock()
+
+	sessionHooks := c.cfg.Config().Hooks[hooks.EventSessionStart]
+	if len(sessionHooks) == 0 {
+		return
+	}
+	runner := hooks.NewRunner(sessionHooks, c.cfg.WorkingDir(), c.cfg.WorkingDir())
+	go func() {
+		// Background context: per-hook timeouts bound each runOne, and a
+		// parent cancellation mid-run must not abort reporting nudges
+		// like session identity. Decisions carry no blocking power here.
+		result := runner.RunLifecycle(context.Background(), hooks.EventSessionStart, sessionID)
+		if result.HookCount > 0 {
+			slog.Info(
+				"Session start hooks completed",
+				"session", sessionID,
+				"hooks", result.HookCount,
+			)
+		}
+	}()
 }
 
 // effectiveReasoningEffort returns the reasoning effort to apply for provider calls.

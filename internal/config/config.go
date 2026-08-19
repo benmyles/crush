@@ -665,7 +665,7 @@ type Config struct {
 
 	Tools Tools `json:"tools,omitzero" jsonschema:"description=Tool configurations"`
 
-	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
+	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse, SessionStart)"`
 
 	// Env is a map of environment variables set on startup.
 	Env map[string]string `json:"env,omitempty" jsonschema:"description=Environment variables to set on startup"`

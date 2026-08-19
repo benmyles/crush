@@ -220,9 +220,28 @@ option ui diff unified
 
 ## Hooks runtime
 
-Hooks are user-defined shell commands that fire on agent events. Currently only
-`PreToolUse` is supported, which runs before a tool executes. This behavior is
-the same however the hook is defined (`hook add` or JSON).
+Hooks are user-defined shell commands that fire on agent events:
+
+- `PreToolUse` runs before a tool executes.
+- `SessionStart` fires once per session per process, the first time the
+  session runs (fresh or resumed with `--continue` / `--session`). It runs
+  asynchronously, is informational only (cannot deny, halt, or rewrite), and
+  receives the common stdin payload without `tool_name`/`tool_input`.
+
+Event names are case-insensitive and accept snake_case: `PreToolUse`,
+`pretooluse`, `pre_tool_use`, `PRE_TOOL_USE`, `SessionStart`, and
+`session_start` all work. This behavior is the same however the hook is
+defined (`hook add` or JSON).
+
+### Hook fragments
+
+Integrations can register hooks without editing `crush.json` or `crushrc`:
+files named `*.json` directly under the global config dir's `hooks/`
+subdirectory (`~/.config/crush/hooks/`, or `$CRUSH_GLOBAL_CONFIG/hooks/`
+when set) are merged after every other config source at load and reload
+time, in sorted filename order. Each fragment carries the same shape as
+`crush.json`, typically just a `hooks` key, and its entries append to the
+user's own hook lists. Invalid fragments are skipped with a warning.
 
 ### How hooks work
 
@@ -233,7 +252,8 @@ the same however the hook is defined (`hook add` or JSON).
    variables**.
 
 Event names are case-insensitive and accept snake_case: `PreToolUse`,
-`pretooluse`, `pre_tool_use`, `PRE_TOOL_USE` all work.
+`pretooluse`, `pre_tool_use`, `PRE_TOOL_USE`, `SessionStart`, and
+`session_start` all work.
 
 ### Hook input (stdin)
 

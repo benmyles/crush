@@ -2,10 +2,16 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
@@ -589,4 +595,74 @@ func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
 	thinking, ok := parsed.ExtraBody["thinking"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "enabled", thinking["type"])
+}
+
+func TestSessionStartHooksFireOncePerSession(t *testing.T) {
+	// No t.Parallel(): config discovery is isolated via Setenv.
+	isolated := t.TempDir()
+	t.Setenv("HOME", isolated)
+	t.Setenv("USERPROFILE", isolated)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolated, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(isolated, ".local", "share"))
+
+	workDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "starts.log")
+	command := `echo "$CRUSH_SESSION_ID" >> "` + marker + `"`
+	cfgJSON, err := json.Marshal(map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{map[string]any{
+				"command": command,
+			}},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(workDir, "crush.json"), cfgJSON, 0o600))
+
+	store, err := config.Load(workDir, t.TempDir(), false)
+	require.NoError(t, err)
+	c := &coordinator{
+		cfg:             store,
+		sessionsStarted: make(map[string]struct{}),
+	}
+
+	c.fireSessionStartHooks("sess-1")
+	c.fireSessionStartHooks("sess-1")
+	c.fireSessionStartHooks("sess-2")
+
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(marker)
+		if err != nil {
+			return false
+		}
+		var sessions []string
+		for _, line := range strings.Split(string(data), "\n") {
+			if line != "" {
+				sessions = append(sessions, line)
+			}
+		}
+		if len(sessions) != 2 {
+			return false
+		}
+		slices.Sort(sessions)
+		return sessions[0] == "sess-1" && sessions[1] == "sess-2"
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestSessionStartHooksSkipWhenNoneConfigured(t *testing.T) {
+	isolated := t.TempDir()
+	t.Setenv("HOME", isolated)
+	t.Setenv("USERPROFILE", isolated)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolated, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(isolated, ".local", "share"))
+
+	store, err := config.Load(t.TempDir(), t.TempDir(), false)
+	require.NoError(t, err)
+	c := &coordinator{
+		cfg:             store,
+		sessionsStarted: make(map[string]struct{}),
+	}
+
+	// Must not panic; with no hooks configured this is a no-op.
+	c.fireSessionStartHooks("sess-1")
+	c.fireSessionStartHooks("sess-1")
 }

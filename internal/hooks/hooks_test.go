@@ -2,7 +2,10 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -754,4 +757,63 @@ func TestParseStdoutClaudeCodeFormat(t *testing.T) {
 		require.Equal(t, DecisionAllow, r.Decision)
 		require.Equal(t, "hello", r.Context)
 	})
+}
+
+func TestBuildLifecyclePayload(t *testing.T) {
+	t.Parallel()
+	payload := BuildLifecyclePayload(EventSessionStart, "sess-1", "/work")
+	s := string(payload)
+	require.Contains(t, s, `"event":"`+EventSessionStart+`"`)
+	require.Contains(t, s, `"session_id":"sess-1"`)
+	require.Contains(t, s, `"cwd":"/work"`)
+	require.NotContains(t, s, `tool_name`)
+	require.NotContains(t, s, `tool_input`)
+}
+
+func TestBuildLifecycleEnv(t *testing.T) {
+	t.Parallel()
+	env := BuildLifecycleEnv(EventSessionStart, "sess-1", "/work", "/proj")
+	joined := strings.Join(env, "\n")
+	require.Contains(t, joined, "CRUSH_EVENT="+EventSessionStart)
+	require.Contains(t, joined, "CRUSH_SESSION_ID=sess-1")
+	require.Contains(t, joined, "CRUSH_CWD=/work")
+	require.Contains(t, joined, "CRUSH_PROJECT_DIR=/proj")
+	require.NotContains(t, joined, "CRUSH_TOOL_NAME=")
+	require.NotContains(t, joined, "CRUSH_TOOL_INPUT_COMMAND=")
+}
+
+func TestRunnerRunLifecycle(t *testing.T) {
+	t.Parallel()
+	marker := filepath.Join(t.TempDir(), "fired.txt")
+	hookCfg := config.HookConfig{
+		Command: fmt.Sprintf(`echo "$CRUSH_EVENT|$CRUSH_SESSION_ID" >> %q`, marker),
+	}
+	r := NewRunner([]config.HookConfig{hookCfg}, t.TempDir(), t.TempDir())
+	result := r.RunLifecycle(context.Background(), EventSessionStart, "sess-9")
+	require.Equal(t, 1, result.HookCount)
+	data, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	require.Equal(t, "SessionStart|sess-9\n", string(data))
+}
+
+func TestRunnerRunLifecycleSkipsToolMatchers(t *testing.T) {
+	t.Parallel()
+	marker := filepath.Join(t.TempDir(), "fired.txt")
+	hookCfg := config.HookConfig{
+		Matcher: `^bash$`,
+		Command: fmt.Sprintf(`echo fired >> %q`, marker),
+	}
+	r := NewRunner([]config.HookConfig{hookCfg}, t.TempDir(), t.TempDir())
+	result := r.RunLifecycle(context.Background(), EventSessionStart, "sess-9")
+	require.Equal(t, 0, result.HookCount)
+	_, err := os.Stat(marker)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestRunnerRunLifecycleNoHooks(t *testing.T) {
+	t.Parallel()
+	r := NewRunner(nil, t.TempDir(), t.TempDir())
+	result := r.RunLifecycle(context.Background(), EventSessionStart, "sess-9")
+	require.Equal(t, DecisionNone, result.Decision)
+	require.Equal(t, 0, result.HookCount)
 }

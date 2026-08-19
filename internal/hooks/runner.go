@@ -92,7 +92,41 @@ func (r *Runner) Run(ctx context.Context, eventName, sessionID, toolName, toolIn
 	if len(matching) == 0 {
 		return AggregateResult{Decision: DecisionNone}, nil
 	}
+	return r.runMatching(ctx, eventName, sessionID, toolName, toolInputJSON, matching)
+}
 
+// RunLifecycle executes hooks for a lifecycle event (e.g. SessionStart)
+// that has no tool associated with it. Matching runs against the empty
+// tool name, which in practice means matcher-less hooks fire and
+// tool-name matchers do not.
+//
+// Decisions are collected but informational only; lifecycle hooks cannot
+// block or rewrite anything. Failures are logged and never surfaced to
+// the caller.
+func (r *Runner) RunLifecycle(ctx context.Context, eventName, sessionID string) AggregateResult {
+	matching := r.matchingHooks("")
+	if len(matching) == 0 {
+		return AggregateResult{Decision: DecisionNone}
+	}
+	result, err := r.runMatching(ctx, eventName, sessionID, "", "", matching)
+	if err != nil {
+		slog.Warn(
+			"Lifecycle hook execution error",
+			"event", eventName,
+			"error", err,
+		)
+	}
+	return result
+}
+
+// runMatching executes the pre-filtered matching hooks for an event,
+// sharing the dedupe, env, payload, and aggregation pipeline between tool
+// events and lifecycle events.
+func (r *Runner) runMatching(
+	ctx context.Context,
+	eventName, sessionID, toolName, toolInputJSON string,
+	matching []config.HookConfig,
+) (AggregateResult, error) {
 	// Deduplicate by command string.
 	seen := make(map[string]bool, len(matching))
 	var deduped []config.HookConfig
@@ -104,8 +138,15 @@ func (r *Runner) Run(ctx context.Context, eventName, sessionID, toolName, toolIn
 		deduped = append(deduped, h)
 	}
 
-	envVars := BuildEnv(eventName, toolName, sessionID, r.cwd, r.projectDir, toolInputJSON)
-	payload := BuildPayload(eventName, sessionID, r.cwd, toolName, toolInputJSON)
+	var envVars []string
+	var payload []byte
+	if toolName == "" {
+		envVars = BuildLifecycleEnv(eventName, sessionID, r.cwd, r.projectDir)
+		payload = BuildLifecyclePayload(eventName, sessionID, r.cwd)
+	} else {
+		envVars = BuildEnv(eventName, toolName, sessionID, r.cwd, r.projectDir, toolInputJSON)
+		payload = BuildPayload(eventName, sessionID, r.cwd, toolName, toolInputJSON)
+	}
 
 	results := make([]HookResult, len(deduped))
 	var wg sync.WaitGroup

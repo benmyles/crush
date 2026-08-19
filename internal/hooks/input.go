@@ -28,6 +28,29 @@ type Payload struct {
 	ToolInput json.RawMessage `json:"tool_input"`
 }
 
+// LifecyclePayload is the JSON structure piped to hooks for lifecycle
+// events (e.g. SessionStart) that have no tool associated with them.
+type LifecyclePayload struct {
+	Event     string `json:"event"`
+	SessionID string `json:"session_id"`
+	CWD       string `json:"cwd"`
+}
+
+// BuildLifecyclePayload constructs the JSON stdin payload for a
+// lifecycle hook command.
+func BuildLifecyclePayload(eventName, sessionID, cwd string) []byte {
+	p := LifecyclePayload{
+		Event:     eventName,
+		SessionID: sessionID,
+		CWD:       cwd,
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		return []byte("{}")
+	}
+	return data
+}
+
 // BuildPayload constructs the JSON stdin payload for a hook command.
 func BuildPayload(eventName, sessionID, cwd, toolName, toolInputJSON string) []byte {
 	toolInput := json.RawMessage(toolInputJSON)
@@ -72,6 +95,22 @@ func BuildEnv(eventName, toolName, sessionID, cwd, projectDir, toolInputJSON str
 		}
 	}
 
+	return env
+}
+
+// BuildLifecycleEnv constructs the environment variable slice for a
+// lifecycle hook command. It includes all current process env vars plus
+// hook-specific ones. Lifecycle events have no tool name or tool input.
+func BuildLifecycleEnv(eventName, sessionID, cwd, projectDir string) []string {
+	env := os.Environ()
+	env = append(env, shell.CrushEnvMarkers()...)
+	env = append(
+		env,
+		fmt.Sprintf("CRUSH_EVENT=%s", eventName),
+		fmt.Sprintf("CRUSH_SESSION_ID=%s", sessionID),
+		fmt.Sprintf("CRUSH_CWD=%s", cwd),
+		fmt.Sprintf("CRUSH_PROJECT_DIR=%s", projectDir),
+	)
 	return env
 }
 

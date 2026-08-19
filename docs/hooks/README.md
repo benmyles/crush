@@ -17,7 +17,7 @@ forward.
 - Hooks are Claude Code-compatible
 - Crush ships with a builtin `crush-hook` skill write, edit, and configure
   hooks; just tell Crush how to configure Crush
-- Crush currently supports just one hook, `PreToolUse`, with plans to support
+- Crush supports `PreToolUse` and `SessionStart`, with plans to support
   the full gamut; please let us know which hooks you'd like to see next
 - Hooks run in parallel for speed, but their results compose in config order
   for determinism
@@ -176,8 +176,6 @@ wins when rewriting input, but first deny wins when blocking.
 
 ## Events
 
-Here are the events you can hook into (spoiler: there's currently just one):
-
 ### PreToolUse
 
 This hook fires before every tool call. Use it to block dangerous commands,
@@ -189,7 +187,8 @@ stuff, and so on.
 
 > [!NOTE]
 > Event names are case insensitive and snake-caseable, so `PreToolUse`,
-> `pretooluse`, `PRETOOLUSE`, `pre_tool_use`, and `PRE_TOOL_USE` all work.
+> `pretooluse`, `PRETOOLUSE`, `pre_tool_use`, and `PRE_TOOL_USE` all work,
+> as do `SessionStart` and `session_start`.
 
 **Scope**: `PreToolUse` only fires on the **top-level agent's** tool calls.
 Sub-agents (the `agent` task tool, `agentic_fetch`, etc.) run without hook
@@ -199,6 +198,51 @@ agent spawn sub-agents" still works.
 
 Hooks are keyed by event name. Only `command` is required, and you can omit
 `matcher` to match all tools.
+
+### SessionStart
+
+This lifecycle hook fires the first time a session runs in each Crush process.
+It covers both fresh sessions and resumed ones (`crush --continue`,
+`crush --session <id>`), and fires exactly once per session per process, so
+resuming a conversation mid-way does not re-announce its start.
+
+**Matched against**: the empty tool name. In practice this means matcher-less
+hooks fire and tool-name matchers do not.
+
+**Payload**: `SessionStart` hooks receive the common stdin payload only (no
+`tool_name` or `tool_input`) and the `CRUSH_EVENT`, `CRUSH_SESSION_ID`,
+`CRUSH_CWD`, and `CRUSH_PROJECT_DIR` environment variables without the
+tool-specific `CRUSH_TOOL_NAME` / `CRUSH_TOOL_INPUT_*` ones.
+
+**Decisions**: lifecycle hooks run asynchronously and are informational only.
+They cannot `deny`, `halt`, or rewrite input, and they cannot block the run;
+failures are logged and never surfaced. Per-hook `timeout` still applies.
+
+## Hook fragments
+
+Configuring a hook normally means editing `crush.json` or `crushrc`.
+Integrations can register hooks without touching either: files named `*.json`
+directly under the **global config dir's** `hooks/` subdirectory
+(`~/.config/crush/hooks/`, or `$CRUSH_GLOBAL_CONFIG/hooks/` when that is set)
+are merged after every other config source at load and reload time, in sorted
+filename order.
+
+A fragment carries the same shape as `crush.json`, typically just a `hooks`
+key:
+
+```jsonc
+{
+  "hooks": {
+    "SessionStart": [
+      {"name": "herdr-session-identity", "command": "'/abs/path/hook.sh' session", "timeout": 10}
+    ],
+  },
+}
+```
+
+Fragment hook entries append to the same event lists the user's own config
+defines. Fragments that cannot be read or parsed are skipped with a warning at
+load time; integrations should remove their fragment files on uninstall.
 
 ## Building Hooks
 
