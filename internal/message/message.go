@@ -54,6 +54,11 @@ type Service interface {
 	GetLastAssistantMessage(ctx context.Context, sessionID string) (Message, error)
 	Delete(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
+	// Truncate deletes the message with the given ID and every message
+	// after it in the session, returning the deleted messages in
+	// session order. The target message must be a user message: rewinds
+	// can only start from a user turn.
+	Truncate(ctx context.Context, sessionID, messageID string) ([]Message, error)
 
 	// Flush synchronously drains any pending debounced state for the
 	// given message ID, performs the SQL write, and publishes the
@@ -144,8 +149,16 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	// Drop any pending coalesced state for this ID. We never want to
-	// flush back over a deleted row.
+	s.dropPending(id)
+	// Clone the message before publishing to avoid race conditions with
+	// concurrent modifications to the Parts slice.
+	s.Publish(pubsub.DeletedEvent, message.Clone())
+	return nil
+}
+
+// dropPending discards any pending coalesced state for the given
+// message ID. We never want to flush back over a deleted row.
+func (s *service) dropPending(id string) {
 	s.mu.Lock()
 	if p, ok := s.pending[id]; ok {
 		if p.timer != nil {
@@ -154,10 +167,51 @@ func (s *service) Delete(ctx context.Context, id string) error {
 		delete(s.pending, id)
 	}
 	s.mu.Unlock()
-	// Clone the message before publishing to avoid race conditions with
-	// concurrent modifications to the Parts slice.
-	s.Publish(pubsub.DeletedEvent, message.Clone())
-	return nil
+}
+
+// Truncate implements [Service.Truncate]. The truncation point is
+// resolved against the raw SQL list (pending buffered state is flushed
+// first so the in-memory and on-disk orders agree); every message at
+// and after the target is deleted. A single SQL statement removes the
+// rows so the cut is atomic on disk, then the per-message bookkeeping
+// (pending buffers, deleted events) is applied in order.
+func (s *service) Truncate(ctx context.Context, sessionID, messageID string) ([]Message, error) {
+	if err := s.FlushAll(ctx); err != nil {
+		return nil, fmt.Errorf("failed to flush message updates before truncation: %w", err)
+	}
+	messages, err := s.List(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list messages for truncation: %w", err)
+	}
+	cut := -1
+	for i, m := range messages {
+		if m.ID == messageID {
+			cut = i
+			break
+		}
+	}
+	if cut < 0 {
+		return nil, fmt.Errorf("message %q not found in session %q", messageID, sessionID)
+	}
+	if messages[cut].Role != User {
+		return nil, fmt.Errorf("cannot truncate at message %q: only user messages can be a rewind point", messageID)
+	}
+	deleted := messages[cut:]
+	if err := s.q.DeleteMessagesFrom(ctx, db.DeleteMessagesFromParams{
+		SessionID: sessionID,
+		ID:        messageID,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to delete messages: %w", err)
+	}
+	cloned := make([]Message, len(deleted))
+	for i, m := range deleted {
+		s.dropPending(m.ID)
+		cloned[i] = m.Clone()
+	}
+	for i := range cloned {
+		s.Publish(pubsub.DeletedEvent, cloned[i])
+	}
+	return cloned, nil
 }
 
 func (s *service) Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {

@@ -14,8 +14,11 @@ type Querier interface {
 	CreateFile(ctx context.Context, arg CreateFileParams) (File, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	DeleteCompactionCausalityBySession(ctx context.Context, sessionID string) error
+	DeleteCompactionSummariesBySession(ctx context.Context, sessionID string) error
 	DeleteFile(ctx context.Context, id string) error
 	DeleteMessage(ctx context.Context, id string) error
+	DeleteMessagesFrom(ctx context.Context, arg DeleteMessagesFromParams) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionFiles(ctx context.Context, sessionID string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error

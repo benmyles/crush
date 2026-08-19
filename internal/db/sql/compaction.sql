@@ -33,6 +33,14 @@ FROM compaction_summaries
 WHERE session_id = ?
 ORDER BY created_at ASC;
 
+-- name: DeleteCompactionSummariesBySession :exec
+DELETE FROM compaction_summaries
+WHERE session_id = ?;
+
+-- name: DeleteCompactionCausalityBySession :exec
+DELETE FROM compaction_causality
+WHERE session_id = ?;
+
 -- name: GetActiveCompactionSummary :one
 SELECT s.*
 FROM compaction_summaries s

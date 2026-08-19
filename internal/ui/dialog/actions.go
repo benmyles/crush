@@ -91,6 +91,18 @@ type (
 	ActionCompact struct {
 		SessionID string
 	}
+	// ActionRewind requests a rewind at the selected user message. The
+	// UI shows a confirmation dialog before any messages are deleted.
+	ActionRewind struct {
+		SessionID string
+		MessageID string
+	}
+	// ActionRewindConfirmed is sent by the rewind confirmation dialog
+	// when the user approves the truncation.
+	ActionRewindConfirmed struct {
+		SessionID string
+		MessageID string
+	}
 	// ActionSelectReasoningEffort is a message indicating a reasoning effort
 	// has been selected.
 	ActionSelectReasoningEffort struct {

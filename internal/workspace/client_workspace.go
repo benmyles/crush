@@ -320,6 +320,10 @@ func (w *ClientWorkspace) AgentCompact(ctx context.Context, sessionID string) er
 	return w.client.AgentSummarizeSession(ctx, w.workspaceID(), sessionID)
 }
 
+func (w *ClientWorkspace) RewindSession(ctx context.Context, sessionID, messageID string) error {
+	return w.client.RewindSession(ctx, w.workspaceID(), sessionID, messageID)
+}
+
 func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.client.UpdateAgent(ctx, w.workspaceID())
 }

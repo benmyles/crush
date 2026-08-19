@@ -158,6 +158,9 @@ type Workspace interface {
 	// (/compact); it errors when the engine is disabled instead of
 	// falling back to summarize.
 	AgentCompact(ctx context.Context, sessionID string) error
+	// RewindSession truncates a session at the given user message,
+	// deleting that message and everything after it.
+	RewindSession(ctx context.Context, sessionID, messageID string) error
 	UpdateAgentModel(ctx context.Context) error
 	InitCoderAgent(ctx context.Context) error
 	InitCoderAgentNonInteractive(ctx context.Context) error

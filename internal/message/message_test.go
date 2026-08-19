@@ -332,6 +332,87 @@ func TestDelete_DropsPendingState(t *testing.T) {
 	require.Error(t, err, "deleted message must remain deleted")
 }
 
+func TestTruncate_DeletesTargetAndEverythingAfter(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t)
+
+	create := func(role MessageRole) Message {
+		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: role})
+		require.NoError(t, err)
+		return msg
+	}
+	u1 := create(User)
+	a1 := create(Assistant)
+	u2 := create(User)
+	a2 := create(Assistant)
+
+	subCtx, cancelSub := context.WithCancel(t.Context())
+	defer cancelSub()
+	collector := collect(subCtx, svc.Subscribe(subCtx))
+	time.Sleep(5 * time.Millisecond)
+	collector.reset()
+
+	deleted, err := svc.Truncate(t.Context(), sessionID, u2.ID)
+	require.NoError(t, err)
+	require.Len(t, deleted, 2)
+	require.Equal(t, u2.ID, deleted[0].ID)
+	require.Equal(t, a2.ID, deleted[1].ID)
+
+	remaining, err := svc.List(t.Context(), sessionID)
+	require.NoError(t, err)
+	require.Len(t, remaining, 2)
+	require.Equal(t, u1.ID, remaining[0].ID)
+	require.Equal(t, a1.ID, remaining[1].ID)
+
+	// Every deleted message must publish a DeletedEvent in session order.
+	events := collector.snapshot()
+	require.Len(t, events, 2)
+	for i, ev := range events {
+		require.Equal(t, pubsub.DeletedEvent, ev.Type)
+		require.Equal(t, deleted[i].ID, ev.Payload.ID)
+	}
+}
+
+func TestTruncate_RejectsUnknownMessage(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t)
+	create := func(role MessageRole) Message {
+		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: role})
+		require.NoError(t, err)
+		return msg
+	}
+	create(User)
+
+	_, err := svc.Truncate(t.Context(), sessionID, "not-a-real-id")
+	require.Error(t, err)
+
+	remaining, err := svc.List(t.Context(), sessionID)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1, "failed truncation must not delete anything")
+}
+
+func TestTruncate_RejectsNonUserTarget(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t)
+	create := func(role MessageRole) Message {
+		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: role})
+		require.NoError(t, err)
+		return msg
+	}
+	create(User)
+	assistant := create(Assistant)
+
+	_, err := svc.Truncate(t.Context(), sessionID, assistant.ID)
+	require.Error(t, err)
+
+	remaining, err := svc.List(t.Context(), sessionID)
+	require.NoError(t, err)
+	require.Len(t, remaining, 2, "rejected truncation must not delete anything")
+}
+
 func TestBroker_PublishLossyDropCounter(t *testing.T) {
 	t.Parallel()
 

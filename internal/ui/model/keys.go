@@ -47,6 +47,7 @@ type KeyMap struct {
 		Copy           key.Binding
 		ClearHighlight key.Binding
 		Expand         key.Binding
+		Rewind         key.Binding
 		ScrollLeft     key.Binding
 		ScrollRight    key.Binding
 		FocusSidebar   key.Binding
@@ -252,6 +253,10 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.Expand = key.NewBinding(
 		key.WithKeys("space"),
 		key.WithHelp("space", "expand/collapse"),
+	)
+	km.Chat.Rewind = key.NewBinding(
+		key.WithKeys("ctrl+r"),
+		key.WithHelp("ctrl+r", "rewind here"),
 	)
 	km.Chat.ScrollLeft = key.NewBinding(
 		key.WithKeys("shift+left", "H"),

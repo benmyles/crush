@@ -141,6 +141,26 @@ func (q *Queries) CreateCompactionSummary(ctx context.Context, arg CreateCompact
 	return i, err
 }
 
+const deleteCompactionCausalityBySession = `-- name: DeleteCompactionCausalityBySession :exec
+DELETE FROM compaction_causality
+WHERE session_id = ?
+`
+
+func (q *Queries) DeleteCompactionCausalityBySession(ctx context.Context, sessionID string) error {
+	_, err := q.exec(ctx, q.deleteCompactionCausalityBySessionStmt, deleteCompactionCausalityBySession, sessionID)
+	return err
+}
+
+const deleteCompactionSummariesBySession = `-- name: DeleteCompactionSummariesBySession :exec
+DELETE FROM compaction_summaries
+WHERE session_id = ?
+`
+
+func (q *Queries) DeleteCompactionSummariesBySession(ctx context.Context, sessionID string) error {
+	_, err := q.exec(ctx, q.deleteCompactionSummariesBySessionStmt, deleteCompactionSummariesBySession, sessionID)
+	return err
+}
+
 const getActiveCompactionSummary = `-- name: GetActiveCompactionSummary :one
 SELECT s.id, s.session_id, s.parent_ids, s.covered_start, s.covered_end, s.first_retained_message_id, s.kind, s.level, s.summary_text, s.layout, s.checkpoint, s.token_count, s.model_provider, s.model_id, s.reasoning, s.covered_message_ids, s.created_at
 FROM compaction_summaries s

@@ -112,6 +112,11 @@ type Coordinator interface {
 	// Compact runs the context compaction engine explicitly (/compact);
 	// it errors when the engine is disabled instead of falling back.
 	Compact(context.Context, string) error
+	// Truncate rewinds a session to the given user message: it deletes
+	// that message and everything after it, and resets any compression
+	// state (legacy summary pointer or compaction-engine summaries) that
+	// referenced the deleted messages.
+	Truncate(context.Context, string, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	GenerateTitle(ctx context.Context, sessionID, prompt string)
@@ -1455,6 +1460,74 @@ func (c *coordinator) GenerateTitle(ctx context.Context, sessionID, prompt strin
 		return
 	}
 	c.currentAgent.GenerateTitle(ctx, sessionID, prompt)
+}
+
+// Truncate implements [Coordinator.Truncate]. After the message store
+// drops the cut, any compression state that anchored on a deleted
+// message is reset so the next prompt reload sees a consistent
+// history: the legacy summary pointer is cleared when the summary
+// message itself was deleted, and the compaction engine's summaries
+// are removed when the active summary's retained-tail anchor no
+// longer exists (or predates that anchor's introduction).
+func (c *coordinator) Truncate(ctx context.Context, sessionID, messageID string) error {
+	deleted, err := c.messages.Truncate(ctx, sessionID, messageID)
+	if err != nil {
+		return err
+	}
+
+	// Legacy single-shot summarization keeps a pointer at the summary
+	// message. If the rewind deleted that message, drop the pointer so
+	// the next prompt starts from the raw history.
+	sess, err := c.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to load session after truncation: %w", err)
+	}
+	if sess.SummaryMessageID != "" {
+		for _, m := range deleted {
+			if m.ID == sess.SummaryMessageID {
+				sess.SummaryMessageID = ""
+				if _, err := c.sessions.Save(ctx, sess); err != nil {
+					return fmt.Errorf("failed to clear session summary pointer: %w", err)
+				}
+				break
+			}
+		}
+	}
+
+	// The compaction engine resolves its retained tail by message ID.
+	// If the anchor message was deleted (or the active summary predates
+	// the anchor column), the summary DAG no longer lines up with the
+	// store: clear the active pointer and drop the engine state so the
+	// session recompacts cleanly from raw history.
+	active, err := c.querier.GetActiveCompactionSummary(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("failed to load active compaction summary: %w", err)
+	}
+	impacted := !active.FirstRetainedMessageID.Valid || active.FirstRetainedMessageID.String == ""
+	if !impacted {
+		if _, err := c.messages.Get(ctx, active.FirstRetainedMessageID.String); err != nil {
+			impacted = true
+		}
+	}
+	if !impacted {
+		return nil
+	}
+	if err := c.querier.UpdateSessionCompaction(ctx, db.UpdateSessionCompactionParams{
+		ActiveSummaryID: sql.NullString{},
+		ID:              sessionID,
+	}); err != nil {
+		return fmt.Errorf("failed to reset active compaction summary: %w", err)
+	}
+	if err := c.querier.DeleteCompactionSummariesBySession(ctx, sessionID); err != nil {
+		return fmt.Errorf("failed to delete stale compaction summaries: %w", err)
+	}
+	if err := c.querier.DeleteCompactionCausalityBySession(ctx, sessionID); err != nil {
+		return fmt.Errorf("failed to delete stale compaction causality: %w", err)
+	}
+	return nil
 }
 
 // refreshTokenIfExpired proactively refreshes the OAuth token if it has expired.

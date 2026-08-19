@@ -50,10 +50,11 @@ func (s *stubCoordinator) ClearQueue(string)                 {}
 func (s *stubCoordinator) Summarize(context.Context, string) error {
 	return nil
 }
-func (s *stubCoordinator) Compact(context.Context, string) error         { return nil }
-func (s *stubCoordinator) Model() agent.Model                            { return agent.Model{} }
-func (s *stubCoordinator) UpdateModels(context.Context) error            { return nil }
-func (s *stubCoordinator) GenerateTitle(context.Context, string, string) {}
+func (s *stubCoordinator) Compact(context.Context, string) error          { return nil }
+func (s *stubCoordinator) Truncate(context.Context, string, string) error { return nil }
+func (s *stubCoordinator) Model() agent.Model                             { return agent.Model{} }
+func (s *stubCoordinator) UpdateModels(context.Context) error             { return nil }
+func (s *stubCoordinator) GenerateTitle(context.Context, string, string)  {}
 
 // stubSessions is a minimal session.Service that returns a fixed list
 // (and supports Get by ID). All other methods return zero values; the

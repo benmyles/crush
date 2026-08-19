@@ -59,6 +59,10 @@ type Commands struct {
 	hasQueue   bool
 	selected   CommandType
 
+	// rewindMessageID, when set, adds a "resume from here" command that
+	// truncates the session at the selected user message.
+	rewindMessageID string
+
 	spinner spinner.Model
 	loading bool
 
@@ -154,6 +158,19 @@ func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, has
 // ID implements Dialog.
 func (c *Commands) ID() string {
 	return CommandsID
+}
+
+// SetRewindMessage enables or removes the "resume from here" command.
+// Pass a non-empty message ID to offer the command against that user
+// message; pass "" to remove it.
+func (c *Commands) SetRewindMessage(messageID string) {
+	if c.rewindMessageID == messageID {
+		return
+	}
+	c.rewindMessageID = messageID
+	if c.selected == SystemCommands {
+		c.setCommandItems(c.selected)
+	}
 }
 
 // HandleMsg implements [Dialog].
@@ -491,6 +508,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		commands = append(commands,
 			NewCommandItem(c.com.Styles, "compact", "Compact Session", "", ActionCompact{SessionID: c.sessionID}),
 			NewCommandItem(c.com.Styles, "summarize", "Summarize Session", "", ActionSummarize{SessionID: c.sessionID}),
+		)
+	}
+
+	// Only offer the rewind command when a user message is selected.
+	if c.hasSession && c.rewindMessageID != "" {
+		commands = append(commands,
+			NewCommandItem(c.com.Styles, "rewind", "Resume From Here", "", ActionRewind{SessionID: c.sessionID, MessageID: c.rewindMessageID}),
 		)
 	}
 

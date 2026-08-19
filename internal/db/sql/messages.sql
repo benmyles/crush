@@ -38,6 +38,11 @@ WHERE id = ?;
 DELETE FROM messages
 WHERE id = ?;
 
+-- name: DeleteMessagesFrom :exec
+DELETE FROM messages
+WHERE messages.session_id = ?1
+  AND messages.rowid >= (SELECT m.rowid FROM messages m WHERE m.id = ?2);
+
 -- name: DeleteSessionMessages :exec
 DELETE FROM messages
 WHERE session_id = ?;

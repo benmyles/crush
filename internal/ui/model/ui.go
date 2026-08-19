@@ -156,6 +156,13 @@ type (
 	// closeDialogMsg is sent to close the current dialog.
 	closeDialogMsg struct{}
 
+	// rewindSuccessMsg is sent after a session rewind completes. It
+	// carries the deleted user message's text so it can be moved back
+	// into the prompt.
+	rewindSuccessMsg struct {
+		text string
+	}
+
 	// hyperRefreshDoneMsg is sent after a silent Hyper OAuth refresh
 	// finishes. It carries the original model-selection action so the
 	// selection can be resumed.
@@ -871,6 +878,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case closeDialogMsg:
 		m.dialog.CloseFrontDialog()
+
+	case rewindSuccessMsg:
+		m.textarea.SetValue(msg.text)
+		m.focus = uiFocusEditor
+		cmds = append(cmds, m.textarea.Focus())
+		m.chat.Blur()
+		if cmd := m.chat.ScrollToBottomAndSelectLast(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case pubsub.Event[session.Session]:
 		if msg.Type == pubsub.DeletedEvent {
@@ -1963,6 +1979,39 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return nil
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionRewind:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before rewinding session..."))
+			break
+		}
+		m.dialog.CloseDialog(dialog.CommandsID)
+		idx := m.chat.IndexOf(msg.MessageID)
+		if idx < 0 {
+			cmds = append(cmds, util.ReportWarn("That message is no longer part of this session"))
+			break
+		}
+		m.dialog.OpenDialog(dialog.NewRewind(m.com, msg.SessionID, msg.MessageID, m.chat.Len()-idx))
+	case dialog.ActionRewindConfirmed:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before rewinding session..."))
+			break
+		}
+		// Capture the message text before the truncation lands; the
+		// deleted events will remove the item from the chat.
+		var prefill string
+		if item := m.chat.MessageItem(msg.MessageID); item != nil {
+			if um, ok := item.(*chat.UserMessageItem); ok {
+				prefill = um.Message().Content().Text
+			}
+		}
+		cmds = append(cmds, func() tea.Msg {
+			err := m.com.Workspace.RewindSession(context.Background(), msg.SessionID, msg.MessageID)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+			return rewindSuccessMsg{text: prefill}
+		})
+		m.dialog.CloseDialog(dialog.RewindID)
 	case dialog.ActionToggleHelp:
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -2871,6 +2920,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 			case key.Matches(msg, m.keyMap.Chat.Expand):
 				m.chat.ToggleExpandedSelectedItem()
+			case key.Matches(msg, m.keyMap.Chat.Rewind):
+				if cmd, ok := m.openRewindConfirm(); ok {
+					cmds = append(cmds, cmd)
+				}
 			case key.Matches(msg, m.keyMap.Chat.Up):
 				if cmd := m.chat.ScrollByAndAnimate(-1); cmd != nil {
 					cmds = append(cmds, cmd)
@@ -3403,6 +3456,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 				[]key.Binding{
 					k.Chat.Copy,
 					k.Chat.ClearHighlight,
+					k.Chat.Rewind,
 				},
 			)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
@@ -4595,10 +4649,40 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 	if err != nil {
 		return util.ReportError(err)
 	}
+	if item := m.chat.SelectedItem(); item != nil {
+		if um, ok := item.(*chat.UserMessageItem); ok {
+			commands.SetRewindMessage(um.ID())
+		}
+	}
 
 	m.dialog.OpenDialog(commands)
 
 	return commands.InitialCmd()
+}
+
+// openRewindConfirm opens the rewind confirmation dialog when the chat
+// selection is a rewritable user message. It reports handled=false
+// when no dialog was opened so callers can fall through to global key
+// handling.
+func (m *UI) openRewindConfirm() (tea.Cmd, bool) {
+	if !m.hasSession() {
+		return nil, false
+	}
+	if m.isAgentBusy() {
+		return util.ReportWarn("Agent is busy, please wait before rewinding session..."), true
+	}
+	item := m.chat.SelectedItem()
+	um, ok := item.(*chat.UserMessageItem)
+	if !ok {
+		return util.ReportWarn("Select a user message to rewind the conversation from"), true
+	}
+	selected := m.chat.SelectedIndex()
+	if selected < 0 || um.ID() == "" {
+		return nil, false
+	}
+	deleteCount := m.chat.Len() - selected
+	m.dialog.OpenDialog(dialog.NewRewind(m.com, m.session.ID, um.ID(), deleteCount))
+	return nil, true
 }
 
 // openReasoningDialog opens the reasoning effort dialog.

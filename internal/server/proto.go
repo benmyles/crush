@@ -949,6 +949,45 @@ func (c *controllerV1) handlePostWorkspaceAgentSessionSummarize(w http.ResponseW
 	w.WriteHeader(http.StatusOK)
 }
 
+type rewindSessionRequest struct {
+	MessageID string `json:"message_id"`
+}
+
+// handlePostWorkspaceAgentSessionRewind truncates a session at the
+// given user message.
+//
+//	@Summary		Rewind session
+//	@Tags			agent
+//	@Accept			json
+//	@Param			id		path	string					true	"Workspace ID"
+//	@Param			sid		path	string					true	"Session ID"
+//	@Param			request	body	rewindSessionRequest	true	"Rewind target"
+//	@Success		200
+//	@Failure		400		{object}	proto.Error
+//	@Failure		404		{object}	proto.Error
+//	@Failure		500		{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/rewind [post]
+func (c *controllerV1) handlePostWorkspaceAgentSessionRewind(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+
+	var req rewindSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+	if req.MessageID == "" {
+		jsonError(w, http.StatusBadRequest, "message_id is required")
+		return
+	}
+	if err := c.backend.RewindSession(r.Context(), id, sid, req.MessageID); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // handlePostWorkspaceAgentSessionShell runs a shell command in the workspace.
 //
 //	@Summary		Run shell command

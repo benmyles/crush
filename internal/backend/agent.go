@@ -192,6 +192,21 @@ func (b *Backend) SummarizeSession(ctx context.Context, workspaceID, sessionID s
 	return ws.AgentCoordinator.Summarize(ctx, sessionID)
 }
 
+// RewindSession truncates a session at the given user message,
+// deleting it and everything after it.
+func (b *Backend) RewindSession(ctx context.Context, workspaceID, sessionID, messageID string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	if ws.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+
+	return ws.AgentCoordinator.Truncate(ctx, sessionID, messageID)
+}
+
 // QueuedPrompts returns the number of queued prompts for the session.
 func (b *Backend) QueuedPrompts(workspaceID, sessionID string) (int, error) {
 	ws, err := b.GetWorkspace(workspaceID)

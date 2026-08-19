@@ -573,6 +573,21 @@ func (c *Client) AgentSummarizeSession(ctx context.Context, id string, sessionID
 	return nil
 }
 
+// RewindSession truncates a session at the given user message,
+// deleting it and everything after it.
+func (c *Client) RewindSession(ctx context.Context, id string, sessionID string, messageID string) error {
+	body := jsonBody(map[string]string{"message_id": messageID})
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/rewind", id, sessionID), nil, body, http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to rewind session: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to rewind session: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
 // InitiateAgentProcessing triggers agent initialization on the server.
 func (c *Client) InitiateAgentProcessing(ctx context.Context, id string, interactive bool) error {
 	body := jsonBody(proto.AgentInitRequest{Interactive: interactive})

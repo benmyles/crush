@@ -233,6 +233,13 @@ func (w *AppWorkspace) AgentCompact(ctx context.Context, sessionID string) error
 	return w.app.AgentCoordinator.Compact(ctx, sessionID)
 }
 
+func (w *AppWorkspace) RewindSession(ctx context.Context, sessionID, messageID string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.Truncate(ctx, sessionID, messageID)
+}
+
 func (w *AppWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.app.UpdateAgentModel(ctx)
 }
