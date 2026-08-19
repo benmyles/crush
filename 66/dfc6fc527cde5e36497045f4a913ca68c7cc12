@@ -1,0 +1,23 @@
+internal/ui/model/compact_live_test.go
+  s_9829ab33b248cf::t_738e70246cd694 1-118
+internal/ui/model/pill_border_test.go
+  s_9829ab33b248cf::t_676d6de7ff9e11 8,104-118
+internal/ui/styles/themes.go
+  s_9829ab33b248cf::t_c6f8ffceecb854 100-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "66dfc6fc527cde5e36497045f4a913ca68c7cc12",
+  "prompts": {},
+  "sessions": {
+    "s_9829ab33b248cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e82ef020-5527-4337-9925-d675c6f720a7",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
