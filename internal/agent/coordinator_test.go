@@ -17,6 +17,7 @@ import (
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
 	"charm.land/fantasy/providers/openaicompat"
+	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,6 +71,9 @@ func (m *mockSessionAgent) MapCompleter() func(context.Context, string) (string,
 }
 func (m *mockSessionAgent) RequestCompaction(string, string) {}
 func (m *mockSessionAgent) HasCompactionRequest(string) bool { return false }
+func (m *mockSessionAgent) CompactionStatus(context.Context, string) (tools.CompactContextStatus, error) {
+	return tools.CompactContextStatus{}, nil
+}
 
 // newTestCoordinator creates a minimal coordinator for unit testing runSubAgent.
 func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCfg config.ProviderConfig) *coordinator {

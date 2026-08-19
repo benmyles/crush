@@ -190,6 +190,10 @@ type SessionAgent interface {
 	RequestCompaction(sessionID, instructions string)
 	// HasCompactionRequest reports whether a compaction request is pending.
 	HasCompactionRequest(sessionID string) bool
+	// CompactionStatus reports current context usage and the soft compaction
+	// threshold, used by the compact_context tool to decline requests made
+	// below the soft threshold (see tools.CompactContextStatus).
+	CompactionStatus(ctx context.Context, sessionID string) (tools.CompactContextStatus, error)
 }
 
 type Model struct {
@@ -2722,6 +2726,33 @@ func (a *sessionAgent) CancelAll() {
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
+}
+
+// CompactionStatus reports the session's current context usage and the soft
+// compaction threshold, mirroring the automatic trigger policy used between
+// steps (see the StopWhen condition in Run). A zero ContextWindow means the
+// window is unknown, in which case SoftThresholdTokens is also zero and the
+// caller should honor an explicit compaction request unconditionally.
+func (a *sessionAgent) CompactionStatus(ctx context.Context, sessionID string) (tools.CompactContextStatus, error) {
+	status := tools.CompactContextStatus{}
+	window := int64(a.largeModel.Get().CatwalkCfg.ContextWindow)
+	status.ContextWindow = window
+	if window > 0 {
+		fraction := 0.7
+		if a.cfg != nil {
+			fraction = config.ResolveCompactionConfig(a.cfg.Config()).SoftThresholdFraction
+		}
+		if fraction <= 0 {
+			fraction = 0.7
+		}
+		status.SoftThresholdTokens = int64(float64(window) * fraction)
+	}
+	currentSession, err := a.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return status, fmt.Errorf("failed to get session: %w", err)
+	}
+	status.UsageTokens = currentSession.PromptTokens + currentSession.CompletionTokens
+	return status, nil
 }
 
 // RequestCompaction sets a per-session flag requesting compaction at the next

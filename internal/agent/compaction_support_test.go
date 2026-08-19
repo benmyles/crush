@@ -58,6 +58,33 @@ func TestCompactionLimits_ClampToWindow(t *testing.T) {
 	require.Equal(t, int64(16384), reserve)
 }
 
+// TestCompactionStatus_SoftThreshold pins the CompactionStatus contract used
+// by the compact_context tool: the soft threshold is the configured fraction
+// of the model window (0.7 by default) and the usage is the session's
+// accumulated prompt + completion tokens.
+func TestCompactionStatus_SoftThreshold(t *testing.T) {
+	a, _, sessions, _, _ := newCompactionTestAgent(t, nil)
+	ctx := context.Background()
+	sess, err := sessions.Create(ctx, "status")
+	require.NoError(t, err)
+	sess.PromptTokens = 30000
+	sess.CompletionTokens = 20000
+	sess, err = sessions.Save(ctx, sess)
+	require.NoError(t, err)
+
+	status, err := a.CompactionStatus(ctx, sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(200000), status.ContextWindow)
+	require.Equal(t, int64(140000), status.SoftThresholdTokens, "0.7 of the 200k window")
+	require.Equal(t, int64(50000), status.UsageTokens)
+
+	// A customized fraction is honored.
+	a.cfg.Config().Options.Compaction = &config.CompactionConfig{SoftThresholdFraction: 0.5}
+	status, err = a.CompactionStatus(ctx, sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(100000), status.SoftThresholdTokens)
+}
+
 // TestSummarize_ConsumesCompactionRequestOnNoop verifies that an
 // agent-initiated request is consumed even when there is nothing to compact,
 // so HasCompactionRequest cannot stop every subsequent step.
