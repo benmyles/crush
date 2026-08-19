@@ -27,6 +27,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	agenttools "github.com/charmbracelet/crush/internal/agent/tools"
@@ -3251,7 +3252,7 @@ func (m *UI) View() tea.View {
 		v.MouseMode = tea.MouseModeCellMotion
 	}
 	v.ReportFocus = m.caps.ReportFocusEvents
-	v.WindowTitle = "crush " + home.Short(m.com.Workspace.WorkingDir())
+	v.WindowTitle = m.windowTitle()
 
 	canvas := uv.NewScreenBuffer(m.width, m.height)
 	v.Cursor = m.Draw(canvas, canvas.Bounds())
@@ -3273,6 +3274,34 @@ func (m *UI) View() tea.View {
 	}
 
 	return v
+}
+
+// windowTitle returns the text to show in the terminal window title. It
+// reflects what Crush is doing: a working placeholder while the agent is
+// busy, the active session's title once one exists, and always the current
+// working directory.
+func (m *UI) windowTitle() string {
+	cwd := home.Short(m.com.Workspace.WorkingDir())
+	if !m.hasSession() {
+		return "crush " + cwd
+	}
+
+	const sep = " · "
+	title := m.session.Title
+	hasTitle := title != "" && title != agent.DefaultSessionName
+
+	if m.isAgentBusy() {
+		if hasTitle {
+			return m.workingPlaceholder + sep + title + sep + cwd
+		}
+		return m.workingPlaceholder + sep + cwd
+	}
+
+	if hasTitle {
+		return title + sep + cwd
+	}
+
+	return "crush " + cwd
 }
 
 // ShortHelp implements [help.KeyMap].
