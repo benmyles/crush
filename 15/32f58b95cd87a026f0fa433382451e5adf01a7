@@ -1,0 +1,20 @@
+README.md
+  h_9b4a5c940a23e2 644-650
+internal/swagger/docs.go
+  h_9b4a5c940a23e2 676-734,4744-4751
+internal/swagger/swagger.json
+  h_9b4a5c940a23e2 669-727,4737-4744
+internal/swagger/swagger.yaml
+  h_9b4a5c940a23e2 1115-1119,1578-1616
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "1532f58b95cd87a026f0fa433382451e5adf01a7",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
