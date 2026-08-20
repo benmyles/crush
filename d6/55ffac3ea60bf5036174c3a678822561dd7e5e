@@ -1,0 +1,43 @@
+internal/ui/chat/compact_live.go
+  s_8a9f6942d6fe52::t_41141d445455e1 4-5,9,11,20-23,28-33,37-40,63-79,81-83,90-124
+internal/ui/chat/messages.go
+  s_8a9f6942d6fe52::t_d5ac942afe1091 108,130,392-399
+internal/ui/chat/summary.go
+  s_dc585eeb83247e::t_bae710071d94e5 1-103
+internal/ui/chat/summary_test.go
+  s_dc585eeb83247e::t_ceef3c362fee78 1-75
+internal/ui/model/compact_live_test.go
+  s_62e473f1f2c916::t_4da8dce479d04e 53-55,60-74,76,79-88,90,187,200-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "d655ffac3ea60bf5036174c3a678822561dd7e5e",
+  "prompts": {},
+  "sessions": {
+    "s_62e473f1f2c916": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01c18-5a01-7df1-87b2-0f1770c2a5f8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_8a9f6942d6fe52": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01d16-6c40-70d3-a1bc-57bb22f2bc0e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_dc585eeb83247e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01d6e-2885-7612-bd01-5d9f2e83932e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
