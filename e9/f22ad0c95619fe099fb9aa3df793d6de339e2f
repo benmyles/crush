@@ -1,0 +1,16 @@
+internal/goal/store.go
+  h_9b4a5c940a23e2 96-101,116-123,125-129
+internal/goal/store_test.go
+  h_9b4a5c940a23e2 137-150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "e9f22ad0c95619fe099fb9aa3df793d6de339e2f",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
