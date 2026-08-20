@@ -1456,7 +1456,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			if !ok {
 				existing = []SessionAgentCall{}
 			}
-			call.Prompt = fmt.Sprintf("Earlier conversation context was compacted into a session summary (the full history is recoverable with recall_grep and recall_expand). The original user request was: `%s`", call.Prompt)
+			// The compacted checkpoint already records the original request
+			// and instruction ledger, so the resuming model only needs a
+			// short nudge to keep going.
+			call.Prompt = "Compaction is complete. If you have more work to do, please continue."
 			call.resumedAfterCompaction = true
 			existing = append(existing, call)
 			a.messageQueue.Set(call.SessionID, existing)
