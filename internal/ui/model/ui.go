@@ -1802,6 +1802,13 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+		// Collapsed summary items wrap the assistant render; forward the
+		// update so the preview (and an expanded view) keep streaming.
+		if summaryItem, ok := existingItem.(*chat.SummaryMessageItem); ok {
+			if cmd := summaryItem.SetMessage(&msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	}
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)

@@ -50,17 +50,44 @@ func TestLiveCompactionMessageLifecycle(t *testing.T) {
 		t.Fatalf("expected *chat.CompactionLiveItem, got %T", item)
 	}
 
-	// Reasoning and text deltas stream into the rendered item.
+	// Reasoning and text deltas stream into the item's message. The body is
+	// collapsed by default: reasoning stays hidden and only the first text
+	// line previews.
 	_ = u.handleAgentNotification(streamNotification("s1", notify.CompactionStreamReasoningDelta, "thinking about the summary..."))
 	_ = u.handleAgentNotification(streamNotification("s1", notify.CompactionStreamReasoningEnd, ""))
 	_ = u.handleAgentNotification(streamNotification("s1", notify.CompactionStreamTextDelta, "## Goal"))
 	rendered := ansi.Strip(live.Render(u.width))
-	if !strings.Contains(rendered, "thinking about the summary...") {
-		t.Fatalf("expected reasoning delta in render:\n%s", rendered)
+	if strings.Contains(rendered, "thinking about the summary...") {
+		t.Fatalf("reasoning must stay hidden while collapsed:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Goal") {
-		t.Fatalf("expected text delta in render:\n%s", rendered)
+		t.Fatalf("expected first-line preview in collapsed render:\n%s", rendered)
 	}
+	if !strings.Contains(rendered, "space to expand") {
+		t.Fatalf("expected expand hint in collapsed render:\n%s", rendered)
+	}
+
+	// Expanding reveals the streamed checkpoint body.
+	if !live.ToggleExpanded() {
+		t.Fatalf("ToggleExpanded must report the expanded state")
+	}
+	rendered = ansi.Strip(live.Render(u.width))
+	if !strings.Contains(rendered, "thinking about the summary...") {
+		t.Fatalf("expected reasoning delta in expanded render:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Goal") {
+		t.Fatalf("expected text delta in expanded render:\n%s", rendered)
+	}
+
+	// Collapsing hides the body again; re-expand for the remaining checks.
+	if live.ToggleExpanded() {
+		t.Fatalf("ToggleExpanded must report the collapsed state")
+	}
+	rendered = ansi.Strip(live.Render(u.width))
+	if strings.Contains(rendered, "thinking about the summary...") {
+		t.Fatalf("collapsed render must hide the body:\n%s", rendered)
+	}
+	live.ToggleExpanded()
 
 	// A reset (escalation/retry) starts a fresh slate.
 	_ = u.handleAgentNotification(streamNotification("s1", notify.CompactionStreamReset, ""))
@@ -157,7 +184,7 @@ func TestCompactionPillClearsOnSummaryArrival(t *testing.T) {
 }
 
 // TestLiveCompactionItemFrameRenders verifies the live item wraps its render
-// in the CompactionLiveBox frame.
+// in the CompactionLiveBox frame, both collapsed and expanded.
 func TestLiveCompactionItemFrameRenders(t *testing.T) {
 	u := newTestUI()
 	u.session = &session.Session{ID: "s1"}
@@ -169,5 +196,21 @@ func TestLiveCompactionItemFrameRenders(t *testing.T) {
 	rendered := strings.TrimSpace(ansi.Strip(item.Render(u.width)))
 	if !strings.HasPrefix(rendered, "╭") || !strings.HasSuffix(rendered, "╯") {
 		t.Fatalf("live item must render inside a rounded frame:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "body") || !strings.Contains(rendered, "space to expand") {
+		t.Fatalf("collapsed live item must show the one-line preview:\n%s", rendered)
+	}
+
+	live, ok := item.(*chat.CompactionLiveItem)
+	if !ok {
+		t.Fatalf("expected *chat.CompactionLiveItem, got %T", item)
+	}
+	live.ToggleExpanded()
+	rendered = strings.TrimSpace(ansi.Strip(item.Render(u.width)))
+	if !strings.HasPrefix(rendered, "╭") || !strings.HasSuffix(rendered, "╯") {
+		t.Fatalf("expanded live item must also render inside a rounded frame:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "space to expand") {
+		t.Fatalf("expanded live item must drop the expand hint:\n%s", rendered)
 	}
 }

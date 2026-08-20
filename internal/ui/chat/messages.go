@@ -105,7 +105,7 @@ func (h *highlightableMessageItem) renderHighlighted(content string, width, heig
 }
 
 // SetHighlight implements list.Highlightable.
-func (h *highlightableMessageItem) SetHighlight(startLine int, startCol int, endLine int, endCol int) {
+func (h *highlightableMessageItem) SetHighlight(startLine, startCol, endLine, endCol int) {
 	// Adjust columns for the style's left inset (border + padding) since we
 	// highlight the content only.
 	offset := MessageLeftPaddingTotal
@@ -127,7 +127,7 @@ func (h *highlightableMessageItem) SetHighlight(startLine int, startCol int, end
 }
 
 // Highlight implements list.Highlightable.
-func (h *highlightableMessageItem) Highlight() (startLine int, startCol int, endLine int, endCol int) {
+func (h *highlightableMessageItem) Highlight() (startLine, startCol, endLine, endCol int) {
 	return h.startLine, h.startCol, h.endLine, h.endCol
 }
 
@@ -389,9 +389,14 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 	case message.Assistant:
 		var items []MessageItem
 		// Engine-produced compaction summaries render as the structured
-		// overview tree instead of the plain assistant render.
-		if part, ok := msg.CompactionPart(); ok && msg.IsSummaryMessage {
-			return []MessageItem{NewCompactionMessageItem(sty, msg, part)}
+		// overview tree; plain summarize messages (no structured part)
+		// collapse behind the same one-line preview. Both avoid flooding
+		// the chat with the always-large summary text.
+		if msg.IsSummaryMessage {
+			if part, ok := msg.CompactionPart(); ok {
+				return []MessageItem{NewCompactionMessageItem(sty, msg, part)}
+			}
+			return []MessageItem{NewSummaryMessageItem(sty, msg)}
 		}
 		if ShouldRenderAssistantMessage(msg) {
 			items = append(items, NewAssistantMessageItem(sty, msg))
