@@ -1,0 +1,63 @@
+internal/agent/agent.go
+  s_62e473f1f2c916::t_0a02ca7a21db18 47,143-152,190-205,281-289,354-357,384-385,813-819,907-916,990,1299-1309,1469-1472,1478,1521-1549,1566-1573,1646-1650,1652-1657,1660,1665-1669,1674-1844,2932-2939
+internal/agent/coordinator.go
+  s_62e473f1f2c916::t_5b1cfb933746cd 34,123-138,158-160,226,740,869-879,1451-1551
+internal/agent/notify/notify.go
+  s_62e473f1f2c916::t_962d36d9bcba81 6-9,46-54,95-101
+internal/agent/tools/goal_blocked.go
+  s_62e473f1f2c916::t_9e299898a0b917 1-51
+internal/agent/tools/goal_blocked.md
+  s_62e473f1f2c916::t_7f8a88aac29ab3 1-12
+internal/agent/tools/goal_complete.go
+  s_62e473f1f2c916::t_ba4711d10f29fe 1-51
+internal/agent/tools/goal_complete.md
+  s_62e473f1f2c916::t_7e649267abbaeb 1-11
+internal/agent/tools/update_goal.go
+  s_62e473f1f2c916::t_a1a076668df890 1-60
+internal/agent/tools/update_goal.md
+  s_62e473f1f2c916::t_b9f552817a146a 1-15
+internal/backend/agent.go
+  s_62e473f1f2c916::t_1dc7d9760d0611 11,238-322
+internal/client/proto.go
+  s_62e473f1f2c916::t_0078639263d51a 18,458-563
+internal/config/config.go
+  s_62e473f1f2c916::t_f8570e4cd0b432 844-846
+internal/config/load_test.go
+  s_62e473f1f2c916::t_b5c4eaa940b81e 810,839
+internal/db/migrations/20260819000000_add_goals.sql
+  s_62e473f1f2c916::t_7bb7c29d93c890 1-20
+internal/goal/store.go
+  s_62e473f1f2c916::t_4e334a92cc368f 1-243
+internal/proto/requests.go
+  s_62e473f1f2c916::t_bd3d6b406273a5 37-42
+internal/server/proto.go
+  s_62e473f1f2c916::t_fd6d093df9ecfb 1026-1183
+internal/server/server.go
+  s_62e473f1f2c916::t_f03cf105ad8d6b 205-211
+internal/ui/model/goal_commands_test.go
+  s_62e473f1f2c916::t_8b7bf6a2c764ce 1-177
+internal/ui/model/session_busy_test.go
+  s_62e473f1f2c916::t_8c7a989cdadedb 16,123-129
+internal/workspace/app_workspace.go
+  s_62e473f1f2c916::t_726c9ffca56425 16,251-298
+internal/workspace/client_workspace.go
+  s_62e473f1f2c916::t_a3f5bc4787d5e3 21,339-378
+internal/workspace/workspace.go
+  s_62e473f1f2c916::t_b26c46387b8e72 18,169-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "2f7a18685af675b346545930eece8d737a18f062",
+  "prompts": {},
+  "sessions": {
+    "s_62e473f1f2c916": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01c18-5a01-7df1-87b2-0f1770c2a5f8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
