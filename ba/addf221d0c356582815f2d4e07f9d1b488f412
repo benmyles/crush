@@ -1,0 +1,19 @@
+internal/agent/agent.go
+  s_62e473f1f2c916::t_ab77b3d94a4af0 1459-1462
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "baaddf221d0c356582815f2d4e07f9d1b488f412",
+  "prompts": {},
+  "sessions": {
+    "s_62e473f1f2c916": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01c18-5a01-7df1-87b2-0f1770c2a5f8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
