@@ -134,6 +134,20 @@ func TestStoreClearAndUpdate(t *testing.T) {
 	assert.Equal(t, "Bigger goal", updated.Text)
 	assert.Equal(t, StatusActive, updated.Status)
 
+	// Updating a terminal goal reactivates it with a fresh prod budget.
+	_, err = store.Complete(ctx, "sess-1", "done")
+	require.NoError(t, err)
+	_, err = store.BumpProd(ctx, "sess-1")
+	require.NoError(t, err)
+	require.Equal(t, 1, mustGet(t, store, ctx, "sess-1").ConsecutiveProds)
+	reactivated, err := store.Update(ctx, "sess-1", "Next goal")
+	require.NoError(t, err)
+	assert.Equal(t, "Next goal", reactivated.Text)
+	assert.Equal(t, StatusActive, reactivated.Status)
+	assert.Zero(t, reactivated.ConsecutiveProds)
+	assert.Equal(t, "", reactivated.CompleteReason)
+	assert.Equal(t, "", reactivated.BlockedReason)
+
 	// Clear removes the row entirely.
 	require.NoError(t, store.Clear(ctx, "sess-1"))
 	got, err := store.Get(ctx, "sess-1")

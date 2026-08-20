@@ -93,8 +93,12 @@ func (s *Store) Set(ctx context.Context, sessionID, text string) (Goal, error) {
 	return s.Get(ctx, sessionID)
 }
 
-// Update replaces the goal text while preserving status and counters. It
-// backs the agent's update_goal tool.
+// Update replaces the goal text. Active goals keep their status and
+// counters, so the agent can narrow or rephrase an in-flight goal.
+// Terminal goals (complete, blocked, stalled) are reactivated: the status
+// resets to active, terminal reasons clear, and the consecutive prod
+// budget restarts so the new text is supervised fresh. It backs the
+// agent's update_goal tool.
 func (s *Store) Update(ctx context.Context, sessionID, text string) (Goal, error) {
 	if s == nil || s.db == nil {
 		return Goal{}, ErrNoGoal
@@ -109,9 +113,20 @@ func (s *Store) Update(ctx context.Context, sessionID, text string) (Goal, error
 	if existing == nil {
 		return Goal{}, ErrNoGoal
 	}
+	if existing.Status == StatusActive {
+		if _, err = s.db.ExecContext(ctx,
+			`UPDATE goals SET text = ?, updated_at = ? WHERE session_id = ?`,
+			text, time.Now().Unix(), sessionID); err != nil {
+			return Goal{}, fmt.Errorf("failed to update goal: %w", err)
+		}
+		return s.Get(ctx, sessionID)
+	}
 	if _, err = s.db.ExecContext(ctx,
-		`UPDATE goals SET text = ?, updated_at = ? WHERE session_id = ?`,
-		text, time.Now().Unix(), sessionID); err != nil {
+		`UPDATE goals SET text = ?, status = ?, updated_at = ?,
+		        complete_reason = NULL, blocked_reason = NULL,
+		        consecutive_prods = 0
+		  WHERE session_id = ?`,
+		text, StatusActive, time.Now().Unix(), sessionID); err != nil {
 		return Goal{}, fmt.Errorf("failed to update goal: %w", err)
 	}
 	return s.Get(ctx, sessionID)
