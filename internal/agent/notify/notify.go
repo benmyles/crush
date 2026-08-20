@@ -3,6 +3,10 @@
 // events without importing UI packages.
 package notify
 
+import (
+	"github.com/charmbracelet/crush/internal/goal"
+)
+
 // Type identifies the kind of agent notification.
 type Type string
 
@@ -39,6 +43,15 @@ const (
 	// TUI renders them into a transient message in the chat, like any other
 	// streaming assistant turn. Payload: CompactionStream.
 	TypeCompactionStream Type = "compaction_stream"
+	// TypeAgentPaused indicates a pause latch took effect: the run
+	// stopped at a step boundary and is held until resumed.
+	TypeAgentPaused Type = "agent_paused"
+	// TypeAgentResumed indicates a pause latch was lifted and the held
+	// turn is continuing.
+	TypeAgentResumed Type = "agent_resumed"
+	// TypeGoalStateChanged carries a goal state transition (set,
+	// updated, completed, blocked, stalled). Payload: Notification.Goal.
+	TypeGoalStateChanged Type = "goal_state_changed"
 )
 
 // CompactionStreamKind identifies the kind of a live compaction stream
@@ -79,6 +92,13 @@ type Notification struct {
 	// specific request rather than to any in-flight run on the
 	// session. Empty when no caller set one.
 	RunID string
+	// Internal marks synthetic turns (goal checks, pause resumptions)
+	// so the UI can suppress the desktop "waiting" ping while still
+	// treating the event as a busy-state edge.
+	Internal bool
+	// Goal carries the new goal state for TypeGoalStateChanged. Nil
+	// for every other type.
+	Goal *goal.Goal
 	// Message carries the error text for TypeAgentError. Other
 	// notification types ignore it.
 	Message string

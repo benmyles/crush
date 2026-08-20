@@ -103,6 +103,33 @@ type (
 		SessionID string
 		MessageID string
 	}
+	// ActionPause latches the global pause fence.
+	ActionPause struct{}
+	// ActionResume lifts the global pause fence.
+	ActionResume struct{}
+	// ActionSetGoal sets the session goal and submits the goal text as
+	// the next user prompt so the agent starts working toward it right
+	// away.
+	ActionSetGoal struct {
+		SessionID string
+		Text      string
+	}
+	// ActionOpenGoal opens the goal input dialog.
+	ActionOpenGoal struct {
+		SessionID string
+	}
+	// ActionGoalShow opens the goal status dialog (fetches state first).
+	ActionGoalShow struct {
+		SessionID string
+	}
+	// ActionGoalResume reactivates a blocked or stalled goal.
+	ActionGoalResume struct {
+		SessionID string
+	}
+	// ActionGoalClear deletes the session goal.
+	ActionGoalClear struct {
+		SessionID string
+	}
 	// ActionSelectReasoningEffort is a message indicating a reasoning effort
 	// has been selected.
 	ActionSelectReasoningEffort struct {

@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/chat"
 	"github.com/charmbracelet/crush/internal/ui/styles"
@@ -84,6 +85,35 @@ func compactPill(frame int, tokensDown int64, t *styles.Styles) string {
 	bolt := strings.Join(styles.ForegroundGrad(t.Pills.QueueIconBase, "⚡", false, col, col), "")
 	content := fmt.Sprintf("%s %s", bolt, label)
 	return t.Pills.Focused.Render(content)
+}
+
+// pausePill renders the "Paused" badge shown while the global pause latch is
+// holding this session.
+func pausePill(t *styles.Styles) string {
+	return t.Pills.Focused.Render(t.Pills.TodoLabel.Render("⏸ Paused"))
+}
+
+// goalPill renders the active/blocked/stalled goal badge summarizing the
+// supervision loop state for this session.
+func goalPill(g goal.Goal, t *styles.Styles) string {
+	if !g.Exists() {
+		return ""
+	}
+	var icon, label string
+	switch g.Status {
+	case goal.StatusActive:
+		icon, label = "◆", "Goal"
+	case goal.StatusComplete:
+		icon, label = "✓", "Goal complete"
+	case goal.StatusBlocked:
+		icon, label = "⛔", "Goal blocked"
+	case goal.StatusStalled:
+		icon, label = "⏸", "Goal stalled"
+	default:
+		return ""
+	}
+	text := t.Pills.TodoLabel.Render(fmt.Sprintf("%s %s", icon, label))
+	return t.Pills.Focused.Render(text)
 }
 
 // shortTokens renders a token count compactly: raw below 1k, one decimal in
@@ -368,8 +398,10 @@ func (m *UI) renderPills() {
 
 	hasIncomplete := hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
+	hasPause := m.pausedActive
+	hasGoal := m.goal.Exists()
 
-	if !hasIncomplete && !hasQueue && !m.compacting {
+	if !hasIncomplete && !hasQueue && !m.compacting && !hasPause && !hasGoal {
 		return
 	}
 
@@ -389,6 +421,12 @@ func (m *UI) renderPills() {
 	}
 	if hasQueue {
 		pills = append(pills, queuePill(m.promptQueue, t))
+	}
+	if hasPause {
+		pills = append(pills, pausePill(t))
+	}
+	if hasGoal {
+		pills = append(pills, goalPill(m.goal, t))
 	}
 	if m.compacting {
 		pills = append(pills, compactPill(m.compactPulse, m.compactTokensDown, t))

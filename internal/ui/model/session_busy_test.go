@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -118,6 +119,13 @@ func (w *countingWorkspace) ListUserMessages(context.Context, string) ([]message
 func (w *countingWorkspace) WorkingDir() string { return "" }
 
 func (w *countingWorkspace) LSPStart(context.Context, string) {}
+
+func (w *countingWorkspace) GoalGet(ctx context.Context, sessionID string) (goal.Goal, error) {
+	if w.Workspace != nil {
+		return w.Workspace.GoalGet(ctx, sessionID)
+	}
+	return goal.Goal{}, nil
+}
 
 func (w *countingWorkspace) Config() *config.Config { return nil }
 

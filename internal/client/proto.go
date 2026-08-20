@@ -15,6 +15,7 @@ import (
 
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -452,6 +453,112 @@ func (c *Client) ClearAgentSessionQueuedPrompts(ctx context.Context, id string, 
 		return fmt.Errorf("failed to clear session agent queued prompts: status code %d", rsp.StatusCode)
 	}
 	return nil
+}
+
+// GetSessionGoal retrieves the goal state for a session. A session
+// without a goal yields a goal with empty status.
+func (c *Client) GetSessionGoal(ctx context.Context, id string, sessionID string) (goal.Goal, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/goal", id, sessionID), nil, nil)
+	if err != nil {
+		return goal.Goal{}, fmt.Errorf("failed to get session goal: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return goal.Goal{}, fmt.Errorf("failed to get session goal: status code %d", rsp.StatusCode)
+	}
+	var g goal.Goal
+	if err := json.NewDecoder(rsp.Body).Decode(&g); err != nil {
+		return goal.Goal{}, fmt.Errorf("failed to decode session goal: %w", err)
+	}
+	return g, nil
+}
+
+// SetSessionGoal sets or reactivates the goal for a session.
+func (c *Client) SetSessionGoal(ctx context.Context, id string, sessionID string, text string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/goal/set", id, sessionID), nil,
+		jsonBody(proto.GoalSetRequest{Text: text}), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to set session goal: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to set session goal: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// ClearSessionGoal deletes the goal for a session.
+func (c *Client) ClearSessionGoal(ctx context.Context, id string, sessionID string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/goal/clear", id, sessionID), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to clear session goal: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to clear session goal: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// ResumeSessionGoal reactivates a blocked or stalled session goal.
+func (c *Client) ResumeSessionGoal(ctx context.Context, id string, sessionID string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/goal/resume", id, sessionID), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to resume session goal: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to resume session goal: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// PauseAgent latches the global pause flag on every session with an
+// active run; it reports whether any session was actually paused.
+func (c *Client) PauseAgent(ctx context.Context, id string) (bool, error) {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/pause", id), nil, nil, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to pause agent: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("failed to pause agent: status code %d", rsp.StatusCode)
+	}
+	var paused bool
+	if err := json.NewDecoder(rsp.Body).Decode(&paused); err != nil {
+		return false, fmt.Errorf("failed to decode pause agent response: %w", err)
+	}
+	return paused, nil
+}
+
+// ResumeAgent lifts the global pause latch and continues held turns.
+func (c *Client) ResumeAgent(ctx context.Context, id string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/resume", id), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to resume agent: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to resume agent: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// IsAgentPaused reports whether a session has a latched pause.
+func (c *Client) IsAgentPaused(ctx context.Context, id string, sessionID string) (bool, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/paused", id, sessionID), nil, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to get agent paused state: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("failed to get agent paused state: status code %d", rsp.StatusCode)
+	}
+	var paused bool
+	if err := json.NewDecoder(rsp.Body).Decode(&paused); err != nil {
+		return false, fmt.Errorf("failed to decode agent paused state: %w", err)
+	}
+	return paused, nil
 }
 
 // GetAgentInfo retrieves the agent status for a workspace.

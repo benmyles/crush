@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/backend"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/google/uuid"
@@ -85,6 +86,16 @@ func (s *runCoordinator) Truncate(context.Context, string, string) error { retur
 func (s *runCoordinator) Model() agent.Model                             { return agent.Model{} }
 func (s *runCoordinator) UpdateModels(context.Context) error             { return nil }
 func (s *runCoordinator) GenerateTitle(context.Context, string, string)  {}
+
+func (s *runCoordinator) SetGoal(context.Context, string, string) error { return nil }
+func (s *runCoordinator) GetGoal(context.Context, string) (goal.Goal, error) {
+	return goal.Goal{}, nil
+}
+func (s *runCoordinator) ResumeGoal(context.Context, string) error { return nil }
+func (s *runCoordinator) ClearGoal(context.Context, string) error  { return nil }
+func (s *runCoordinator) Pause() bool                              { return false }
+func (s *runCoordinator) Resume()                                  {}
+func (s *runCoordinator) IsPaused(string) bool                     { return false }
 
 func (s *runCoordinator) capturedCtx() context.Context {
 	s.mu.Lock()

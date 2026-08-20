@@ -15,6 +15,7 @@ import (
 	mcptools "github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/commands"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
@@ -165,6 +166,23 @@ type Workspace interface {
 	// RewindSession truncates a session at the given user message,
 	// deleting that message and everything after it.
 	RewindSession(ctx context.Context, sessionID, messageID string) error
+	// Goal management for the goal supervision loop.
+	GoalSet(ctx context.Context, sessionID, text string) error
+	// GoalGet returns the session's goal state; Goal has StatusNone
+	// when the session has no goal.
+	GoalGet(ctx context.Context, sessionID string) (goal.Goal, error)
+	// GoalResume reactivates a blocked or stalled goal and, when the
+	// agent is idle, continues the work with a fresh goal check.
+	GoalResume(ctx context.Context, sessionID string) error
+	GoalClear(ctx context.Context, sessionID string) error
+	// AgentPause latches the global pause flag on every session with an
+	// active run; those runs stop at their next step boundary. It
+	// reports whether any session was actually paused.
+	AgentPause() bool
+	// AgentResume lifts the global pause latch and continues held turns.
+	AgentResume()
+	// AgentIsPaused reports whether sessionID has a latched pause.
+	AgentIsPaused(sessionID string) bool
 	UpdateAgentModel(ctx context.Context) error
 	InitCoderAgent(ctx context.Context) error
 	InitCoderAgentNonInteractive(ctx context.Context) error

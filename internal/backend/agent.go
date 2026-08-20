@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/shell"
@@ -232,6 +233,91 @@ func (b *Backend) ClearQueue(workspaceID, sessionID string) error {
 		ws.AgentCoordinator.ClearQueue(sessionID)
 	}
 	return nil
+}
+
+// SetGoal sets or reactivates the session's goal.
+func (b *Backend) SetGoal(ctx context.Context, workspaceID, sessionID, text string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+	if ws.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+	return ws.AgentCoordinator.SetGoal(ctx, sessionID, text)
+}
+
+// GetGoal returns the session's goal state.
+func (b *Backend) GetGoal(ctx context.Context, workspaceID, sessionID string) (goal.Goal, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return goal.Goal{}, err
+	}
+	if ws.AgentCoordinator == nil {
+		return goal.Goal{}, ErrAgentNotInitialized
+	}
+	return ws.AgentCoordinator.GetGoal(ctx, sessionID)
+}
+
+// ResumeGoal reactivates a blocked or stalled session goal.
+func (b *Backend) ResumeGoal(ctx context.Context, workspaceID, sessionID string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+	if ws.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+	return ws.AgentCoordinator.ResumeGoal(ctx, sessionID)
+}
+
+// ClearGoal deletes the session's goal.
+func (b *Backend) ClearGoal(ctx context.Context, workspaceID, sessionID string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+	if ws.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+	return ws.AgentCoordinator.ClearGoal(ctx, sessionID)
+}
+
+// Pause latches the global pause flag on every session with an active
+// run and reports whether any session was actually paused.
+func (b *Backend) Pause(workspaceID string) (bool, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return false, err
+	}
+	if ws.AgentCoordinator == nil {
+		return false, ErrAgentNotInitialized
+	}
+	return ws.AgentCoordinator.Pause(), nil
+}
+
+// Resume lifts the global pause latch and continues held turns.
+func (b *Backend) Resume(workspaceID string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+	if ws.AgentCoordinator != nil {
+		ws.AgentCoordinator.Resume()
+	}
+	return nil
+}
+
+// IsPaused reports whether a session has a latched pause.
+func (b *Backend) IsPaused(workspaceID, sessionID string) (bool, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return false, err
+	}
+	if ws.AgentCoordinator == nil {
+		return false, nil
+	}
+	return ws.AgentCoordinator.IsPaused(sessionID), nil
 }
 
 // QueuedPromptsList returns the list of queued prompt items for a

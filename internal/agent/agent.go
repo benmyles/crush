@@ -44,6 +44,7 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/db"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
@@ -139,6 +140,16 @@ type SessionAgentCall struct {
 	// recursively compact forever when usage remains above the threshold.
 	// Fresh calls start false, so the next user turn may compact normally.
 	resumedAfterCompaction bool
+	// resumeAfterPause marks the queued continuation of a turn that was
+	// stopped at a step boundary by a pause request. Unlike a
+	// compaction resume, it must not create a new user message: it
+	// re-enters the stream exactly where the pause stopped it.
+	resumeAfterPause bool
+	// goalCheck marks a synthetic continuation issued by the goal
+	// supervision loop. It carries the same RunID as the originating
+	// user turn so the terminal event contract is unchanged, and it may
+	// chain further checks until the goal is terminal.
+	goalCheck bool
 	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
 	// fails with an authentication error (HTTP 401). The callback should
 	// refresh credentials and return nil on success, in which case
@@ -176,6 +187,22 @@ type SessionAgent interface {
 	// Summarize runs context compaction: the new lossless engine when
 	// enabled, else the legacy single-shot summary.
 	Summarize(context.Context, string, fantasy.ProviderOptions, func(context.Context, *fantasy.ProviderError) error) error
+	// Pause latches the pause flag for sessionID: the active run (if
+	// any) stops at its next step boundary and every subsequent prompt
+	// holds until ResumeAll or Resume lifts the latch. It is a no-op for
+	// sessions without an active run.
+	Pause(sessionID string)
+	// Resume lifts the pause latch for sessionID and continues any
+	// paused continuation waiting at the front of the session's queue.
+	Resume(sessionID string)
+	// ResumeAll lifts the pause latch for every paused session and
+	// drains their held continuations.
+	ResumeAll()
+	// IsPaused reports whether sessionID has a latched pause.
+	IsPaused(sessionID string) bool
+	// BusySessions lists sessions with an active run (used by the
+	// coordinator to apply a global pause to everything in flight).
+	BusySessions() []string
 	// Compact runs the context compaction engine explicitly (the /compact
 	// command). It never falls back to the legacy summarizer and returns an
 	// error when the engine is missing or disabled.
@@ -251,6 +278,15 @@ type sessionAgent struct {
 	// checks the flag and Summarize consumes it (on every path).
 	compactionRequested *csync.Map[string, string]
 
+	// goals persists per-session goal state and drives the supervision
+	// loop. Nil means the host has no goal store (tests, agents without
+	// a DB): scheduling is disabled and goal tools are not registered.
+	goals *goal.Store
+	// paused holds, per session, whether a pause request is latched:
+	// runs stop at their next step boundary, the continuation waits at
+	// the queue front, and new prompts hold until Resume lifts it.
+	paused *csync.Map[string, *atomic.Bool]
+
 	// dispatchMu holds a per-session mutex that serializes the
 	// accepted -> (cancel-on-entry | queued | active) transition in
 	// Run against a concurrent Cancel. The lock is held only during
@@ -315,6 +351,10 @@ type SessionAgentOptions struct {
 	Tools               []fantasy.AgentTool
 	Notify              pubsub.Publisher[notify.Notification]
 	RunComplete         pubsub.Publisher[notify.RunComplete]
+	// Goals, when non-nil, enables the goal supervision loop for this
+	// agent: completed turns schedule goal checks while a goal is
+	// active.
+	Goals *goal.Store
 }
 
 func NewSessionAgent(
@@ -341,6 +381,8 @@ func NewSessionAgent(
 		queueSeq:             csync.NewMap[string, *atomic.Uint64](),
 		activeRequests:       csync.NewMap[string, *activeCancel](),
 		compactionRequested:  csync.NewMap[string, string](),
+		goals:                opts.Goals,
+		paused:               csync.NewMap[string, *atomic.Bool](),
 		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
 		acceptedRuns:         csync.NewMap[string, int](),
 		cancelMark:           csync.NewMap[string, uint64](),
@@ -768,11 +810,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		return nil, nil
 	}
 
-	if a.IsSessionBusy(call.SessionID) {
-		// Busy: an earlier prompt is active. Queue this call so it is
-		// folded into (or sequenced after) the active turn, and release any
-		// accept reservation. A Cancel arriving after this point sees the
-		// active entry and clears the queue.
+	if a.IsSessionBusy(call.SessionID) || a.IsPaused(call.SessionID) {
+		// Busy or paused: another turn is active or a pause latch is
+		// holding this session. Queue this call so it is folded into
+		// (or sequenced after) the active turn, and release any accept
+		// reservation. While paused the queue holds; Resume drains it.
+		// A Cancel arriving after this point sees the active entry (or
+		// the queue) and clears the queued work.
 		//
 		// enqueueCall strips OnComplete: the caller that supplied the hook
 		// (typically coordinator.Run) has its own retry/coalesce scope that
@@ -860,12 +904,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		go a.GenerateTitle(titleCtx, call.SessionID, call.Prompt)
 	}
 
-	// Add the user message to the session.
-	_, err = a.createUserMessage(ctx, call)
-	if err != nil {
-		return nil, err
+	// Add the user message to the session. Pause continuations re-enter
+	// the same logical turn: they must not create a second visible user
+	// message in the transcript (the persisted history is the resume
+	// point).
+	if !call.resumeAfterPause {
+		_, err = a.createUserMessage(ctx, call)
+		if err != nil {
+			return nil, err
+		}
+		userMsgCreated = true
 	}
-	userMsgCreated = true
 
 	// Add the session to the context. The run context (genCtx) and its
 	// cancel func were already created and registered under the dispatch
@@ -938,6 +987,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 
 	var stepMessages []fantasy.Message
 	var shouldSummarize bool
+	var stoppedForPause bool
 	sanitizedToolCalls := make(map[string]bool)
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
@@ -1246,6 +1296,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 				return false
 			},
+			func(_ []fantasy.StepResult) bool {
+				// A pause latch stops the stream at the next step
+				// boundary. Tool calls in the step already executed and
+				// returned, so the turn stops cleanly between steps and
+				// can resume exactly where it left off.
+				if a.IsPaused(call.SessionID) {
+					stoppedForPause = true
+					return true
+				}
+				return false
+			},
 			func(steps []fantasy.StepResult) bool {
 				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
 			},
@@ -1405,12 +1466,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	cancel()
 
 	// Send notification that agent has finished its turn (skip for
-	// nested/non-interactive sessions).
+	// nested/non-interactive sessions). Synthetic continuations (goal
+	// checks, pause resumptions) mark the event internal so the UI can
+	// skip the desktop "waiting" ping without skipping the busy-state
+	// refresh the terminal event drives.
 	if !call.NonInteractive && a.notify != nil {
 		a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
 			SessionID:    call.SessionID,
 			SessionTitle: currentSession.Title,
 			Type:         notify.TypeAgentFinished,
+			Internal:     call.goalCheck || call.resumeAfterPause,
 		})
 	}
 
@@ -1453,6 +1518,35 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		// RunID does not hang.
 		a.publishCanceledQueueDrops(canceledRunIDDrops)
 	}
+	if stoppedForPause && !shouldSummarize {
+		// Pause stopped the stream at a step boundary. Compaction
+		// resumption wins over pause when both flagged: the
+		// post-summarize turn re-pauses at its first boundary.
+		if len(currentAssistant.ToolCalls()) == 0 {
+			// The turn ended naturally (final response, no tool
+			// calls): there is nothing left to pause. Clear the latch
+			// and complete normally.
+			a.clearPaused(call.SessionID)
+		} else {
+			// Prepend a silent continuation (same RunID, no new user
+			// message) and hold: nothing drains while the latch is
+			// set. Resume drains it and the turn replays from the
+			// persisted stream state. Suppress this call's completion;
+			// the continuation publishes the terminal event for the
+			// RunID (or a cancel drops it and publishes cancelled).
+			skipRunComplete = true
+			a.prependPauseContinuation(call)
+			a.publishPauseState(call.SessionID, true)
+			mu.Unlock()
+			return result, err
+		}
+	}
+	if len(queuedMessages) == 0 {
+		queuedMessages = a.scheduleGoalCheck(ctx, call)
+		if len(queuedMessages) == 0 {
+			a.messageQueue.Del(call.SessionID)
+		}
+	}
 	if len(queuedMessages) == 0 {
 		// No queued work. Clear the cancel mark only when no accepted
 		// run remains in flight that it might still cover; otherwise a
@@ -1460,13 +1554,20 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		// enter Run would lose its cancellation. When accepted runs are
 		// gone, this also clears a stale mark so it can't catch a
 		// future run.
-		a.messageQueue.Del(call.SessionID)
 		a.acceptedMu.Lock()
 		inFlight, _ := a.acceptedRuns.Get(call.SessionID)
 		a.acceptedMu.Unlock()
 		if inFlight == 0 {
 			a.cancelMark.Del(call.SessionID)
 		}
+		mu.Unlock()
+		return result, err
+	}
+	if a.IsPaused(call.SessionID) {
+		// A latch got set after this run's last step boundary (it
+		// finished normally). Hold the queue: Resume drains it. The
+		// finished turn's terminal event still goes out through the
+		// defer below (skipRunComplete is false).
 		mu.Unlock()
 		return result, err
 	}
@@ -1542,16 +1643,203 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 // replaces the in-engine drain that used to run before the finished event
 // was published: the engine now returns control first so the "Compacting"
 // indicator clears at completion, then queued work resumes through the
-// normal Run path.
+// normal Run path. The pop is made under the per-session dispatch mutex
+// so a second drain (double /resume, finished-event churn) cannot dequeue
+// and double-run the same entry, and a pause latch (or an active run)
+// makes it a no-op; the active run's own handoff owns the queue in that
+// case.
 func (a *sessionAgent) drainQueuedPrompt(ctx context.Context, sessionID string) error {
+	mu := a.sessionMu(sessionID)
+	mu.Lock()
+	if a.IsPaused(sessionID) || a.IsSessionBusy(sessionID) {
+		mu.Unlock()
+		return nil
+	}
 	queued, ok := a.messageQueue.Get(sessionID)
 	if !ok || len(queued) == 0 {
+		mu.Unlock()
 		return nil
 	}
 	first := queued[0]
 	a.messageQueue.Set(sessionID, queued[1:])
+	// Reserve a fresh accept before dropping the lock so a cancel
+	// arriving in the dequeue -> Run dispatch window records a pending
+	// cancel instead of observing an idle session.
+	first.Accepted = a.BeginAccepted(sessionID)
+	mu.Unlock()
 	_, err := a.Run(ctx, first)
 	return err
+}
+
+// Pause latches the pause flag for sessionID. The active run (if any)
+// observes it at its next step boundary; subsequent prompts hold until
+// the latch is lifted.
+func (a *sessionAgent) Pause(sessionID string) {
+	if a.IsPaused(sessionID) {
+		return
+	}
+	flag := &atomic.Bool{}
+	flag.Store(true)
+	a.paused.Set(sessionID, flag)
+}
+
+// Resume lifts the pause latch for sessionID and drains the held
+// continuation (if any) so the turn restarts at its stop point.
+func (a *sessionAgent) Resume(sessionID string) {
+	if !a.IsPaused(sessionID) {
+		return
+	}
+	a.clearPaused(sessionID)
+	a.publishPauseState(sessionID, false)
+	_ = a.drainQueuedPrompt(context.Background(), sessionID)
+}
+
+// ResumeAll lifts the latch for every paused session and drains their
+// held continuations.
+func (a *sessionAgent) ResumeAll() {
+	var resumed []string
+	for sessionID := range a.paused.Seq2() {
+		a.clearPaused(sessionID)
+		resumed = append(resumed, sessionID)
+	}
+	for _, sessionID := range resumed {
+		a.publishPauseState(sessionID, false)
+		_ = a.drainQueuedPrompt(context.Background(), sessionID)
+	}
+}
+
+// IsPaused reports whether sessionID has a latched pause.
+func (a *sessionAgent) IsPaused(sessionID string) bool {
+	if flag, ok := a.paused.Get(sessionID); ok {
+		return flag.Load()
+	}
+	return false
+}
+
+// BusySessions lists sessions with an active run. Summarize entries
+// (keyed with the "-summarize" suffix) are excluded: pause applies to
+// prompt runs.
+func (a *sessionAgent) BusySessions() []string {
+	var sessions []string
+	for key := range a.activeRequests.Seq2() {
+		if strings.HasSuffix(key, "-summarize") {
+			continue
+		}
+		sessions = append(sessions, key)
+	}
+	return sessions
+}
+
+func (a *sessionAgent) clearPaused(sessionID string) {
+	a.paused.Del(sessionID)
+}
+
+// prependPauseContinuation pushes a silent continuation of call onto the
+// front of the session queue. It re-enters the stream after Resume
+// without creating a new user message; ordering is preserved because the
+// paused turn must finish before any later queued prompts.
+func (a *sessionAgent) prependPauseContinuation(call SessionAgentCall) {
+	existing, ok := a.messageQueue.Get(call.SessionID)
+	if !ok {
+		existing = []SessionAgentCall{}
+	}
+	cont := call
+	cont.resumeAfterPause = true
+	cont.Attachments = nil
+	cont.Accepted = nil
+	cont.acceptSeq = 0
+	cont.QueueID = a.nextQueueID(call.SessionID)
+	a.messageQueue.Set(call.SessionID, append([]SessionAgentCall{cont}, existing...))
+}
+
+// scheduleGoalCheck decides whether the just-finished run owes a goal
+// check and, if so, returns the synthesized continuation call. It runs
+// under the dispatch mutex so the enqueue is atomic against cancels and
+// drains. It returns an empty slice when no check should run or when the
+// goal hit its stall cap.
+func (a *sessionAgent) scheduleGoalCheck(ctx context.Context, call SessionAgentCall) []SessionAgentCall {
+	if a.goals == nil || call.NonInteractive {
+		return nil
+	}
+	if ctx.Err() != nil || a.IsPaused(call.SessionID) {
+		return nil
+	}
+	g, err := a.goals.Get(ctx, call.SessionID)
+	if err != nil {
+		slog.Warn("Failed to read goal state", "session_id", call.SessionID, "error", err)
+		return nil
+	}
+	if !g.Active() {
+		return nil
+	}
+	// A fresh user turn restarts the consecutive budget; synthetic
+	// continuations (checks, pause resumptions) keep it running.
+	if !call.goalCheck && !call.resumeAfterPause {
+		if err := a.goals.ResetProd(ctx, call.SessionID); err != nil {
+			slog.Warn("Failed to reset goal prod budget", "session_id", call.SessionID, "error", err)
+			return nil
+		}
+		g.ConsecutiveProds = 0
+	}
+	if g.ConsecutiveProds >= goal.MaxConsecutiveProds {
+		stalled, stallErr := a.goals.Stall(ctx, call.SessionID)
+		if stallErr != nil {
+			slog.Warn("Failed to stall goal", "session_id", call.SessionID, "error", stallErr)
+			return nil
+		}
+		slog.Warn("Goal supervision stalled after consecutive checks", "session_id", call.SessionID, "checks", g.ConsecutiveProds)
+		a.publishGoalState(call.SessionID, stalled)
+		return nil
+	}
+	updated, err := a.goals.BumpProd(ctx, call.SessionID)
+	if err != nil {
+		slog.Warn("Failed to bump goal prod counter", "session_id", call.SessionID, "error", err)
+		return nil
+	}
+	if !updated.Active() {
+		return nil
+	}
+	cont := call
+	cont.Prompt = goal.CheckPrompt(updated.Text, updated.ConsecutiveProds)
+	cont.Attachments = nil
+	cont.goalCheck = true
+	cont.resumeAfterPause = false
+	cont.resumedAfterCompaction = false
+	cont.OnComplete = nil
+	cont.Accepted = nil
+	cont.acceptSeq = 0
+	cont.QueueID = a.nextQueueID(call.SessionID)
+	a.messageQueue.Set(call.SessionID, []SessionAgentCall{cont})
+	a.publishGoalState(call.SessionID, updated)
+	return []SessionAgentCall{cont}
+}
+
+// publishGoalState notifies observers that goal state changed.
+func (a *sessionAgent) publishGoalState(sessionID string, g goal.Goal) {
+	if a.notify == nil {
+		return
+	}
+	a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+		SessionID: sessionID,
+		Type:      notify.TypeGoalStateChanged,
+		Goal:      &g,
+	})
+}
+
+// publishPauseState notifies observers when a pause latch takes effect
+// (paused=true, the run has stopped at its boundary) or lifts.
+func (a *sessionAgent) publishPauseState(sessionID string, paused bool) {
+	if a.notify == nil {
+		return
+	}
+	typ := notify.TypeAgentResumed
+	if paused {
+		typ = notify.TypeAgentPaused
+	}
+	a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+		SessionID: sessionID,
+		Type:      typ,
+	})
 }
 
 // Compact is the engine-only compaction entry point (the /compact command).
@@ -2639,6 +2927,14 @@ func (a *sessionAgent) Cancel(sessionID string) {
 	if ac, ok := a.activeRequests.Get(sessionID + "-summarize"); ok && ac != nil {
 		slog.Debug("Summarize cancellation initiated", "session_id", sessionID)
 		ac.cancel()
+	}
+
+	// A cancel is the session's reset affordance: lift any pause latch
+	// too, so new prompts are not held hostage by a stale pause pill and
+	// the held continuation (dropped below) cannot survive the cancel.
+	if a.IsPaused(sessionID) {
+		a.clearPaused(sessionID)
+		a.publishPauseState(sessionID, false)
 	}
 
 	// Record a pending cancel only when a dispatched-but-not-yet-active

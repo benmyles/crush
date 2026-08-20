@@ -19,6 +19,7 @@ import (
 	"charm.land/fantasy/providers/openaicompat"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,6 +74,13 @@ func (m *mockSessionAgent) RequestCompaction(string, string) {}
 func (m *mockSessionAgent) HasCompactionRequest(string) bool { return false }
 func (m *mockSessionAgent) CompactionStatus(context.Context, string) (tools.CompactContextStatus, error) {
 	return tools.CompactContextStatus{}, nil
+}
+func (m *mockSessionAgent) Pause(string)         {}
+func (m *mockSessionAgent) Resume(string)        {}
+func (m *mockSessionAgent) ResumeAll()           {}
+func (m *mockSessionAgent) IsPaused(string) bool { return false }
+func (m *mockSessionAgent) BusySessions() []string {
+	return nil
 }
 
 // newTestCoordinator creates a minimal coordinator for unit testing runSubAgent.
@@ -604,6 +612,34 @@ func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
 	thinking, ok := parsed.ExtraBody["thinking"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "enabled", thinking["type"])
+}
+
+// TestCoordinatorGoalAndPauseDegradation verifies the coordinator's goal
+// and pause methods degrade safely when no goal store or agent is
+// configured, and drive a mock agent when one is present.
+func TestCoordinatorGoalAndPauseDegradation(t *testing.T) {
+	t.Parallel()
+
+	c := &coordinator{}
+	if _, err := c.GetGoal(t.Context(), "sess-1"); !errors.Is(err, goal.ErrNoGoal) {
+		t.Fatalf("GetGoal without store: want goal.ErrNoGoal, got %v", err)
+	}
+	if err := c.SetGoal(t.Context(), "sess-1", "x"); !errors.Is(err, goal.ErrNoGoal) {
+		t.Fatalf("SetGoal without store: want goal.ErrNoGoal, got %v", err)
+	}
+	if err := c.ResumeGoal(t.Context(), "sess-1"); !errors.Is(err, goal.ErrNoGoal) {
+		t.Fatalf("ResumeGoal without store: want goal.ErrNoGoal, got %v", err)
+	}
+	if err := c.ClearGoal(t.Context(), "sess-1"); !errors.Is(err, goal.ErrNoGoal) {
+		t.Fatalf("ClearGoal without store: want goal.ErrNoGoal, got %v", err)
+	}
+	if c.Pause() {
+		t.Fatal("Pause with no current agent must report false")
+	}
+	c.Resume() // must not panic
+	if c.IsPaused("sess-1") {
+		t.Fatal("IsPaused with no current agent must be false")
+	}
 }
 
 func TestSessionStartHooksFireOncePerSession(t *testing.T) {

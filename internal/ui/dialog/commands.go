@@ -511,6 +511,20 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		)
 	}
 
+	// Goal supervision and global pause/resume commands.
+	if c.hasSession && c.sessionID != "" {
+		commands = append(commands,
+			NewCommandItem(c.com.Styles, "goal", "Set Goal", "", ActionOpenGoal{SessionID: c.sessionID}).WithAliases("goal"),
+			NewCommandItem(c.com.Styles, "goal_show", "Show Goal", "", ActionGoalShow{SessionID: c.sessionID}).WithAliases("goal:show"),
+			NewCommandItem(c.com.Styles, "goal_resume", "Resume Goal", "", ActionGoalResume{SessionID: c.sessionID}).WithAliases("goal:resume"),
+			NewCommandItem(c.com.Styles, "goal_clear", "Clear Goal", "", ActionGoalClear{SessionID: c.sessionID}).WithAliases("goal:clear"),
+		)
+	}
+	commands = append(commands,
+		NewCommandItem(c.com.Styles, "pause", "Pause Agent", "", ActionPause{}).WithAliases("pause"),
+		NewCommandItem(c.com.Styles, "resume", "Resume Agent", "", ActionResume{}).WithAliases("resume"),
+	)
+
 	// Only offer the rewind command when a user message is selected.
 	if c.hasSession && c.rewindMessageID != "" {
 		commands = append(commands,

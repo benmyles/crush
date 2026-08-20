@@ -34,6 +34,12 @@ type ConfigCompactRequest struct {
 	Enabled bool         `json:"enabled"`
 }
 
+// GoalSetRequest represents a request to set or reactivate a session
+// goal.
+type GoalSetRequest struct {
+	Text string `json:"text"`
+}
+
 // APIKeyKind discriminates the kind of credential carried in a
 // ConfigProviderKeyRequest. JSON's `any` loses Go type information, so
 // the wire format names the kind explicitly and the server decodes

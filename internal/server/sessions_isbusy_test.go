@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/backend"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/session"
@@ -56,6 +57,16 @@ func (s *stubCoordinator) Truncate(context.Context, string, string) error { retu
 func (s *stubCoordinator) Model() agent.Model                             { return agent.Model{} }
 func (s *stubCoordinator) UpdateModels(context.Context) error             { return nil }
 func (s *stubCoordinator) GenerateTitle(context.Context, string, string)  {}
+
+func (s *stubCoordinator) SetGoal(context.Context, string, string) error { return nil }
+func (s *stubCoordinator) GetGoal(context.Context, string) (goal.Goal, error) {
+	return goal.Goal{}, nil
+}
+func (s *stubCoordinator) ResumeGoal(context.Context, string) error { return nil }
+func (s *stubCoordinator) ClearGoal(context.Context, string) error  { return nil }
+func (s *stubCoordinator) Pause() bool                              { return false }
+func (s *stubCoordinator) Resume()                                  {}
+func (s *stubCoordinator) IsPaused(string) bool                     { return false }
 
 // stubSessions is a minimal session.Service that returns a fixed list
 // (and supports Get by ID). All other methods return zero values; the

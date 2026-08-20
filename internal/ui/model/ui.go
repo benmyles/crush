@@ -38,6 +38,7 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/fsext"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/home"
 	"github.com/charmbracelet/crush/internal/lsp"
@@ -241,6 +242,18 @@ type UI struct {
 	// shellResultMsg. Checked by isAgentBusy and cancelAgent so that
 	// Escape works for bang commands the same way it does for agent runs.
 	bangCancel context.CancelFunc
+
+	// pausedActive tracks whether the global pause latch is holding this
+	// session's agent. It is updated from agent_paused/agent_resumed
+	// notifications; a pause that arrived before those events land is
+	// harmless because the pill is informational.
+	pausedActive bool
+	// goal caches the current session's goal state for the pills and
+	// sidebar. Updated from goal_state_changed notifications and goal
+	// commands. Session switches must reset it.
+	goal goal.Goal
+	// goalExpanded tracks whether the sidebar goal section is expanded.
+	goalExpanded bool
 
 	header *header
 
@@ -778,6 +791,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.dispatchBusyRefresh(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case goalFetchedMsg:
+		cmds = append(cmds, m.handleGoalFetched(msg))
+	case goalSetSuccessMsg:
+		cmds = append(cmds, m.handleGoalSetSuccess(msg))
+	case goalClearedMsg:
+		if m.goal.SessionID == msg.sessionID {
+			m.goal = goal.Goal{}
+		}
+		m.renderPills()
 	case agentRunSubmittedMsg:
 		// A prompt was just accepted (run started or enqueued): fetch the
 		// authoritative busy/queue state to confirm the optimistic values
@@ -798,6 +820,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.sidebarOffset = 0
 		m.sessionFiles = msg.files
+		// Session switch: goal and pause state belong to the previous
+		// session. Reset the cached displays and re-fetch the goal
+		// off-thread; the pause pill follows pause notifications, which
+		// are session-scoped by the agent.
+		m.goal = goal.Goal{}
+		m.pausedActive = false
+		cmds = append(cmds, m.dispatchGoalFetch(m.session.ID, false))
 		// Session switch: the memoized busy state and queued prompts
 		// belong to the previous session. Drop them and re-fetch
 		// off-thread so the queue pill and esc behavior track the new
@@ -2056,6 +2085,57 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return rewindSuccessMsg{text: prefill}
 		})
 		m.dialog.CloseDialog(dialog.RewindID)
+	case dialog.ActionPause:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		m.pausedActive = true
+		m.renderPills()
+		cmds = append(cmds, func() tea.Msg {
+			if !m.com.Workspace.AgentPause() {
+				m.pausedActive = false
+				return util.NewWarnMsg("Pause requested; the agent stops at its next step")
+			}
+			return util.NewInfoMsg("Agent paused; it stops at its next step")
+		})
+	case dialog.ActionResume:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		m.pausedActive = false
+		m.renderPills()
+		cmds = append(cmds, func() tea.Msg {
+			m.com.Workspace.AgentResume()
+			return util.NewInfoMsg("Agent resumed")
+		})
+	case dialog.ActionOpenGoal:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		dlg, _ := dialog.NewGoalInput(m.com, msg.SessionID)
+		m.dialog.OpenDialog(dlg)
+	case dialog.ActionSetGoal:
+		m.dialog.CloseDialog(dialog.GoalInputID)
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy; wait for the current turn before setting a goal"))
+			break
+		}
+		cmds = append(cmds, m.goalCommand(msg.SessionID, msg.Text))
+	case dialog.ActionGoalShow:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		cmds = append(cmds, m.dispatchGoalFetch(msg.SessionID, true))
+	case dialog.ActionGoalResume:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		sessionID := msg.SessionID
+		cmds = append(cmds, func() tea.Msg {
+			if err := m.com.Workspace.GoalResume(context.Background(), sessionID); err != nil {
+				return util.ReportError(err)()
+			}
+			return util.NewInfoMsg("Goal reactivated; the agent will continue")
+		})
+	case dialog.ActionGoalClear:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		sessionID := msg.SessionID
+		cmds = append(cmds, func() tea.Msg {
+			if err := m.com.Workspace.GoalClear(context.Background(), sessionID); err != nil {
+				return util.ReportError(err)()
+			}
+			return goalClearedMsg{sessionID: sessionID}
+		})
 	case dialog.ActionToggleHelp:
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -2780,6 +2860,16 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.randomizePlaceholders()
 					m.historyReset()
 					return tea.Batch(m.runShellCommand(value))
+				}
+
+				// Goal and pause/resume slash commands intercept here,
+				// before the value becomes a user prompt.
+				if cmd, handled := m.trySlashCommand(value); handled {
+					m.historyReset()
+					if cmd != nil {
+						return cmd
+					}
+					return nil
 				}
 
 				attachments := m.attachments.List()
@@ -4993,16 +5083,37 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 		// started this turn: clear the pulse pill and the live stream item
 		// as a failsafe in case TypeCompactionFinished was never published.
 		m.clearCompactionState()
-		cmds = append(cmds, m.sendNotification(notification.Notification{
-			Title:   "Crush is waiting...",
-			Message: fmt.Sprintf("Agent's turn completed in \"%s\"", n.SessionTitle),
-		}))
+		// Synthetic continuations (goal checks, pause resumptions) must
+		// not ping the desktop notification center; the turn boundary is
+		// meaningful to the user only for real turns.
+		if !n.Internal {
+			cmds = append(cmds, m.sendNotification(notification.Notification{
+				Title:   "Crush is waiting...",
+				Message: fmt.Sprintf("Agent's turn completed in \"%s\"", n.SessionTitle),
+			}))
+		}
 		if m.com.IsHyper() {
 			cmds = append(cmds, m.fetchHyperCredits())
 		}
 	case notify.TypeAgentError:
 		// Terminal edge like TypeAgentFinished; fall through to the
 		// busy/queue refresh below.
+	case notify.TypeAgentPaused:
+		// The pause latch took effect: a run stopped at its step
+		// boundary. The pill reflects it; the busy state changed (the
+		// holding continuation means the agent is no longer actively
+		// running), so fall through to the busy refresh below.
+		m.pausedActive = true
+		m.renderPills()
+	case notify.TypeAgentResumed:
+		m.pausedActive = false
+		m.renderPills()
+	case notify.TypeGoalStateChanged:
+		if n.Goal != nil && m.hasSession() && n.Goal.SessionID == m.session.ID {
+			m.goal = *n.Goal
+			m.renderPills()
+		}
+		return nil
 	case notify.TypeReAuthenticate:
 		return m.handleReAuthenticate(n.ProviderID)
 	case notify.TypeAWSSSOAuth:

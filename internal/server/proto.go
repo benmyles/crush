@@ -1023,6 +1023,164 @@ func (c *controllerV1) handlePostWorkspaceAgentSessionShell(w http.ResponseWrite
 	jsonEncode(w, resp)
 }
 
+// handleGetWorkspaceAgentSessionGoal returns the goal state for a session.
+//
+//	@Summary		Get session goal
+//	@Tags			agent
+//	@Produce		json
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Param			sid	path	string	true	"Session ID"
+//	@Success		200	{object}	goal.Goal
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/goal [get]
+func (c *controllerV1) handleGetWorkspaceAgentSessionGoal(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	g, err := c.backend.GetGoal(r.Context(), id, sid)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, g)
+}
+
+// handlePostWorkspaceAgentSessionGoalSet sets or reactivates a session goal.
+//
+//	@Summary		Set session goal
+//	@Tags			agent
+//	@Accept			json
+//	@Param			id		path	string				true	"Workspace ID"
+//	@Param			sid		path	string				true	"Session ID"
+//	@Param			request	body	proto.GoalSetRequest	true	"Goal text"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/goal/set [post]
+func (c *controllerV1) handlePostWorkspaceAgentSessionGoalSet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	var req proto.GoalSetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+	if req.Text == "" {
+		jsonError(w, http.StatusBadRequest, "text is required")
+		return
+	}
+	if err := c.backend.SetGoal(r.Context(), id, sid, req.Text); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePostWorkspaceAgentSessionGoalClear deletes a session goal.
+//
+//	@Summary		Clear session goal
+//	@Tags			agent
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Param			sid	path	string	true	"Session ID"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/goal/clear [post]
+func (c *controllerV1) handlePostWorkspaceAgentSessionGoalClear(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	if err := c.backend.ClearGoal(r.Context(), id, sid); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePostWorkspaceAgentSessionGoalResume reactivates a blocked or
+// stalled session goal.
+//
+//	@Summary		Resume session goal
+//	@Tags			agent
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Param			sid	path	string	true	"Session ID"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/goal/resume [post]
+func (c *controllerV1) handlePostWorkspaceAgentSessionGoalResume(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	if err := c.backend.ResumeGoal(r.Context(), id, sid); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePostWorkspaceAgentPause latches the global pause flag on every
+// session with an active run.
+//
+//	@Summary		Pause agent
+//	@Tags			agent
+//	@Produce		json
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Success		200	{boolean}	bool
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/pause [post]
+func (c *controllerV1) handlePostWorkspaceAgentPause(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	paused, err := c.backend.Pause(id)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, paused)
+}
+
+// handlePostWorkspaceAgentResume lifts the global pause latch.
+//
+//	@Summary		Resume agent
+//	@Tags			agent
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/resume [post]
+func (c *controllerV1) handlePostWorkspaceAgentResume(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := c.backend.Resume(id); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleGetWorkspaceAgentSessionPaused reports whether a session has a
+// latched pause.
+//
+//	@Summary		Agent paused state
+//	@Tags			agent
+//	@Produce		json
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Param			sid	path	string	true	"Session ID"
+//	@Success		200	{boolean}	bool
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/paused [get]
+func (c *controllerV1) handleGetWorkspaceAgentSessionPaused(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	paused, err := c.backend.IsPaused(id, sid)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, paused)
+}
+
 // handleGetWorkspaceAgentSessionPromptList returns the list of queued prompts.
 //
 //	@Summary		List queued prompts

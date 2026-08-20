@@ -841,6 +841,9 @@ func allToolNames() []string {
 		"recall_expand",
 		"compact_context",
 		"llm_map",
+		"update_goal",
+		"goal_complete",
+		"goal_blocked",
 	}
 }
 

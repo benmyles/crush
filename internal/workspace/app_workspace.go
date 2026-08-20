@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/commands"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
@@ -245,6 +246,54 @@ func (w *AppWorkspace) RewindSession(ctx context.Context, sessionID, messageID s
 		return errors.New("agent coordinator not initialized")
 	}
 	return w.app.AgentCoordinator.Truncate(ctx, sessionID, messageID)
+}
+
+func (w *AppWorkspace) GoalSet(ctx context.Context, sessionID, text string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.SetGoal(ctx, sessionID, text)
+}
+
+func (w *AppWorkspace) GoalGet(ctx context.Context, sessionID string) (goal.Goal, error) {
+	if w.app.AgentCoordinator == nil {
+		return goal.Goal{}, errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.GetGoal(ctx, sessionID)
+}
+
+func (w *AppWorkspace) GoalResume(ctx context.Context, sessionID string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.ResumeGoal(ctx, sessionID)
+}
+
+func (w *AppWorkspace) GoalClear(ctx context.Context, sessionID string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.ClearGoal(ctx, sessionID)
+}
+
+func (w *AppWorkspace) AgentPause() bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.Pause()
+}
+
+func (w *AppWorkspace) AgentResume() {
+	if w.app.AgentCoordinator != nil {
+		w.app.AgentCoordinator.Resume()
+	}
+}
+
+func (w *AppWorkspace) AgentIsPaused(sessionID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.IsPaused(sessionID)
 }
 
 func (w *AppWorkspace) UpdateAgentModel(ctx context.Context) error {

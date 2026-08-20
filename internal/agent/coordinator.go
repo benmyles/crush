@@ -31,6 +31,7 @@ import (
 	"github.com/charmbracelet/crush/internal/discover"
 	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/filetracker"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/hooks"
 	"github.com/charmbracelet/crush/internal/log"
@@ -119,6 +120,22 @@ type Coordinator interface {
 	// state (legacy summary pointer or compaction-engine summaries) that
 	// referenced the deleted messages.
 	Truncate(context.Context, string, string) error
+	// Goal management for the goal supervision loop. SetGoal creates or
+	// reactivates the session's goal; ResumeGoal reactivates a blocked or
+	// stalled goal; ClearGoal deletes it. They all degrade to goal.ErrNoGoal
+	// when the coordinator has no goal store.
+	SetGoal(ctx context.Context, sessionID, text string) error
+	GetGoal(ctx context.Context, sessionID string) (goal.Goal, error)
+	ResumeGoal(ctx context.Context, sessionID string) error
+	ClearGoal(ctx context.Context, sessionID string) error
+	// Pause latches the pause flag on every session with an active run;
+	// those runs stop at their next step boundary. It reports whether any
+	// session was actually paused.
+	Pause() bool
+	// Resume lifts the pause latch everywhere and continues held turns.
+	Resume()
+	// IsPaused reports whether sessionID has a latched pause.
+	IsPaused(sessionID string) bool
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	GenerateTitle(ctx context.Context, sessionID, prompt string)
@@ -138,6 +155,9 @@ type coordinator struct {
 	querier     db.Querier
 	dbConn      *sql.DB
 	interactive bool
+	// goals persists session goal state and backs the goal tools and
+	// supervision loop. Nil when the coordinator has no database.
+	goals *goal.Store
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -203,6 +223,7 @@ func NewCoordinator(ctx context.Context, opts CoordinatorOptions) (Coordinator, 
 		runComplete:     opts.RunComplete,
 		querier:         opts.Querier,
 		dbConn:          opts.DBConn,
+		goals:           goal.NewStore(opts.DBConn),
 		agents:          make(map[string]SessionAgent),
 		allSkills:       allSkills,
 		activeSkills:    activeSkills,
@@ -716,6 +737,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		Tools:                nil,
 		Notify:               c.notify,
 		RunComplete:          c.runComplete,
+		Goals:                c.goals,
 	})
 
 	// The readiness goroutines below perform one-time setup — building the
@@ -841,6 +863,17 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 			allTools,
 			tools.NewListMCPResourcesTool(c.cfg, c.permissions),
 			tools.NewReadMCPResourceTool(c.cfg, c.permissions),
+		)
+	}
+
+	// Goal supervision tools. Registered only with a functioning goal
+	// store: it is the durable source of truth shared by the loop, the
+	// tools, and the UI.
+	if c.goals != nil && c.dbConn != nil {
+		allTools = append(allTools,
+			tools.NewUpdateGoalTool(c.goals, c.publishGoalState),
+			tools.NewCompleteGoalTool(c.goals, c.publishGoalState),
+			tools.NewBlockGoalTool(c.goals, c.publishGoalState),
 		)
 	}
 
@@ -1413,6 +1446,107 @@ func (c *coordinator) QueuedPromptsList(sessionID string) []QueuedPromptItem {
 
 func (c *coordinator) RemoveQueuedPrompt(sessionID string, queueID uint64) bool {
 	return c.currentAgent.RemoveQueuedPrompt(sessionID, queueID)
+}
+
+// publishGoalState broadcasts a goal state transition to subscribers.
+func (c *coordinator) publishGoalState(g goal.Goal) {
+	if c.notify == nil {
+		return
+	}
+	c.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+		SessionID: g.SessionID,
+		Type:      notify.TypeGoalStateChanged,
+		Goal:      &g,
+	})
+}
+
+// SetGoal creates or reactivates the session's goal.
+func (c *coordinator) SetGoal(ctx context.Context, sessionID, text string) error {
+	if c.goals == nil {
+		return goal.ErrNoGoal
+	}
+	g, err := c.goals.Set(ctx, sessionID, text)
+	if err != nil {
+		return err
+	}
+	c.publishGoalState(g)
+	return nil
+}
+
+// GetGoal returns the session's goal state (StatusNone when unset).
+func (c *coordinator) GetGoal(ctx context.Context, sessionID string) (goal.Goal, error) {
+	if c.goals == nil {
+		return goal.Goal{}, goal.ErrNoGoal
+	}
+	return c.goals.Get(ctx, sessionID)
+}
+
+// ResumeGoal reactivates a blocked or stalled goal and, when the session
+// is idle, immediately resumes an autonomous goal check so the work
+// continues in place.
+func (c *coordinator) ResumeGoal(ctx context.Context, sessionID string) error {
+	if c.goals == nil {
+		return goal.ErrNoGoal
+	}
+	g, err := c.goals.Resume(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	c.publishGoalState(g)
+	if c.currentAgent == nil || c.currentAgent.IsSessionBusy(sessionID) || c.currentAgent.IsPaused(sessionID) {
+		return nil
+	}
+	// Fire-and-forget: the check turn runs like a user turn and may
+	// chain further checks until the goal is terminal or stalls.
+	go func() {
+		_, runErr := c.currentAgent.Run(context.WithoutCancel(ctx), SessionAgentCall{
+			SessionID: sessionID,
+			Prompt:    goal.CheckPrompt(g.Text, 1),
+			goalCheck: true,
+		})
+		if runErr != nil {
+			slog.Warn("Goal resume check failed", "session_id", sessionID, "error", runErr)
+		}
+	}()
+	return nil
+}
+
+// ClearGoal deletes the session's goal.
+func (c *coordinator) ClearGoal(ctx context.Context, sessionID string) error {
+	if c.goals == nil {
+		return goal.ErrNoGoal
+	}
+	if err := c.goals.Clear(ctx, sessionID); err != nil {
+		return err
+	}
+	c.publishGoalState(goal.Goal{})
+	return nil
+}
+
+// Pause latches the pause flag on every session with an active run. It
+// reports whether any session was actually paused.
+func (c *coordinator) Pause() bool {
+	if c.currentAgent == nil {
+		return false
+	}
+	any := false
+	for _, sessionID := range c.currentAgent.BusySessions() {
+		c.currentAgent.Pause(sessionID)
+		any = true
+	}
+	return any
+}
+
+// Resume lifts every pause latch and continues the held turns.
+func (c *coordinator) Resume() {
+	if c.currentAgent != nil {
+		c.currentAgent.ResumeAll()
+	}
+}
+
+// IsPaused reports whether sessionID has a latched pause.
+func (c *coordinator) IsPaused(sessionID string) bool {
+	return c.currentAgent != nil && c.currentAgent.IsPaused(sessionID)
 }
 
 // Compact is the explicit compaction-engine entry point (the /compact

@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/crush/internal/client"
 	"github.com/charmbracelet/crush/internal/commands"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/herdr"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/log"
@@ -333,6 +334,46 @@ func (w *ClientWorkspace) AgentCompact(ctx context.Context, sessionID string) er
 
 func (w *ClientWorkspace) RewindSession(ctx context.Context, sessionID, messageID string) error {
 	return w.client.RewindSession(ctx, w.workspaceID(), sessionID, messageID)
+}
+
+func (w *ClientWorkspace) GoalSet(ctx context.Context, sessionID, text string) error {
+	return w.client.SetSessionGoal(ctx, w.workspaceID(), sessionID, text)
+}
+
+func (w *ClientWorkspace) GoalGet(ctx context.Context, sessionID string) (goal.Goal, error) {
+	return w.client.GetSessionGoal(ctx, w.workspaceID(), sessionID)
+}
+
+func (w *ClientWorkspace) GoalResume(ctx context.Context, sessionID string) error {
+	return w.client.ResumeSessionGoal(ctx, w.workspaceID(), sessionID)
+}
+
+func (w *ClientWorkspace) GoalClear(ctx context.Context, sessionID string) error {
+	return w.client.ClearSessionGoal(ctx, w.workspaceID(), sessionID)
+}
+
+func (w *ClientWorkspace) AgentPause() bool {
+	paused, err := w.client.PauseAgent(context.Background(), w.workspaceID())
+	if err != nil {
+		slog.Debug("Failed to pause agent", "error", err)
+		return false
+	}
+	return paused
+}
+
+func (w *ClientWorkspace) AgentResume() {
+	if err := w.client.ResumeAgent(context.Background(), w.workspaceID()); err != nil {
+		slog.Debug("Failed to resume agent", "error", err)
+	}
+}
+
+func (w *ClientWorkspace) AgentIsPaused(sessionID string) bool {
+	paused, err := w.client.IsAgentPaused(context.Background(), w.workspaceID(), sessionID)
+	if err != nil {
+		slog.Debug("Failed to get agent paused state", "error", err)
+		return false
+	}
+	return paused
 }
 
 func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {
