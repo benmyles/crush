@@ -17,6 +17,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/catwalk/pkg/embedded"
+	"github.com/charmbracelet/crush/internal/agent/codex"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/home"
@@ -238,6 +239,12 @@ func Providers(cfg *Config, opts ...HyperTokenRefresher) ([]catwalk.Provider, er
 			providerList = append([]catwalk.Provider{hyperProvider}, slices.Collect(providers.Seq())...)
 		} else {
 			providerList = slices.Collect(providers.Seq())
+		}
+		if !customProvidersOnly {
+			// Codex is a bundled subscription provider like Hyper: its
+			// endpoint and model catalog ship with Crush rather than in
+			// the upstream catalog.
+			providerList = append([]catwalk.Provider{codex.Embedded()}, providerList...)
 		}
 		providerErr = errors.Join(catwalkErr, hyperErr)
 	})

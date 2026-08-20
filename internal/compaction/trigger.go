@@ -26,6 +26,11 @@ type TriggerInput struct {
 	// SoftThresholdFraction is the fraction of the window at which async
 	// compaction triggers (default 0.7).
 	SoftThresholdFraction float64
+	// HardThresholdTokens optionally overrides the hard compaction
+	// threshold (normally ContextWindow - ReserveTokens). When set and
+	// below the computed threshold, it becomes the model's blocking
+	// auto-compaction point.
+	HardThresholdTokens int64
 	// Messages is the recent message list, for the structure-aware rubric.
 	Messages []message.Message
 }
@@ -48,6 +53,9 @@ func DecideTrigger(in TriggerInput) TriggerDecision {
 		return TriggerDecision{Reason: TriggerNone}
 	}
 	hardThreshold := in.ContextWindow - in.ReserveTokens
+	if in.HardThresholdTokens > 0 && in.HardThresholdTokens < hardThreshold {
+		hardThreshold = in.HardThresholdTokens
+	}
 	softThreshold := int64(float64(in.ContextWindow) * in.SoftThresholdFraction)
 	if in.SoftThresholdFraction <= 0 {
 		softThreshold = int64(float64(in.ContextWindow) * 0.7)

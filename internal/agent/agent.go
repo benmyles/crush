@@ -36,6 +36,7 @@ import (
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/crush/internal/agent/codex"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/tools"
@@ -169,7 +170,7 @@ type QueuedPromptItem struct {
 type SessionAgent interface {
 	Run(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)
 	BeginAccepted(sessionID string) *AcceptedRun
-	SetModels(large Model, small Model)
+	SetModels(large, small Model)
 	// SetCompactionModel sets (or clears, with nil) the dedicated model used
 	// by the context compaction engine. When nil, compaction runs on the
 	// large model.
@@ -998,7 +999,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
 		Messages:         history,
-		Headers:          sessionHeaders(call.SessionID),
+		Headers:          a.sessionCallHeaders(call.SessionID, largeModel.ModelCfg.Provider),
 		ProviderOptions:  call.ProviderOptions,
 		MaxOutputTokens:  maxOutputTokens,
 		TopP:             call.TopP,
@@ -1082,7 +1083,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			currentAssistant.AppendReasoningContent(reasoning.Text)
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
-		OnReasoningDelta: func(id string, text string) error {
+		OnReasoningDelta: func(id, text string) error {
 			currentAssistant.AppendReasoningContent(text)
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
@@ -1106,7 +1107,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			currentAssistant.FinishThinking()
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
-		OnTextDelta: func(id string, text string) error {
+		OnTextDelta: func(id, text string) error {
 			// Strip leading newline from initial text content. This is is
 			// particularly important in non-interactive mode where leading
 			// newlines are very visible.
@@ -1117,7 +1118,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			currentAssistant.AppendContent(text)
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
-		OnToolInputStart: func(id string, toolName string) error {
+		OnToolInputStart: func(id, toolName string) error {
 			toolCall := message.ToolCall{
 				ID:               id,
 				Name:             toolName,
@@ -1255,6 +1256,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					return true
 				}
 				cw := int64(largeModel.CatwalkCfg.ContextWindow)
+				triggerOverride := largeModel.CatwalkCfg.CompactionTriggerTokens
 				// If context window is unknown (0), skip auto-summarize
 				// to avoid immediately truncating custom/local models.
 				if cw == 0 || a.disableAutoSummarize {
@@ -1264,13 +1266,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 
 				// Single source of truth for the hard threshold (in usage
 				// tokens): window - reserve with the engine enabled, else the
-				// legacy constants. See hardCompactionThreshold.
+				// legacy constants. Models with a declared compaction
+				// trigger point (compaction_trigger_tokens) cap it. See
+				// hardCompactionThreshold.
 				engineEnabled := a.compactionEngineEnabled()
 				var compactionCfg config.CompactionConfig
 				if engineEnabled {
 					compactionCfg = config.ResolveCompactionConfig(a.cfg.Config())
 				}
-				if tokens >= hardCompactionThreshold(cw, engineEnabled, compactionCfg) {
+				if tokens >= effectiveHardCompactionThreshold(cw, triggerOverride, engineEnabled, compactionCfg) {
 					shouldSummarize = true
 					return true
 				}
@@ -1286,6 +1290,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 							ContextWindow:         cw,
 							ReserveTokens:         reserve,
 							SoftThresholdFraction: compactionCfg.SoftThresholdFraction,
+							HardThresholdTokens:   triggerOverride,
 							Messages:              recentMsgs,
 						})
 						if decision.Reason == compaction.TriggerRubric || decision.Reason == compaction.TriggerSoft {
@@ -1925,7 +1930,7 @@ func (a *sessionAgent) legacySummarize(ctx context.Context, sessionID string, op
 			}
 			return callContext, prepared, nil
 		},
-		OnReasoningDelta: func(id string, text string) error {
+		OnReasoningDelta: func(id, text string) error {
 			summaryMessage.AppendReasoningContent(text)
 			return a.messages.Update(genCtx, summaryMessage)
 		},
@@ -2199,7 +2204,7 @@ func (a *sessionAgent) compactWithEngine(ctx context.Context, sessionID, instruc
 	if dedicated {
 		callRefresh = nil
 		if providerCfg, ok := a.cfg.Config().Providers.Get(summarizer.ModelCfg.Provider); ok {
-			callOpts = getProviderOptions(summarizer, providerCfg)
+			callOpts = getProviderOptions(summarizer, providerCfg, sessionID)
 			callPrefix = providerCfg.SystemPromptPrefix
 		}
 		if a.providerAuthRefresh != nil {
@@ -2435,6 +2440,18 @@ func sessionHeaders(sessionID string) map[string]string {
 		"x-session-id":       hash,
 		"x-session-affinity": hash,
 	}
+}
+
+// sessionCallHeaders builds the per-call headers for a run. The Codex
+// backend additionally keys its prompt cache off the session-id header,
+// mirroring the official Codex client.
+func (a *sessionAgent) sessionCallHeaders(sessionID, provider string) map[string]string {
+	headers := sessionHeaders(sessionID)
+	if provider == codex.Name {
+		headers["session-id"] = headers["x-session-id"]
+		headers["x-client-request-id"] = headers["x-session-id"]
+	}
+	return headers
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall) (message.Message, error) {
@@ -2676,7 +2693,7 @@ func hasUserTextMessage(msgs []message.Message) bool {
 }
 
 // GenerateTitle generates a session title based on the initial prompt.
-func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, userPrompt string) {
+func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID, userPrompt string) {
 	if userPrompt == "" {
 		return
 	}
@@ -3164,7 +3181,7 @@ func (a *sessionAgent) QueuedPromptsList(sessionID string) []QueuedPromptItem {
 	return items
 }
 
-func (a *sessionAgent) SetModels(large Model, small Model) {
+func (a *sessionAgent) SetModels(large, small Model) {
 	a.largeModel.Set(large)
 	a.smallModel.Set(small)
 }

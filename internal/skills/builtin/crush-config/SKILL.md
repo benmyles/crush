@@ -85,6 +85,27 @@ provider add deepseek \
   --api-key "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}"
 ```
 
+### subscription logins
+
+Subscription-based providers authenticate with OAuth instead of an API key:
+
+```bash
+crush login [hyper|copilot|codex]   # auth alias: crush auth
+crush logout [platform]             # remove stored credentials (alias: signout)
+crush login -f <platform>           # force re-authentication
+```
+
+- `hyper` — Charm Hyper (flat-rate access to curated models).
+- `copilot` — GitHub Copilot (Pro/Business account).
+- `codex` — OpenAI Codex through a ChatGPT Plus/Pro subscription. Billed by
+  the subscription, not per token, and uses the
+  `chatgpt.com/backend-api/codex/responses` endpoint. Models are the bundled
+  Codex catalog (`gpt-5.4`, `gpt-5.5`, `gpt-5.6-*`, and friends); price
+  metadata is zeroed and the provider is marked flat-rate.
+
+Logins are stored under `providers.<id>.api_key` and `providers.<id>.oauth`
+in the global config; tokens refresh automatically.
+
 ### models
 
 ```bash

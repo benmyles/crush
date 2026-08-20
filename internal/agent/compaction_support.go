@@ -47,6 +47,19 @@ func hardCompactionThreshold(cw int64, engineEnabled bool, cfg config.Compaction
 	return cw - int64(float64(cw)*smallContextWindowRatio)
 }
 
+// effectiveHardCompactionThreshold returns the hard threshold with an
+// optional model-level override applied. Models whose usable context is
+// smaller than their declared window (e.g. codex models that auto-compact
+// before their 500k API window) declare a compaction_trigger_tokens value
+// that caps the threshold.
+func effectiveHardCompactionThreshold(cw, override int64, engineEnabled bool, cfg config.CompactionConfig) int64 {
+	threshold := hardCompactionThreshold(cw, engineEnabled, cfg)
+	if override > 0 && override < threshold {
+		return override
+	}
+	return threshold
+}
+
 // estimateStoredMessageTokens sums the approximate token cost of all parts of
 // a message (text, reasoning, tool-call input, tool-result content, shell
 // command + output), not just the first text part. Without this, tool-heavy

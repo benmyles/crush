@@ -16,10 +16,13 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
+	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openaicompat"
+	codexcatalog "github.com/charmbracelet/crush/internal/agent/codex"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/goal"
+	"github.com/charmbracelet/crush/internal/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -546,7 +549,7 @@ func TestGetProviderOptionsReasoningEffort(t *testing.T) {
 			}
 			providerCfg := config.ProviderConfig{ID: "test", Type: tc.providerType}
 
-			opts := getProviderOptions(model, providerCfg)
+			opts := getProviderOptions(model, providerCfg, "")
 
 			raw, ok := opts[anthropic.Name]
 			require.True(t, ok, "options should be keyed under anthropic.Name for type %q", tc.providerType)
@@ -600,7 +603,7 @@ func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
 		Type: openaicompat.Name,
 	}
 
-	opts := getProviderOptions(model, providerCfg)
+	opts := getProviderOptions(model, providerCfg, "")
 
 	raw, ok := opts[openaicompat.Name]
 	require.True(t, ok)
@@ -612,6 +615,69 @@ func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
 	thinking, ok := parsed.ExtraBody["thinking"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "enabled", thinking["type"])
+}
+
+func TestGetProviderOptionsCodex(t *testing.T) {
+	model := Model{
+		CatwalkCfg: catwalk.Model{
+			ID:              "gpt-5.6-sol",
+			CanReason:       true,
+			ReasoningLevels: []string{"low", "medium", "high", "xhigh", "max"},
+		},
+		ModelCfg: config.SelectedModel{
+			Provider:        codexcatalog.Name,
+			ReasoningEffort: "xhigh",
+		},
+	}
+	providerCfg := config.ProviderConfig{ID: codexcatalog.Name, Type: catwalk.Type(codexcatalog.Name)}
+
+	opts := getProviderOptions(model, providerCfg, "session-uuid")
+
+	raw, ok := opts[openai.Name]
+	require.True(t, ok, "codex options should be keyed under openai.Name for the Responses model")
+	parsed, ok := raw.(*openai.ResponsesProviderOptions)
+	require.True(t, ok)
+
+	// Reasoning effort: the selected level is honored, including xhigh.
+	require.NotNil(t, parsed.ReasoningEffort)
+	assert.Equal(t, openai.ReasoningEffortXHigh, *parsed.ReasoningEffort)
+	require.NotNil(t, parsed.ReasoningSummary)
+	assert.Equal(t, "auto", *parsed.ReasoningSummary)
+
+	// Reasoning encrypted content is always requested.
+	require.Contains(t, parsed.Include, openai.IncludeReasoningEncryptedContent)
+
+	// Text verbosity is pinned to high.
+	require.NotNil(t, parsed.TextVerbosity)
+	assert.Equal(t, openai.TextVerbosityHigh, *parsed.TextVerbosity)
+
+	// The prompt cache key is derived from the session ID.
+	require.NotNil(t, parsed.PromptCacheKey)
+	assert.Equal(t, session.HashID("session-uuid"), *parsed.PromptCacheKey)
+}
+
+func TestGetProviderOptionsCodexMaxEffort(t *testing.T) {
+	model := Model{
+		CatwalkCfg: catwalk.Model{
+			ID:              "gpt-5.6-luna",
+			CanReason:       true,
+			ReasoningLevels: []string{"low", "medium", "high", "xhigh", "max"},
+		},
+		ModelCfg: config.SelectedModel{
+			Provider:        codexcatalog.Name,
+			ReasoningEffort: "max",
+		},
+	}
+	providerCfg := config.ProviderConfig{ID: codexcatalog.Name, Type: catwalk.Type(codexcatalog.Name)}
+
+	opts := getProviderOptions(model, providerCfg, "")
+
+	parsed, ok := opts[openai.Name].(*openai.ResponsesProviderOptions)
+	require.True(t, ok)
+	require.NotNil(t, parsed.ReasoningEffort)
+	assert.Equal(t, openai.ReasoningEffortMax, *parsed.ReasoningEffort)
+	// Without a session ID there is no cache key.
+	require.Nil(t, parsed.PromptCacheKey)
 }
 
 // TestCoordinatorGoalAndPauseDegradation verifies the coordinator's goal

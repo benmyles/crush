@@ -28,6 +28,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent"
+	codexcatalog "github.com/charmbracelet/crush/internal/agent/codex"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	agenttools "github.com/charmbracelet/crush/internal/agent/tools"
@@ -2635,6 +2636,8 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 		dlg, cmd = dialog.NewOAuthHyper(m.com, isOnboarding, provider, model, modelType)
 	case catwalk.InferenceProviderCopilot:
 		dlg, cmd = dialog.NewOAuthCopilot(m.com, isOnboarding, provider, model, modelType)
+	case catwalk.InferenceProvider(codexcatalog.Name):
+		dlg, cmd = dialog.NewOAuthCodex(m.com, isOnboarding, provider, model, modelType)
 	default:
 		dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
 	}

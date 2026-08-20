@@ -21,6 +21,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	codexcatalog "github.com/charmbracelet/crush/internal/agent/codex"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/prompt"
@@ -38,6 +39,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth"
+	codexoauth "github.com/charmbracelet/crush/internal/oauth/codex"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -253,12 +255,12 @@ func NewCoordinator(ctx context.Context, opts CoordinatorOptions) (Coordinator, 
 }
 
 // Run implements Coordinator.
-func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+func (c *coordinator) Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	return c.run(ctx, nil, sessionID, prompt, attachments...)
 }
 
 // RunAccepted implements Coordinator.
-func (c *coordinator) RunAccepted(ctx context.Context, accept *AcceptedRun, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+func (c *coordinator) RunAccepted(ctx context.Context, accept *AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	return c.run(ctx, accept, sessionID, prompt, attachments...)
 }
 
@@ -267,7 +269,7 @@ func (c *coordinator) RunAccepted(ctx context.Context, accept *AcceptedRun, sess
 // Accepted so sessionAgent.Run can consume the accept reservation under
 // dispatchMu; when nil (the in-process/local path) no accept tracking
 // applies.
-func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	if err := c.readyWg.Wait(); err != nil {
 		return nil, err
 	}
@@ -314,7 +316,7 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 		return nil, errModelProviderNotConfigured
 	}
 
-	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
+	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg, sessionID)
 
 	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
 		// NOTE(@andreynering): We don't return here because the event handling to ask the user to reauthenticate
@@ -448,7 +450,7 @@ func effectiveReasoningEffort(model Model) string {
 	return ""
 }
 
-func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
+func getProviderOptions(model Model, providerCfg config.ProviderConfig, sessionID string) fantasy.ProviderOptions {
 	options := fantasy.ProviderOptions{}
 
 	cfgOpts := []byte("{}")
@@ -521,6 +523,27 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			if err == nil {
 				options[openai.Name] = parsed
 			}
+		}
+
+	case codexcatalog.Name:
+		// The Codex (ChatGPT subscription) responses backend mirrors the
+		// OpenAI Responses API with a few extra expectations: reasoning
+		// effort rides in the reasoning object with a summary, encrypted
+		// reasoning content must be requested explicitly, and the backend
+		// rejects max_output_tokens (suppressed at the provider level).
+		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
+		if !hasReasoningEffort && shouldSetEffort {
+			mergedOptions["reasoning_effort"] = reasoningEffort
+		}
+		mergedOptions["reasoning_summary"] = "auto"
+		mergedOptions["include"] = []openai.IncludeType{openai.IncludeReasoningEncryptedContent}
+		mergedOptions["text_verbosity"] = openai.TextVerbosityHigh
+		if sessionID != "" {
+			mergedOptions["prompt_cache_key"] = session.HashID(sessionID)
+		}
+		parsed, err := openai.ParseResponsesOptions(mergedOptions)
+		if err == nil {
+			options[openai.Name] = parsed
 		}
 
 	case anthropic.Name, bedrock.Name:
@@ -702,8 +725,8 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 	return options
 }
 
-func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderOptions, *float64, *float64, *int64, *float64, *float64) {
-	modelOptions := getProviderOptions(model, cfg)
+func mergeCallOptions(model Model, cfg config.ProviderConfig, sessionID string) (fantasy.ProviderOptions, *float64, *float64, *int64, *float64, *float64) {
+	modelOptions := getProviderOptions(model, cfg, sessionID)
 	temp := cmp.Or(model.ModelCfg.Temperature, model.CatwalkCfg.Options.Temperature)
 	topP := cmp.Or(model.ModelCfg.TopP, model.CatwalkCfg.Options.TopP)
 	topK := cmp.Or(model.ModelCfg.TopK, model.CatwalkCfg.Options.TopK)
@@ -1191,6 +1214,17 @@ func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers 
 			}),
 		)
 		httpClient = copilot.NewClient(isSubAgent, c.cfg.Config().Options.Debug)
+	case codexcatalog.Name:
+		// All Codex models use the Responses API and stream over SSE.
+		// The ChatGPT backend rejects max_output_tokens outright, and its
+		// primary transport is a WebSocket with SSE fallback.
+		opts = append(
+			opts,
+			openaicompat.WithUseResponsesAPI(),
+			openaicompat.WithDisableMaxOutputTokens(),
+			openaicompat.WithUseWebSocketTransport(),
+		)
+		httpClient = codexoauth.NewClient(c.cfg.Config().Options.Debug)
 	}
 	if httpClient == nil && c.cfg.Config().Options.Debug {
 		httpClient = log.NewHTTPClient()
@@ -1210,7 +1244,7 @@ func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers 
 	return openaicompat.New(opts...)
 }
 
-func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[string]string, options map[string]string) (fantasy.Provider, error) {
+func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers, options map[string]string) (fantasy.Provider, error) {
 	opts := []azure.Option{
 		azure.WithBaseURL(baseURL),
 		azure.WithAPIKey(apiKey),
@@ -1277,7 +1311,7 @@ func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[st
 	return google.New(opts...)
 }
 
-func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, options map[string]string) (fantasy.Provider, error) {
+func (c *coordinator) buildGoogleVertexProvider(headers, options map[string]string) (fantasy.Provider, error) {
 	opts := []google.Option{}
 	if c.cfg.Config().Options.Debug {
 		httpClient := log.NewHTTPClient()
@@ -1346,11 +1380,19 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		return c.buildGoogleProvider(baseURL, apiKey, headers)
 	case "google-vertex":
 		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
-	case openaicompat.Name, hyper.Name:
+	case openaicompat.Name, hyper.Name, codexcatalog.Name:
 		switch providerCfg.ID {
 		case hyper.Name:
 			baseURL = hyper.BaseURL() + "/v1"
 			headers["x-crush-id"] = event.GetID()
+		case codexcatalog.Name:
+			baseURL = codexcatalog.BaseURL()
+			accountID := codexoauth.AccountID(apiKey)
+			for k, v := range codexcatalog.Headers(accountID) {
+				if _, ok := headers[k]; !ok {
+					headers[k] = v
+				}
+			}
 		case string(catwalk.InferenceProviderZAI):
 			if providerCfg.ExtraBody == nil {
 				providerCfg.ExtraBody = map[string]any{}
@@ -1561,7 +1603,7 @@ func (c *coordinator) Compact(ctx context.Context, sessionID string) error {
 		return err
 	}
 	providerCfg, _ := c.cfg.Config().Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
-	return c.currentAgent.Compact(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg), c.makeAuthRefreshCallback(providerCfg))
+	return c.currentAgent.Compact(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg, sessionID), c.makeAuthRefreshCallback(providerCfg))
 }
 
 // refreshSummarizeTokens refreshes expired OAuth tokens for the providers a
@@ -1600,7 +1642,7 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	providerCfg, _ := c.cfg.Config().Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
 	// Auth failures during summarize flow through fantasy's OnAuthRefresh,
 	// the same path used by regular turns.
-	return c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg), c.makeAuthRefreshCallback(providerCfg))
+	return c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg, sessionID), c.makeAuthRefreshCallback(providerCfg))
 }
 
 // GenerateTitle generates a session title using the current agent.
@@ -1853,7 +1895,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 			SessionID:        session.ID,
 			Prompt:           params.Prompt,
 			MaxOutputTokens:  maxTokens,
-			ProviderOptions:  getProviderOptions(model, providerCfg),
+			ProviderOptions:  getProviderOptions(model, providerCfg, session.ID),
 			Temperature:      model.ModelCfg.Temperature,
 			TopP:             model.ModelCfg.TopP,
 			TopK:             model.ModelCfg.TopK,

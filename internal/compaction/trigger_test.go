@@ -31,6 +31,34 @@ func TestDecideTrigger_HardAtWindow(t *testing.T) {
 	require.True(t, d.Blocking)
 }
 
+func TestDecideTrigger_HardThresholdOverride(t *testing.T) {
+	t.Parallel()
+	// A model with a 500k window but a 372k auto-compaction point must
+	// block at 372k, not at window - reserve.
+	d := DecideTrigger(TriggerInput{
+		UsageTokens:           372000,
+		ContextWindow:         500000,
+		ReserveTokens:         16384,
+		SoftThresholdFraction: 0.7,
+		HardThresholdTokens:   372000,
+	})
+	require.Equal(t, TriggerHard, d.Reason)
+	require.True(t, d.Blocking)
+}
+
+func TestDecideTrigger_HardThresholdOverrideNotHit(t *testing.T) {
+	t.Parallel()
+	// Below the override, the rubric (soft) path governs.
+	d := DecideTrigger(TriggerInput{
+		UsageTokens:           371000,
+		ContextWindow:         500000,
+		ReserveTokens:         16384,
+		SoftThresholdFraction: 0.7,
+		HardThresholdTokens:   372000,
+	})
+	require.NotEqual(t, TriggerHard, d.Reason)
+}
+
 func TestDecideTrigger_RubricFiresAtClosedUnit(t *testing.T) {
 	t.Parallel()
 	// A finished assistant turn with a final text answer (no tool calls) is a

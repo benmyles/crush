@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
+	codexcatalog "github.com/charmbracelet/crush/internal/agent/codex"
 	hyperp "github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/lock"
 	"github.com/charmbracelet/crush/internal/oauth"
+	codexoauth "github.com/charmbracelet/crush/internal/oauth/codex"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/oauth/hyper"
 	"github.com/tidwall/gjson"
@@ -759,6 +761,11 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 				ExtraParams:  make(map[string]string),
 				Models:       foundProvider.Models,
 			}
+			// Codex is billed through the ChatGPT subscription rather
+			// than per token.
+			if providerID == codexcatalog.Name {
+				providerConfig.FlatRate = true
+			}
 			setKeyOrToken()
 		} else {
 			return fmt.Errorf("provider with ID %s not found in known providers", providerID)
@@ -1006,6 +1013,8 @@ func (s *ConfigStore) exchange(ctx context.Context, providerID, refreshToken str
 	switch providerID {
 	case string(catwalk.InferenceProviderCopilot):
 		return copilot.RefreshToken(ctx, refreshToken)
+	case codexcatalog.Name:
+		return codexoauth.RefreshToken(ctx, refreshToken)
 	case hyperp.Name:
 		return hyper.ExchangeToken(ctx, refreshToken)
 	default:

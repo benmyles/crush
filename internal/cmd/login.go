@@ -7,9 +7,11 @@ import (
 	"os/signal"
 
 	"charm.land/lipgloss/v2"
+	codexcatalog "github.com/charmbracelet/crush/internal/agent/codex"
 	"github.com/charmbracelet/crush/internal/clipboard"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/oauth"
+	codexoauth "github.com/charmbracelet/crush/internal/oauth/codex"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/oauth/hyper"
 	"github.com/charmbracelet/crush/internal/workspace"
@@ -23,13 +25,16 @@ var loginCmd = &cobra.Command{
 	Short:   "Login Crush to a platform",
 	Long: `Login Crush to a specified platform.
 The platform should be provided as an argument.
-Available platforms are: hyper, copilot.`,
+Available platforms are: hyper, copilot, codex.`,
 	Example: `
 # Authenticate with Charm Hyper
 crush login
 
 # Authenticate with GitHub Copilot
 crush login copilot
+
+# Authenticate with your ChatGPT subscription for OpenAI Codex
+crush login codex
 
 # Force re-authentication even if already logged in
 crush login -f copilot
@@ -39,6 +44,7 @@ crush login -f copilot
 		"copilot",
 		"github",
 		"github-copilot",
+		"codex",
 	},
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -58,6 +64,8 @@ crush login -f copilot
 			return loginHyper(ws, force)
 		case "copilot", "github", "github-copilot":
 			return loginCopilot(ws, force)
+		case "codex":
+			return loginCodex(ws, force)
 		default:
 			return fmt.Errorf("unknown platform: %s", args[0])
 		}
@@ -205,6 +213,56 @@ func loginCopilot(ws workspace.Workspace, force bool) error {
 
 	fmt.Println()
 	fmt.Println("You're now authenticated with GitHub Copilot!")
+	return nil
+}
+
+func loginCodex(ws workspace.Workspace, force bool) error {
+	ctx := getLoginContext()
+
+	if !force {
+		cfg := ws.Config()
+		if cfg != nil {
+			if pc, ok := cfg.Providers.Get(codexcatalog.Name); ok && pc.OAuthToken != nil {
+				fmt.Println("You are already logged in to OpenAI Codex.")
+				fmt.Println("Use --force to re-authenticate.")
+				return nil
+			}
+		}
+	}
+
+	dc, err := codexoauth.RequestDeviceCode(ctx)
+	if err != nil {
+		return err
+	}
+
+	clipboard.WriteText(dc.UserCode)
+	fmt.Println("The following code should be on clipboard already:")
+
+	fmt.Println()
+	lipgloss.Println(lipgloss.NewStyle().Bold(true).Render(dc.UserCode))
+	fmt.Println()
+	fmt.Println("Press enter to open this URL, and then paste the code to log in with your ChatGPT account:")
+	fmt.Println()
+	lipgloss.Println(lipgloss.NewStyle().Hyperlink(codexoauth.VerificationURI, "id=codex").Render(codexoauth.VerificationURI))
+	fmt.Println()
+	waitEnter()
+	if err := browser.OpenURL(codexoauth.VerificationURI); err != nil {
+		fmt.Println("Could not open the URL. You'll need to manually open the URL in your browser.")
+	}
+
+	fmt.Println("Waiting for authorization...")
+	token, err := codexoauth.PollForToken(ctx, dc)
+	if err != nil {
+		return err
+	}
+
+	if err := ws.SetProviderAPIKey(config.ScopeGlobal, codexcatalog.Name, token); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("You're now authenticated with OpenAI Codex!")
+	fmt.Println("Usage is billed through your ChatGPT subscription.")
 	return nil
 }
 

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
+	codex "github.com/charmbracelet/crush/internal/agent/codex"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/discover"
@@ -325,6 +326,10 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 			continue
 		case p.ID == catwalk.InferenceProviderCopilot && config.OAuthToken != nil:
 			prepared.SetupGitHubCopilot()
+		case string(p.ID) == codex.Name && config.OAuthToken != nil:
+			// Codex is billed through the ChatGPT subscription rather
+			// than per token.
+			prepared.FlatRate = true
 		}
 
 		switch p.ID {
@@ -452,6 +457,7 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 		providerConfig.Type = cmp.Or(providerConfig.Type, catwalk.TypeOpenAICompat)
 		if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) &&
 			providerConfig.Type != hyper.Name &&
+			providerConfig.Type != codex.Name &&
 			!discover.IsKnownCustomProvider(string(providerConfig.Type)) {
 			slog.Warn("Skipping custom provider due to unsupported provider type", "provider", id)
 			c.Providers.Del(id)
