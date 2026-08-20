@@ -388,6 +388,36 @@ func (m *Chat) Len() int {
 	return m.list.Len()
 }
 
+// LastItem returns the newest message item in the conversation, or nil
+// when the list is empty.
+func (m *Chat) LastItem() chat.MessageItem {
+	if m.list.Len() == 0 {
+		return nil
+	}
+	item, ok := m.list.ItemAt(m.list.Len() - 1).(chat.MessageItem)
+	if !ok {
+		return nil
+	}
+	return item
+}
+
+// FirstUserMessage returns the text of the first non-empty user message
+// in the conversation, or "" when none exists.
+func (m *Chat) FirstUserMessage() string {
+	for i := range m.list.Len() {
+		userItem, ok := m.list.ItemAt(i).(*chat.UserMessageItem)
+		if !ok {
+			continue
+		}
+		if msg := userItem.Message(); msg != nil {
+			if text := strings.TrimSpace(msg.Content().Text); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
 // InvalidateRenderCaches drops cached rendered output on every message
 // item so the next draw re-renders with the current styles.
 func (m *Chat) InvalidateRenderCaches() {

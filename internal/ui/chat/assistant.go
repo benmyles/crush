@@ -249,6 +249,11 @@ func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) Messa
 	return a
 }
 
+// Message returns the underlying message for this item.
+func (a *AssistantMessageItem) Message() *message.Message {
+	return a.message
+}
+
 // StartAnimation starts the assistant message animation if it should be spinning.
 func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
 	if !a.isSpinning() {

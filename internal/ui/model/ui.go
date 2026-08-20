@@ -41,7 +41,6 @@ import (
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/history"
-	"github.com/charmbracelet/crush/internal/home"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
@@ -2681,7 +2680,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			return true
 		case key.Matches(msg, m.keyMap.Chat.EndFollow):
 			if m.state == uiChat && m.hasSession() {
-				if cmd := m.chat.ScrollToBottomAndSelectLast(); cmd != nil {
+				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 				return true
@@ -3396,32 +3395,94 @@ func (m *UI) View() tea.View {
 	return v
 }
 
-// windowTitle returns the text to show in the terminal window title. It
-// reflects what Crush is doing: a working placeholder while the agent is
-// busy, the active session's title once one exists, and always the current
-// working directory.
+// Terminal window title icons. Each title is a single state emoji plus
+// text, so the glyphs below are plain single-codepoint emoji widely
+// supported by terminal emulators.
+const (
+	titleIconWaiting    = "⏳"
+	titleIconThinking   = "💭"
+	titleIconResponding = "💬"
+	titleIconQuestion   = "❔"
+	titleIconPaused     = "⏸️"
+	titleIconBlocked    = "⛔"
+	titleIconStalled    = "💤"
+	titleIconComplete   = "✅"
+)
+
+// maxTitleWidth caps the terminal title text so very long goals or
+// prompts do not clutter the window title bar.
+const maxTitleWidth = 80
+
+// windowTitle returns the text to show in the terminal window title.
+// When the session has a goal, the title is the goal text prefixed with
+// an emoji describing the current state (thinking, responding, waiting
+// for a question, paused, blocked, stalled, complete). Without a goal it
+// is the first user message, so the title stays stable and readable
+// instead of flipping between transient status placeholders.
 func (m *UI) windowTitle() string {
-	cwd := home.Short(m.com.Workspace.WorkingDir())
-	if !m.hasSession() {
-		return "crush " + cwd
-	}
-
-	const sep = " · "
-	title := m.session.Title
-	hasTitle := title != "" && title != agent.DefaultSessionName
-
-	if m.isAgentBusy() {
-		if hasTitle {
-			return m.workingPlaceholder + sep + title + sep + cwd
+	if m.goal.Exists() {
+		if text := shortenTitle(m.goal.Text); text != "" {
+			return m.goalStateIcon() + " " + text
 		}
-		return m.workingPlaceholder + sep + cwd
 	}
-
-	if hasTitle {
-		return title + sep + cwd
+	if text := shortenTitle(m.chat.FirstUserMessage()); text != "" {
+		return text
 	}
+	return "crush"
+}
 
-	return "crush " + cwd
+// goalStateIcon picks the emoji for the session goal's current state.
+func (m *UI) goalStateIcon() string {
+	switch {
+	case m.questionPending():
+		return titleIconQuestion
+	case m.pausedActive:
+		return titleIconPaused
+	case m.goal.Status == goal.StatusBlocked:
+		return titleIconBlocked
+	case m.goal.Status == goal.StatusStalled:
+		return titleIconStalled
+	case m.goal.Status == goal.StatusComplete:
+		return titleIconComplete
+	case m.isAgentBusy():
+		if m.agentIsResponding() {
+			return titleIconResponding
+		}
+		return titleIconThinking
+	default:
+		return titleIconWaiting
+	}
+}
+
+// questionPending reports whether a question form is waiting for input.
+func (m *UI) questionPending() bool {
+	_, ok := m.activeInline.(*dialog.QuestionForm)
+	return ok
+}
+
+// agentIsResponding reports whether the agent is currently streaming its
+// text answer: the newest message is an unfinished assistant message
+// with visible text and no outstanding tool calls.
+func (m *UI) agentIsResponding() bool {
+	ass, ok := m.chat.LastItem().(*chat.AssistantMessageItem)
+	if !ok {
+		return false
+	}
+	msg := ass.Message()
+	if msg == nil || msg.IsFinished() || len(msg.ToolCalls()) > 0 {
+		return false
+	}
+	return strings.TrimSpace(msg.Content().Text) != ""
+}
+
+// shortenTitle flattens and truncates title text for the window title.
+func shortenTitle(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) <= maxTitleWidth {
+		return s
+	}
+	return string(runes[:maxTitleWidth-1]) + "…"
 }
 
 // ShortHelp implements [help.KeyMap].
@@ -3623,7 +3684,6 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.Chat.HalfPageDown,
 					k.Chat.Home,
 					k.Chat.End,
-					k.Chat.EndFollow,
 					k.Chat.FocusSidebar,
 				},
 				[]key.Binding{
