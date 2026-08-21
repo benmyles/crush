@@ -1,0 +1,42 @@
+internal/agent/agent_test.go
+  h_9b4a5c940a23e2 45-49
+internal/agent/agentic_fetch_tool.go
+  h_9b4a5c940a23e2 110-113,116,169-170
+internal/agent/common_test.go
+  h_9b4a5c940a23e2 175
+internal/agent/coordinator.go
+  h_9b4a5c940a23e2 876-878
+internal/agent/tools/exa.go
+  h_9b4a5c940a23e2 1-320
+internal/agent/tools/exa_test.go
+  h_9b4a5c940a23e2 1-188
+internal/agent/tools/fetch.go
+  h_9b4a5c940a23e2 45,99-100,114-139
+internal/agent/tools/web_fetch.go
+  h_9b4a5c940a23e2 24-27,48
+internal/agent/tools/web_search.go
+  h_9b4a5c940a23e2 22-25,54-65
+internal/agent/tools/web_search.md.tpl
+  h_9b4a5c940a23e2 1
+internal/config/config.go
+  h_9b4a5c940a23e2 342
+internal/ui/dialog/actions.go
+  h_9b4a5c940a23e2 87-89
+internal/ui/dialog/commands.go
+  h_9b4a5c940a23e2 617-619
+internal/ui/dialog/web_backend.go
+  h_9b4a5c940a23e2 1-307
+internal/ui/model/ui.go
+  h_9b4a5c940a23e2 2074-2084,5037-5040,5211-5222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "19816aa164a7323f756385cf2ed3b2dd4adf4b31",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
