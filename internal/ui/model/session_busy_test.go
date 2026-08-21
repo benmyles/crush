@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/status"
 	"github.com/charmbracelet/crush/internal/ui/attachments"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/dialog"
@@ -119,6 +120,13 @@ func (w *countingWorkspace) ListUserMessages(context.Context, string) ([]message
 func (w *countingWorkspace) WorkingDir() string { return "" }
 
 func (w *countingWorkspace) LSPStart(context.Context, string) {}
+
+func (w *countingWorkspace) StatusGet(ctx context.Context, sessionID string) (status.Update, error) {
+	if w.Workspace != nil {
+		return w.Workspace.StatusGet(ctx, sessionID)
+	}
+	return status.Update{}, nil
+}
 
 func (w *countingWorkspace) GoalGet(ctx context.Context, sessionID string) (goal.Goal, error) {
 	if w.Workspace != nil {

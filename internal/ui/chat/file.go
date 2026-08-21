@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/styles"
+	"github.com/lucasb-eyer/go-colorful"
 )
 
 // -----------------------------------------------------------------------------
@@ -115,17 +119,21 @@ func NewWriteToolMessageItem(
 	result *message.ToolResult,
 	canceled bool,
 ) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &WriteToolRenderContext{}, canceled)
+	item := newBaseToolMessageItem(sty, toolCall, result, &WriteToolRenderContext{}, canceled)
+	item.SetSpinningFunc(func(SpinningState) bool { return false })
+	return item
 }
 
 // WriteToolRenderContext renders write tool messages.
 type WriteToolRenderContext struct{}
 
+const writeProgressWidth = 10
+
 // RenderTool implements the [ToolRenderer] interface.
 func (w *WriteToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Write", opts.Anim, opts.Compact)
+		return pendingWriteTool(sty, utf8.RuneCountInString(opts.ToolCall.Input), opts.Compact)
 	}
 
 	var params tools.WriteParams
@@ -164,6 +172,42 @@ func (w *WriteToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	return header
+}
+
+func pendingWriteTool(sty *styles.Styles, charCount int, nested bool) string {
+	nameStyle := sty.Tool.NameNormal
+	if nested {
+		nameStyle = sty.Tool.NameNested
+	}
+
+	completed := charCount % 1000
+	filled := completed / (1000 / writeProgressWidth)
+	if completed > 0 && filled == 0 {
+		filled = 1
+	}
+
+	from, _ := colorful.MakeColor(sty.WorkingGradFromColor)
+	to, _ := colorful.MakeColor(sty.WorkingGradToColor)
+	var meter strings.Builder
+	meter.WriteByte('[')
+	for i := range writeProgressWidth {
+		progress := float64(i) / float64(writeProgressWidth-1)
+		segment := "="
+		if i >= filled {
+			segment = "."
+		}
+		meter.WriteString(lipgloss.NewStyle().Foreground(from.BlendHcl(to, progress).Clamped()).Render(segment))
+	}
+	meter.WriteByte(']')
+
+	return fmt.Sprintf(
+		"%s %s %dk %s %s chars",
+		sty.Tool.IconPending.Render(),
+		nameStyle.Render("Write"),
+		charCount/1000,
+		meter.String(),
+		common.FormatCredits(charCount),
+	)
 }
 
 // -----------------------------------------------------------------------------

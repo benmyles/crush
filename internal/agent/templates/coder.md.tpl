@@ -432,7 +432,7 @@ The following is personal content added by the user that they'd like you to foll
 {{end}}
 </user_preferences>
 {{end}}
-{{if .Config.Options.StatusUpdates}}
+{{- if .Config.Options.StatusUpdates}}
 
 <status_updates>
 You are expected to give mini standup-style status updates while you

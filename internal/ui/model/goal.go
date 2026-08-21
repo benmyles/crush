@@ -45,10 +45,14 @@ func (m *UI) goalInfo(width int, isSection bool) string {
 	if len(goalText) > maxGoalTextLen {
 		goalText = goalText[:maxGoalTextLen-1] + "…"
 	}
+	goalTextStyle := t.Resource.AdditionalText
+	if g.Status == goal.StatusActive {
+		goalTextStyle = t.Sidebar.GoalActiveText
+	}
 
 	lines := []string{
 		statusStyle.Render(status) + " · " + t.Resource.AdditionalText.Render(fmt.Sprintf("%d checks", g.TotalProds)),
-		t.Resource.AdditionalText.Render(goalText),
+		goalTextStyle.Render(goalText),
 	}
 	switch g.Status {
 	case goal.StatusComplete:

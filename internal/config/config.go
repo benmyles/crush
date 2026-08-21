@@ -845,6 +845,7 @@ func allToolNames() []string {
 		"update_goal",
 		"goal_complete",
 		"goal_blocked",
+		"status_update",
 	}
 }
 

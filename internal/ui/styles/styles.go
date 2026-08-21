@@ -231,8 +231,9 @@ type Styles struct {
 
 	// Sidebar
 	Sidebar struct {
-		SessionTitle lipgloss.Style // Current session title at top of sidebar
-		WorkingDir   lipgloss.Style // Working directory path (PrettyPath)
+		SessionTitle   lipgloss.Style // Current session title at top of sidebar
+		WorkingDir     lipgloss.Style // Working directory path (PrettyPath)
+		GoalActiveText lipgloss.Style
 
 		// StatusUpdater adds styles for agent status update rows.
 		StatusLabel    lipgloss.Style

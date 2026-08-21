@@ -19,6 +19,70 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type streamedInputModel struct {
+	calls        atomic.Int64
+	afterDelta   chan struct{}
+	resume       chan struct{}
+	toolCallJSON string
+}
+
+func (m *streamedInputModel) Provider() string { return "fake" }
+func (m *streamedInputModel) Model() string    { return "fake-model" }
+
+func (m *streamedInputModel) Generate(context.Context, fantasy.Call) (*fantasy.Response, error) {
+	return nil, nil
+}
+
+func (m *streamedInputModel) Stream(context.Context, fantasy.Call) (fantasy.StreamResponse, error) {
+	call := m.calls.Add(1)
+	return func(yield func(fantasy.StreamPart) bool) {
+		if call > 1 {
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonStop})
+			return
+		}
+		if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputStart, ID: "write-1", ToolCallName: agenttools.WriteToolName}) {
+			return
+		}
+		if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputDelta, ID: "write-1", Delta: `{"file_path":"notes.txt","content":"`}) {
+			return
+		}
+		delta := fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputDelta, ID: "write-1"}
+		if m.toolCallJSON != "" {
+			delta.ToolCallInput = "hello"
+		} else {
+			delta.Delta = "hello"
+		}
+		if !yield(delta) {
+			return
+		}
+		close(m.afterDelta)
+		<-m.resume
+		if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputDelta, ID: "write-1", Delta: `"}`}) {
+			return
+		}
+		if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputEnd, ID: "write-1"}) {
+			return
+		}
+		if !yield(fantasy.StreamPart{
+			Type:          fantasy.StreamPartTypeToolCall,
+			ID:            "write-1",
+			ToolCallName:  agenttools.WriteToolName,
+			ToolCallInput: `{"file_path":"notes.txt","content":"hello"}`,
+		}) {
+			return
+		}
+		yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls})
+	}, nil
+}
+
+func (m *streamedInputModel) GenerateObject(context.Context, fantasy.ObjectCall) (*fantasy.ObjectResponse, error) {
+	return nil, nil
+}
+
+func (m *streamedInputModel) StreamObject(context.Context, fantasy.ObjectCall) (fantasy.ObjectStreamResponse, error) {
+	return nil, nil
+}
+
 // pauseStreamModel yields one tool step on its first Stream call (which
 // the blocking noop tool can hold open) and a plain final text turn on
 // every later call. This reproduces a mid-run pause boundary.
@@ -114,6 +178,71 @@ func goalTestEnv(t *testing.T) (fakeEnv, *goal.Store) {
 	env.messages = message.NewService(q)
 
 	return env, goalStore(t, conn)
+}
+
+func TestRunPublishesStreamedToolInput(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name         string
+		toolCallJSON string
+	}{
+		{name: "delta field"},
+		{name: "tool call input field", toolCallJSON: "anthropic"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := testEnv(t)
+			model := &streamedInputModel{
+				afterDelta:   make(chan struct{}),
+				resume:       make(chan struct{}),
+				toolCallJSON: test.toolCallJSON,
+			}
+			writeTool := fantasy.NewAgentTool(
+				agenttools.WriteToolName,
+				"write",
+				func(context.Context, agenttools.WriteParams, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+					return fantasy.NewTextResponse("ok"), nil
+				},
+			)
+			sa := testSessionAgent(env, model, &finishStreamModel{text: "done"}, "system", writeTool)
+			sess, err := env.sessions.Create(t.Context(), "streamed input")
+			require.NoError(t, err)
+
+			events := env.messages.Subscribe(t.Context())
+			done := make(chan error, 1)
+			go func() {
+				_, runErr := sa.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "write notes"})
+				done <- runErr
+			}()
+
+			select {
+			case <-model.afterDelta:
+			case <-time.After(5 * time.Second):
+				t.Fatal("tool input delta was not streamed")
+			}
+
+			partial := `{"file_path":"notes.txt","content":"hello`
+			foundPartial := false
+			deadline := time.After(5 * time.Second)
+			for !foundPartial {
+				select {
+				case event := <-events:
+					for _, call := range event.Payload.ToolCalls() {
+						if call.ID == "write-1" && !call.Finished && call.Input == partial {
+							foundPartial = true
+						}
+					}
+				case <-deadline:
+					t.Fatal("partial tool input was not published")
+				}
+			}
+
+			close(model.resume)
+			require.NoError(t, <-done)
+		})
+	}
 }
 
 // TestRunPauseStopsAtStepBoundaryAndResumeContinues proves the pause

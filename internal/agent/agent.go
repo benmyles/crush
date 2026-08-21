@@ -1156,6 +1156,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			// even if the request is canceled mid-stream
 			return a.messages.Update(ctx, *currentAssistant)
 		},
+		OnChunk: func(part fantasy.StreamPart) error {
+			if part.Type != fantasy.StreamPartTypeToolInputDelta {
+				return nil
+			}
+			delta := part.Delta
+			if delta == "" {
+				delta = part.ToolCallInput
+			}
+			currentAssistant.AppendToolCallInput(part.ID, delta)
+			return a.messages.Update(ctx, *currentAssistant)
+		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
 			// Reset streamed content so the retried response doesn't
