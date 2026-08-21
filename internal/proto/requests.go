@@ -40,6 +40,12 @@ type GoalSetRequest struct {
 	Text string `json:"text"`
 }
 
+// SubAgentMessageRequest represents an interim message headed for a
+// running sub-agent (agent/agentic_fetch child session).
+type SubAgentMessageRequest struct {
+	Text string `json:"text"`
+}
+
 // APIKeyKind discriminates the kind of credential carried in a
 // ConfigProviderKeyRequest. JSON's `any` loses Go type information, so
 // the wire format names the kind explicitly and the server decodes

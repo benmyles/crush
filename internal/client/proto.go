@@ -1005,6 +1005,21 @@ func (c *Client) CancelAgentSession(ctx context.Context, id string, sessionID st
 	return nil
 }
 
+// SubAgentMessage sends an interim message to a running sub-agent
+// session.
+func (c *Client) SubAgentMessage(ctx context.Context, id string, sessionID string, text string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/message", id, sessionID), nil,
+		jsonBody(proto.SubAgentMessageRequest{Text: text}), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to send sub-agent message: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to send sub-agent message: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
 // GetAgentSessionQueuedPromptsList retrieves the list of queued prompt
 // items for a session.
 func (c *Client) GetAgentSessionQueuedPromptsList(ctx context.Context, id string, sessionID string) ([]agent.QueuedPromptItem, error) {

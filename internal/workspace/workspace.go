@@ -142,6 +142,11 @@ type Workspace interface {
 	AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error
 	AgentRunShellCommand(ctx context.Context, sessionID, command string, termWidth int, onProgress func(string), isFirstMessage bool) (proto.ShellCommandResponse, error)
 	AgentCancel(sessionID string)
+	// SubAgentMessage queues an interim message for a running sub-agent
+	// (agent/agentic_fetch child session). It errors when the target is
+	// not running. The fire-and-forget cancel style is intentionally not
+	// reused: the panel needs to surface delivery failures.
+	SubAgentMessage(sessionID, text string) error
 	AgentIsBusy() bool
 	AgentIsSessionBusy(sessionID string) bool
 	AgentModel() AgentModel

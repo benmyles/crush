@@ -1071,5 +1071,25 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Pills.HelpText = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.Pills.Area = base
 
+	// Agents dock styles
+	s.Agents.Area = base
+	s.Agents.Title = lipgloss.NewStyle().Foreground(o.fgBase).Bold(true)
+	s.Agents.TitleCount = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Agents.DoneCount = lipgloss.NewStyle().Foreground(o.success)
+	s.Agents.Row = lipgloss.NewStyle().Foreground(o.fgBase)
+	s.Agents.Glyph = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Agents.SelectedGlyph = lipgloss.NewStyle().Foreground(o.accent)
+	s.Agents.KindTag = lipgloss.NewStyle().Foreground(o.fgBase).Background(o.bgLessVisible).Padding(0, 1)
+	s.Agents.ActiveTool = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Agents.Waiting = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Agents.Done = lipgloss.NewStyle().Foreground(o.success)
+	s.Agents.Canceled = lipgloss.NewStyle().Foreground(o.destructive)
+	s.Agents.Meter = lipgloss.NewStyle().Foreground(o.fgSubtle)
+	s.Agents.Elapsed = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Agents.ComposePrompt = lipgloss.NewStyle().Foreground(o.accent).Bold(true)
+	s.Agents.ComposeInput = lipgloss.NewStyle().Foreground(o.fgBase)
+	s.Agents.HelpKey = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Agents.HelpText = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+
 	return s
 }

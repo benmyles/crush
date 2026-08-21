@@ -216,6 +216,9 @@ func (c *scriptedCoordinator) CancelAll() {
 
 func (c *scriptedCoordinator) IsBusy() bool                                      { return false }
 func (c *scriptedCoordinator) IsSessionBusy(string) bool                         { return false }
+func (c *scriptedCoordinator) SendSubAgentMessage(context.Context, string, string) error {
+	return nil
+}
 func (c *scriptedCoordinator) QueuedPrompts(string) int                          { return 0 }
 func (c *scriptedCoordinator) QueuedPromptsList(string) []agent.QueuedPromptItem { return nil }
 func (c *scriptedCoordinator) RemoveQueuedPrompt(string, uint64) bool            { return false }

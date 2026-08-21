@@ -71,6 +71,9 @@ func (s *runCoordinator) BeginAccepted(sessionID string) *agent.AcceptedRun {
 }
 func (s *runCoordinator) Cancel(string) {}
 func (s *runCoordinator) CancelAll()    {}
+func (s *runCoordinator) SendSubAgentMessage(context.Context, string, string) error {
+	return nil
+}
 func (s *runCoordinator) IsBusy() bool  { return false }
 func (s *runCoordinator) IsSessionBusy(string) bool {
 	return false

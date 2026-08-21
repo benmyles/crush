@@ -41,6 +41,9 @@ func (c *errorCoordinator) RunAccepted(ctx context.Context, accept *agent.Accept
 func (c *errorCoordinator) BeginAccepted(sessionID string) *agent.AcceptedRun { return nil }
 func (c *errorCoordinator) Cancel(string)                                     {}
 func (c *errorCoordinator) CancelAll()                                        {}
+func (c *errorCoordinator) SendSubAgentMessage(ctx context.Context, sessionID, text string) error {
+	return nil
+}
 func (c *errorCoordinator) IsBusy() bool                                      { return false }
 func (c *errorCoordinator) IsSessionBusy(string) bool                         { return false }
 func (c *errorCoordinator) QueuedPrompts(string) int                          { return 0 }

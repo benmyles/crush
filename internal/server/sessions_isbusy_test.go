@@ -42,6 +42,9 @@ func (s *stubCoordinator) BeginAccepted(sessionID string) *agent.AcceptedRun {
 }
 func (s *stubCoordinator) Cancel(string) {}
 func (s *stubCoordinator) CancelAll()    {}
+func (s *stubCoordinator) SendSubAgentMessage(context.Context, string, string) error {
+	return nil
+}
 func (s *stubCoordinator) IsBusy() bool  { return false }
 func (s *stubCoordinator) IsSessionBusy(id string) bool {
 	return s.busy[id]

@@ -74,7 +74,10 @@ Commits: `2f7a1868`, `e9f22ad0`, `c37079ba`, `d655ffac` (partial).
 Agents can report mini standup updates via the `status_update` tool
 (`done`/`doing`/`next`/`blockers`). Updates are persisted per session, shown
 in the UI sidebar, and a reminder loop prods the agent for a fresh update
-every couple of minutes of continuous work.
+every couple of minutes of continuous work. The injected reminder also asks
+the agent to reconcile its todo list: mark finished work completed and
+split or update stale items so the list always reflects the work that
+truly remains.
 
 Commits: `61f6491b`.
 
@@ -175,6 +178,31 @@ Commits: `e5b3c10b`, `0271ad47`.
   tool for interactive sessions and warns against terminal_output
   `wait_for` strings that match the typed command echo (use computed
   completion markers instead).
+
+### 12. Live sub-agent progress dock
+
+While one or more sub-agents (the `agent` task tool or `agentic_fetch`)
+are running, a full-width dock appears between the chat and the editor.
+It shows one row per running sub-agent with a live view of what each is
+doing: kind tag, current nested tool, the shared received-data meter fed
+by streamed tool input, and elapsed time. Finished rows show `✓ done` and
+linger a few seconds before the dock collapses.
+
+- `tab` cycles editor → chat → dock → editor while the dock is visible;
+  `up`/`down` (or clicking) selects an active agent.
+- `m` opens an inline compose row on the selected agent: typing a message
+  and pressing enter delivers it to the running sub-agent at its next step
+  boundary, where the turn continues with the new instruction and keeps
+  its tool context. Delivery rides a new
+  `POST /v1/workspaces/{id}/agent/sessions/{sid}/message` endpoint end to
+  end (backend, client proto, workspace layer).
+- `x` cancels the selected sub-agent run; `esc` returns focus to the
+  chat.
+- Lifecycle is driven by `subagent_started`/`subagent_finished`
+  notifications plus live nested-tool events; the coordinator now keeps a
+  registry of live child sessions so cancel, busy probes, and interim
+  messages reach sub-agent runs that live on their own SessionAgent
+  instances.
 
 ## Configuration surface
 

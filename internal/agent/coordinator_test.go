@@ -21,6 +21,7 @@ import (
 	codexcatalog "github.com/charmbracelet/crush/internal/agent/codex"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/stretchr/testify/assert"
@@ -32,6 +33,13 @@ type mockSessionAgent struct {
 	model     Model
 	runFunc   func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error)
 	cancelled []string
+	interim   []interimMessage
+}
+
+// interimMessage records a QueueInterimMessage call for assertions.
+type interimMessage struct {
+	sessionID string
+	text      string
 }
 
 func (m *mockSessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -82,6 +90,10 @@ func (m *mockSessionAgent) Pause(string)         {}
 func (m *mockSessionAgent) Resume(string)        {}
 func (m *mockSessionAgent) ResumeAll()           {}
 func (m *mockSessionAgent) IsPaused(string) bool { return false }
+func (m *mockSessionAgent) QueueInterimMessage(sessionID, text string) error {
+	m.interim = append(m.interim, interimMessage{sessionID: sessionID, text: text})
+	return nil
+}
 func (m *mockSessionAgent) BusySessions() []string {
 	return nil
 }
@@ -92,9 +104,10 @@ func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCf
 	require.NoError(t, err)
 	cfg.Config().Providers.Set(providerID, providerCfg)
 	return &coordinator{
-		cfg:      cfg,
-		sessions: env.sessions,
-		messages: env.messages,
+		cfg:       cfg,
+		sessions:  env.sessions,
+		messages:  env.messages,
+		subAgents: csync.NewMap[string, *subAgentRun](),
 	}
 }
 

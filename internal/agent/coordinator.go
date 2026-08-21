@@ -28,6 +28,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/discover"
 	"github.com/charmbracelet/crush/internal/event"
@@ -110,6 +111,10 @@ type Coordinator interface {
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
 	IsBusy() bool
+	// SendSubAgentMessage queues an interim user message for a running
+	// sub-agent (identified by its child session ID). It errors when no
+	// sub-agent run is active for the session.
+	SendSubAgentMessage(ctx context.Context, sessionID, text string) error
 	QueuedPrompts(sessionID string) int
 	QueuedPromptsList(sessionID string) []QueuedPromptItem
 	RemoveQueuedPrompt(sessionID string, queueID uint64) bool
@@ -171,6 +176,12 @@ type coordinator struct {
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
+
+	// subAgents tracks live sub-agent runs (the agent task tool and
+	// agentic_fetch), keyed by child session ID. Entries exist only for
+	// the duration of a runSubAgent call and make child sessions visible
+	// to Cancel, IsSessionBusy, and interim-message delivery.
+	subAgents *csync.Map[string, *subAgentRun]
 
 	// Skills discovery results (session-start snapshot).
 	allSkills    []*skills.Skill // Pre-filter: all discovered after dedup.
@@ -236,6 +247,7 @@ func NewCoordinator(ctx context.Context, opts CoordinatorOptions) (Coordinator, 
 		goals:           goal.NewStore(opts.DBConn),
 		statusUpdates:   status.NewStore(opts.DBConn),
 		agents:          make(map[string]SessionAgent),
+		subAgents:       csync.NewMap[string, *subAgentRun](),
 		allSkills:       allSkills,
 		activeSkills:    activeSkills,
 		skillTracker:    skillTracker,
@@ -1453,11 +1465,21 @@ func (c *coordinator) BeginAccepted(sessionID string) *AcceptedRun {
 }
 
 func (c *coordinator) Cancel(sessionID string) {
+	// Sub-agent runs are dispatched by their own SessionAgent instance,
+	// which currentAgent cannot see. Route child-session cancels to the
+	// registered run first so the panel's per-agent cancel works.
+	if run, ok := c.subAgents.Get(sessionID); ok {
+		run.agent.Cancel(sessionID)
+		return
+	}
 	c.currentAgent.Cancel(sessionID)
 }
 
 func (c *coordinator) CancelAll() {
 	c.currentAgent.CancelAll()
+	for sessionID, run := range c.subAgents.Seq2() {
+		run.agent.Cancel(sessionID)
+	}
 }
 
 func (c *coordinator) ClearQueue(sessionID string) {
@@ -1469,7 +1491,22 @@ func (c *coordinator) IsBusy() bool {
 }
 
 func (c *coordinator) IsSessionBusy(sessionID string) bool {
+	if _, ok := c.subAgents.Get(sessionID); ok {
+		return true
+	}
 	return c.currentAgent.IsSessionBusy(sessionID)
+}
+
+// SendSubAgentMessage queues an interim user message for a running
+// sub-agent (an agent task tool or agentic_fetch child session). The
+// message is delivered at the run's next step boundary and the turn
+// continues from there. It errors when the child session is not running.
+func (c *coordinator) SendSubAgentMessage(ctx context.Context, sessionID, text string) error {
+	run, ok := c.subAgents.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("no running sub-agent for session %s", sessionID)
+	}
+	return run.agent.QueueInterimMessage(sessionID, text)
 }
 
 func (c *coordinator) Model() Model {
@@ -1904,6 +1941,18 @@ func (c *coordinator) refreshApiKeyTemplate(ctx context.Context, providerCfg con
 	return nil
 }
 
+// subAgentRun tracks one live sub-agent (agent/agentic_fetch) run. It
+// is registered for the duration of runSubAgent so Cancel,
+// IsSessionBusy, and interim-message delivery can reach the child
+// session, which lives on its own SessionAgent instance.
+type subAgentRun struct {
+	agent      SessionAgent
+	kind       string
+	prompt     string
+	toolCallID string
+	startedAt  time.Time
+}
+
 // subAgentParams holds the parameters for running a sub-agent.
 type subAgentParams struct {
 	Agent          SessionAgent
@@ -1912,6 +1961,9 @@ type subAgentParams struct {
 	ToolCallID     string
 	Prompt         string
 	SessionTitle   string
+	// Kind names the spawning tool ("agent" or "agentic_fetch") for
+	// lifecycle notifications and the UI agents panel.
+	Kind string
 	// SessionSetup is an optional callback invoked after session creation
 	// but before agent execution, for custom session configuration.
 	SessionSetup func(sessionID string)
@@ -1931,6 +1983,34 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 	// Call session setup function if provided
 	if params.SessionSetup != nil {
 		params.SessionSetup(session.ID)
+	}
+
+	// Register the live run so targeted cancel, busy-state probes, and
+	// interim messages can reach the child session, which lives on its
+	// own SessionAgent instance that currentAgent cannot see.
+	runEntry := &subAgentRun{
+		agent:      params.Agent,
+		kind:       params.Kind,
+		prompt:     params.Prompt,
+		toolCallID: params.ToolCallID,
+		startedAt:  time.Now(),
+	}
+	c.subAgents.Set(session.ID, runEntry)
+	defer c.subAgents.Del(session.ID)
+	if c.notify != nil {
+		c.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+			SessionID:      session.ID,
+			SessionTitle:   params.SessionTitle,
+			Type:           notify.TypeSubAgentStarted,
+			SubAgentKind:   params.Kind,
+			SubAgentPrompt: params.Prompt,
+		})
+		defer c.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+			SessionID:    session.ID,
+			SessionTitle: params.SessionTitle,
+			Type:         notify.TypeSubAgentFinished,
+			SubAgentKind: params.Kind,
+		})
 	}
 
 	// Get model configuration

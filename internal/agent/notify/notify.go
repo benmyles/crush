@@ -60,6 +60,13 @@ const (
 	// window title set by the set_terminal_title tool. Payload:
 	// Notification.TerminalTitle (empty clears the custom title).
 	TypeTerminalTitleChanged Type = "terminal_title_changed"
+	// TypeSubAgentStarted indicates a sub-agent (the agent task tool or
+	// agentic_fetch) began running. SubAgentKind carries "agent" or
+	// "agentic_fetch"; SubAgentPrompt carries the delegated prompt.
+	TypeSubAgentStarted Type = "subagent_started"
+	// TypeSubAgentFinished indicates a sub-agent run returned. The UI
+	// uses it to retire the live progress entry for the child session.
+	TypeSubAgentFinished Type = "subagent_finished"
 )
 
 // CompactionStreamKind identifies the kind of a live compaction stream
@@ -117,6 +124,11 @@ type Notification struct {
 	// Message carries the error text for TypeAgentError. Other
 	// notification types ignore it.
 	Message string
+	// SubAgentKind carries the tool name ("agent" or "agentic_fetch")
+	// for TypeSubAgentStarted and TypeSubAgentFinished.
+	SubAgentKind string
+	// SubAgentPrompt carries the delegated prompt for TypeSubAgentStarted.
+	SubAgentPrompt string
 	// AWSSOCommand carries the shell command for TypeAWSSSOAuth.
 	AWSSOCommand string
 	// AWSSOURL carries the SSO verification URL for TypeAWSSSOAuth once it

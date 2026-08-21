@@ -888,6 +888,39 @@ func (c *controllerV1) handlePostWorkspaceAgentSessionCancel(w http.ResponseWrit
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceAgentSessionMessage queues an interim message for a
+// running sub-agent (agent/agentic_fetch child session).
+//
+//	@Summary		Send a message to a sub-agent
+//	@Tags			agent
+//	@Param			id		path	string	true	"Workspace ID"
+//	@Param			sid		path	string	true	"Session ID"
+//	@Param			request	body	proto.SubAgentMessageRequest	true	"Message text"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/message [post]
+func (c *controllerV1) handlePostWorkspaceAgentSessionMessage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	var req proto.SubAgentMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+	if req.Text == "" {
+		jsonError(w, http.StatusBadRequest, "text is required")
+		return
+	}
+	if err := c.backend.SubAgentMessage(r.Context(), id, sid, req.Text); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleGetWorkspaceAgentSessionPromptQueued returns whether a queued prompt exists.
 //
 //	@Summary		Get queued prompt status

@@ -52,6 +52,13 @@ type AgentEvent struct {
 	// result's failure text travels through Error, like TypeAgentError.
 	AWSSOCommand string `json:"aws_sso_command,omitempty"`
 	AWSSOURL     string `json:"aws_sso_url,omitempty"`
+
+	// SubAgentKind carries the spawning tool name ("agent" or
+	// "agentic_fetch") for subagent lifecycle events, and
+	// SubAgentPrompt the delegated prompt, so the client-side dock can
+	// attribute runs without re-parsing tool input.
+	SubAgentKind   string `json:"subagent_kind,omitempty"`
+	SubAgentPrompt string `json:"subagent_prompt,omitempty"`
 }
 
 // MarshalJSON implements the [json.Marshaler] interface.

@@ -165,6 +165,13 @@ func (w *AppWorkspace) AgentCancel(sessionID string) {
 	}
 }
 
+func (w *AppWorkspace) SubAgentMessage(sessionID, text string) error {
+	if w.app.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+	return w.app.AgentCoordinator.SendSubAgentMessage(context.Background(), sessionID, text)
+}
+
 func (w *AppWorkspace) AgentIsBusy() bool {
 	if w.app.AgentCoordinator == nil {
 		return false

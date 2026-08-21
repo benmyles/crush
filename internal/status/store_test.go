@@ -89,4 +89,5 @@ func TestReminderPrompt(t *testing.T) {
 	p := ReminderPrompt()
 	require.Contains(t, p, "[Status update]")
 	require.Contains(t, p, "status_update")
+	require.Contains(t, p, "up-to-date and accurate")
 }

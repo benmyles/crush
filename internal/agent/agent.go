@@ -202,6 +202,11 @@ type SessionAgent interface {
 	ResumeAll()
 	// IsPaused reports whether sessionID has a latched pause.
 	IsPaused(sessionID string) bool
+	// QueueInterimMessage posts a user message to a running sub-agent
+	// turn: the run stops at its next step boundary, persists the
+	// message into the session transcript, and re-enters the stream with
+	// it. It errors when the session has no active run.
+	QueueInterimMessage(sessionID, text string) error
 	// BusySessions lists sessions with an active run (used by the
 	// coordinator to apply a global pause to everything in flight).
 	BusySessions() []string
@@ -301,6 +306,11 @@ type sessionAgent struct {
 	// runs stop at their next step boundary, the continuation waits at
 	// the queue front, and new prompts hold until Resume lifts it.
 	paused *csync.Map[string, *atomic.Bool]
+	// interim holds, per session, queued interim user messages headed
+	// for a running sub-agent turn. A non-empty queue stops the run at
+	// its next step boundary so the run can restart with the message;
+	// the run loop drains it under the session dispatch mutex.
+	interim *csync.Map[string, []string]
 
 	// dispatchMu holds a per-session mutex that serializes the
 	// accepted -> (cancel-on-entry | queued | active) transition in
@@ -406,6 +416,7 @@ func NewSessionAgent(
 		statusRemindedAt:     csync.NewMap[string, int64](),
 		statusBaseline:       csync.NewMap[string, int64](),
 		paused:               csync.NewMap[string, *atomic.Bool](),
+		interim:              csync.NewMap[string, []string](),
 		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
 		acceptedRuns:         csync.NewMap[string, int](),
 		cancelMark:           csync.NewMap[string, uint64](),
@@ -1011,6 +1022,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	var stepMessages []fantasy.Message
 	var shouldSummarize bool
 	var stoppedForPause bool
+	var stoppedForInterim bool
 	sanitizedToolCalls := make(map[string]bool)
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
@@ -1349,6 +1361,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 				return false
 			},
+			func(_ []fantasy.StepResult) bool {
+				// An interim user message headed for a running sub-agent
+				// turn stops the stream at the next step boundary so the
+				// message can be delivered at a clean handoff point.
+				if a.HasPendingInterim(call.SessionID) {
+					stoppedForInterim = true
+					return true
+				}
+				return false
+			},
 			func(steps []fantasy.StepResult) bool {
 				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
 			},
@@ -1586,6 +1608,25 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			return result, err
 		}
 	}
+	// Interim messages follow the same stop-at-boundary pattern as
+	// pause, but the continuation carries the new message as a fresh
+	// user turn and drains immediately. The latch is observed under the
+	// dispatch mutex so a message arriving between the last step
+	// boundary and this handoff is still delivered.
+	if !shouldSummarize && (stoppedForInterim || a.HasPendingInterim(call.SessionID)) {
+		texts := a.drainInterim(call.SessionID)
+		if len(currentAssistant.ToolCalls()) == 0 {
+			// The turn ended naturally before the message could be
+			// injected. The sub-agent run is completing; the message
+			// cannot be delivered and is dropped rather than left to
+			// poison a future run on the recycled child session.
+			slog.Warn("Dropping interim message for completed sub-agent turn", "session_id", call.SessionID, "messages", len(texts))
+		} else {
+			skipRunComplete = true
+			a.prependInterimContinuation(call, strings.Join(texts, "\n\n---\n\n"))
+			queuedMessages, _ = a.messageQueue.Get(call.SessionID)
+		}
+	}
 	if len(queuedMessages) == 0 {
 		queuedMessages = a.scheduleGoalCheck(ctx, call)
 		if len(queuedMessages) == 0 {
@@ -1728,6 +1769,49 @@ func (a *sessionAgent) Pause(sessionID string) {
 	a.paused.Set(sessionID, flag)
 }
 
+// QueueInterimMessage posts a user message to a running sub-agent
+// turn. The message text is latched per session; the active run stops
+// at its next step boundary, persists the message as a user turn into
+// the session transcript, and re-enters the stream with it. It errors
+// when the session has no active run.
+func (a *sessionAgent) QueueInterimMessage(sessionID, text string) error {
+	if text == "" {
+		return errors.New("interim message is empty")
+	}
+	if !a.IsSessionBusy(sessionID) {
+		return fmt.Errorf("session %s has no active run", sessionID)
+	}
+	mu := a.sessionMu(sessionID)
+	mu.Lock()
+	defer mu.Unlock()
+	// The busy check and the enqueue share the dispatch mutex with the
+	// run loop, so the latch cannot be appended after the run observed
+	// the queue empty at its final handoff.
+	if !a.IsSessionBusy(sessionID) {
+		return fmt.Errorf("session %s has no active run", sessionID)
+	}
+	pending, _ := a.interim.Get(sessionID)
+	a.interim.Set(sessionID, append(pending, text))
+	return nil
+}
+
+// drainInterim returns and clears the latched interim messages for
+// sessionID. Callers must hold the session dispatch mutex.
+func (a *sessionAgent) drainInterim(sessionID string) []string {
+	pending, ok := a.interim.Take(sessionID)
+	if !ok || len(pending) == 0 {
+		return nil
+	}
+	return pending
+}
+
+// HasPendingInterim reports whether an interim message is latched for
+// sessionID.
+func (a *sessionAgent) HasPendingInterim(sessionID string) bool {
+	pending, ok := a.interim.Get(sessionID)
+	return ok && len(pending) > 0
+}
+
 // Resume lifts the pause latch for sessionID and drains the held
 // continuation (if any) so the turn restarts at its stop point.
 func (a *sessionAgent) Resume(sessionID string) {
@@ -1793,6 +1877,29 @@ func (a *sessionAgent) prependPauseContinuation(call SessionAgentCall) {
 	cont.Attachments = nil
 	cont.Accepted = nil
 	cont.acceptSeq = 0
+	cont.QueueID = a.nextQueueID(call.SessionID)
+	a.messageQueue.Set(call.SessionID, append([]SessionAgentCall{cont}, existing...))
+}
+
+// prependInterimContinuation pushes a continuation of call carrying text
+// as a fresh user turn onto the front of the session queue. Unlike the
+// pause continuation it does not set resumeAfterPause: the recursive run
+// persists the interim message into the transcript itself and streams it
+// as the new user prompt, keeping the pending tool work intact.
+func (a *sessionAgent) prependInterimContinuation(call SessionAgentCall, text string) {
+	existing, ok := a.messageQueue.Get(call.SessionID)
+	if !ok {
+		existing = []SessionAgentCall{}
+	}
+	cont := call
+	cont.Prompt = text
+	cont.resumeAfterPause = false
+	cont.resumedAfterCompaction = false
+	cont.goalCheck = false
+	cont.Attachments = nil
+	cont.Accepted = nil
+	cont.acceptSeq = 0
+	cont.OnComplete = nil
 	cont.QueueID = a.nextQueueID(call.SessionID)
 	a.messageQueue.Set(call.SessionID, append([]SessionAgentCall{cont}, existing...))
 }
@@ -3044,6 +3151,11 @@ func (a *sessionAgent) Cancel(sessionID string) {
 		a.clearPaused(sessionID)
 		a.publishPauseState(sessionID, false)
 	}
+
+	// Canceling a sub-agent run also drops any undelivered interim
+	// messages: the turn they were headed for is gone, and a latch left
+	// behind could stop a future run on a recycled child session.
+	a.interim.Del(sessionID)
 
 	// Record a pending cancel only when a dispatched-but-not-yet-active
 	// run exists. This catches runs still in the goroutine scheduler or

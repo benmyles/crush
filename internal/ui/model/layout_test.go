@@ -71,6 +71,7 @@ func newTestUI() *UI {
 		status:   NewStatus(com, nil),
 		chat:     NewChat(com, config.ScrollbarDefault),
 		textarea: ta,
+		agents:   NewAgentsPanel(com.Styles),
 		state:    uiChat,
 		focus:    uiFocusEditor,
 		width:    140,

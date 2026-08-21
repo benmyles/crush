@@ -180,6 +180,22 @@ func (b *Backend) CancelSession(workspaceID, sessionID string) error {
 	return nil
 }
 
+// SubAgentMessage queues an interim message for a running sub-agent
+// (agent/agentic_fetch child session). The message is delivered at the
+// run's next step boundary.
+func (b *Backend) SubAgentMessage(ctx context.Context, workspaceID, sessionID, text string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	if ws.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+
+	return ws.AgentCoordinator.SendSubAgentMessage(ctx, sessionID, text)
+}
+
 // SummarizeSession triggers a session summarization.
 func (b *Backend) SummarizeSession(ctx context.Context, workspaceID, sessionID string) error {
 	ws, err := b.GetWorkspace(workspaceID)

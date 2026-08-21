@@ -104,6 +104,7 @@ const (
 	uiFocusEditor
 	uiFocusMain
 	uiFocusSidebar
+	uiFocusAgents
 )
 
 type uiState uint8
@@ -115,6 +116,17 @@ const (
 	uiLanding
 	uiChat
 )
+
+// agentsTickMsg drives the dock's per-second refresh (elapsed time and
+// lingering done rows) while at least one sub-agent entry is visible.
+type agentsTickMsg struct{}
+
+// subAgentSendMsg dispatches a dock-composed message to a running
+// sub-agent via the workspace.
+type subAgentSendMsg struct {
+	sessionID string
+	text      string
+}
 
 type openEditorMsg struct {
 	Text string
@@ -299,6 +311,15 @@ type UI struct {
 
 	// Chat components
 	chat *Chat
+
+	// agents is the live sub-agent progress dock shown while sub-agents
+	// (agent/agentic_fetch) are running.
+	agents *AgentsPanel
+	// agentsTickActive records that the per-second dock refresh loop is
+	// armed, so duplicate mutation events do not stack tickers.
+	agentsTickActive bool
+	// agentsCursor holds the compose cursor from the dock's last Draw.
+	agentsCursor *tea.Cursor
 
 	// onboarding state
 	onboarding struct {
@@ -490,6 +511,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		keyMap:              keyMap,
 		textarea:            ta,
 		chat:                ch,
+		agents:              NewAgentsPanel(com.Styles),
 		header:              header,
 		completions:         comp,
 		attachments:         attachments,
@@ -1061,6 +1083,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleQuestionNotification(msg.Payload)
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
+	case agentsTickMsg:
+		if cmd := m.handleAgentsTick(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case subAgentSendMsg:
+		if cmd := m.handleSubAgentSend(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case tea.TerminalVersionMsg:
 		termVersion := strings.ToLower(msg.Name)
 		// Only enable progress bar for the following terminals.
@@ -1485,6 +1515,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // setSessionMessages sets the messages for the current session in the chat
 func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
+	m.resetAgents()
 	var cmds []tea.Cmd
 	// Build tool result map to link tool calls with their results
 	msgPtrs := make([]*message.Message, len(msgs))
@@ -1514,8 +1545,13 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		}
 	}
 
-	// Load nested tool calls for agent/agentic_fetch tools.
+	// Load nested tool calls for agent/agentic_fetch tools. This also
+	// re-registers still-running sub-agents in the dock, so re-arm the
+	// refresh loop when anything ended up visible.
 	m.loadNestedToolCalls(items)
+	if cmd := m.agentsEnsureTicking(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 
 	// If the user switches between sessions while the agent is working we
 	// want to make sure the animations are shown. Gate on the agent actually
@@ -1606,6 +1642,15 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 
 		tc := toolItem.ToolCall()
 		messageID := toolItem.MessageID()
+
+		// Re-register still-running agent/agentic_fetch calls so the
+		// dock survives session switches and reloads. Terminal items
+		// park in the chat only.
+		switch toolItem.Status() {
+		case chat.ToolStatusSuccess, chat.ToolStatusError, chat.ToolStatusCanceled:
+		default:
+			m.registerAgentCall(messageID, tc)
+		}
 
 		// Get the agent tool session ID.
 		agentSessionID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
@@ -1707,6 +1752,10 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
+		m.registerAgentItems(msg.ID, items)
+		if cmd := m.agentsEnsureTicking(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if m.chat.Follow() {
 			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -1730,6 +1779,9 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 			if toolMsgItem, ok := toolItem.(chat.ToolMessageItem); ok {
 				toolMsgItem.SetResult(&tr)
+				if cmd := m.noteAgentFinished(tr.ToolCallID); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 				if m.chat.Follow() {
 					if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
@@ -1744,6 +1796,12 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 	switch {
 	case m.state != uiChat:
+		return nil
+	case m.focus != uiFocusAgents && m.layout.agents.Dy() > 0 && image.Pt(msg.X, msg.Y).In(m.layout.agents):
+		m.focus = uiFocusAgents
+		m.textarea.Blur()
+		m.chat.Blur()
+		m.agents.Focus()
 		return nil
 	case m.focus != uiFocusSidebar && image.Pt(msg.X, msg.Y).In(m.layout.sidebar) && m.sidebarScrollable:
 		m.focus = uiFocusSidebar
@@ -1830,6 +1888,7 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		}
 		if existingToolItem == nil {
 			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.com.Workspace.WorkingDir()))
+			m.registerAgentCall(msg.ID, tc)
 		}
 	}
 
@@ -1930,6 +1989,10 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Update the agent item with the new nested tools.
 	agentItem.SetNestedTools(nestedTools)
+
+	if cmd := m.noteAgentActivity(toolCallID, nestedTools); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 
 	// Update the chat so it updates the index map for animations to work as expected
 	m.chat.UpdateNestedToolIDs(toolCallID)
@@ -3078,6 +3141,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			case m.queueSectionFocused() && key.Matches(msg, m.keyMap.Chat.QueueRemove):
 				cmds = append(cmds, m.removeSelectedQueuedPrompt(false))
 			case key.Matches(msg, m.keyMap.Tab):
+				if m.agents.Visible() && m.agents.Len() > 0 {
+					m.focus = uiFocusAgents
+					m.agents.Focus()
+					m.chat.Blur()
+					break
+				}
 				m.focus = uiFocusEditor
 				m.sidebarScrollbarVisible = false
 				cmds = append(cmds, m.textarea.Focus())
@@ -3169,6 +3238,59 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					cmds = append(cmds, cmd)
 				} else {
 					handleGlobalKeys(msg)
+				}
+			}
+		case uiFocusAgents:
+			if m.state != uiChat || !m.agents.Visible() {
+				m.focus = uiFocusMain
+				m.chat.Focus()
+				break
+			}
+			if !m.agents.Composing() {
+				switch {
+				case key.Matches(msg, m.keyMap.Chat.Up), key.Matches(msg, m.keyMap.Chat.UpOneItem):
+					m.agents.SelectPrev()
+				case key.Matches(msg, m.keyMap.Chat.Down), key.Matches(msg, m.keyMap.Chat.DownOneItem):
+					m.agents.SelectNext()
+				case msg.String() == "m":
+					m.agents.StartCompose()
+				case msg.String() == "x":
+					if sel := m.agents.Selected(); sel != nil {
+						m.com.Workspace.AgentCancel(sel.sessionID)
+						m.agents.MarkCanceled(sel.toolCallID)
+						m.agents.Blur()
+					}
+				case key.Matches(msg, m.keyMap.Tab):
+					m.focus = uiFocusEditor
+					m.agents.Blur()
+					cmds = append(cmds, m.textarea.Focus())
+				case key.Matches(msg, m.keyMap.Editor.Escape):
+					m.focus = uiFocusMain
+					m.agents.Blur()
+					m.chat.Focus()
+				default:
+					handleGlobalKeys(msg)
+				}
+				break
+			}
+			// Inline compose input handling.
+			switch {
+			case key.Matches(msg, m.keyMap.Editor.Escape):
+				m.agents.CancelCompose()
+			case key.Matches(msg, m.keyMap.Editor.SendMessage):
+				if text := strings.TrimSpace(m.agents.ComposeValue()); text != "" {
+					if sel := m.agents.Selected(); sel != nil {
+						cmds = append(cmds, func() tea.Msg {
+							return subAgentSendMsg{sessionID: sel.sessionID, text: text}
+						})
+					}
+				}
+				m.agents.CancelCompose()
+			case msg.Code == tea.KeyBackspace:
+				m.agents.ComposeBackspace()
+			case msg.Text != "":
+				for _, r := range msg.Text {
+					m.agents.ComposeAppend(r)
 				}
 			}
 		case uiFocusSidebar:
@@ -3295,6 +3417,11 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		if layout.pills.Dy() > 0 && m.pillsView != "" {
 			uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 		}
+		if layout.agents.Dy() > 0 && m.agents.Visible() {
+			m.agentsCursor = m.agents.Draw(scr, layout.agents)
+		} else {
+			m.agentsCursor = nil
+		}
 
 		if m.activeInline != nil {
 			m.activeInline.SetFocused(m.focus == uiFocusEditor)
@@ -3390,6 +3517,10 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			cur.X++                            // Adjust for app margins
 			cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
 			return cur
+		}
+	case uiFocusAgents:
+		if m.agents.Composing() && m.agentsCursor != nil {
+			return m.agentsCursor
 		}
 	}
 	return nil
@@ -4043,6 +4174,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			} else {
 				uiLayout.main = mainRect
 			}
+			uiLayout = m.splitAgentsDock(uiLayout)
 			// Add bottom margin to main
 			uiLayout.main.Max.Y -= 1
 			uiLayout.editor = editorRect
@@ -4083,6 +4215,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			} else {
 				uiLayout.main = mainRect
 			}
+			uiLayout = m.splitAgentsDock(uiLayout)
 			// Add bottom margin to main
 			uiLayout.main.Max.Y -= 1
 			uiLayout.editor = editorRect
@@ -4090,6 +4223,25 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	}
 
 	return uiLayout
+}
+
+// splitAgentsDock reserves a strip between the chat and the editor while
+// the sub-agent dock is visible. The dock only ever steals from the chat
+// area, never from the editor.
+func (m *UI) splitAgentsDock(l uiLayout) uiLayout {
+	if m.agents == nil {
+		return l
+	}
+	if h := m.agents.Height(); h > 0 && l.main.Dy() > h {
+		var chatRect, dockRect image.Rectangle
+		layout.Vertical(
+			layout.Len(l.main.Dy()-h),
+			layout.Fill(1),
+		).Split(l.main).Assign(&chatRect, &dockRect)
+		l.main = chatRect
+		l.agents = dockRect
+	}
+	return l
 }
 
 // uiLayout defines the positioning of UI elements.
@@ -4108,6 +4260,9 @@ type uiLayout struct {
 
 	// pills is the area for the pills panel.
 	pills uv.Rectangle
+
+	// agents is the area for the live sub-agent progress dock.
+	agents uv.Rectangle
 
 	// editor is the area for the editor pane.
 	editor uv.Rectangle
@@ -5261,6 +5416,23 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 	case notify.TypeCompactionFinished:
 		m.clearCompactionState()
 		return nil
+	case notify.TypeSubAgentStarted:
+		// A sub-agent began running. Register it in the dock, keyed by
+		// the parent tool call recovered from the child session ID.
+		_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(n.SessionID)
+		if ok {
+			m.agents.Register(toolCallID, n.SessionID, n.SubAgentKind, n.SubAgentPrompt)
+		}
+		return m.agentsEnsureTicking()
+	case notify.TypeSubAgentFinished:
+		// Lifecycle terminal edge: retire the dock row. The tool result
+		// path also marks the row done, so this is idempotent and covers
+		// ordering where the result streams slightly later.
+		_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(n.SessionID)
+		if ok {
+			m.agents.MarkDone(toolCallID)
+		}
+		return m.agentsEnsureTicking()
 	default:
 		return nil
 	}

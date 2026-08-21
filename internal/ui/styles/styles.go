@@ -609,6 +609,27 @@ type Styles struct {
 		HelpText           lipgloss.Style // Help action text style
 		Area               lipgloss.Style // Pills area container
 	}
+	// Agents styles for the live sub-agent progress dock.
+	Agents struct {
+		Area          lipgloss.Style // Dock area container
+		Title         lipgloss.Style // "Agents" header text
+		TitleCount    lipgloss.Style // Running/done counts next to the title
+		DoneCount     lipgloss.Style // Done count in the header
+		Row           lipgloss.Style // Base row style
+		Glyph         lipgloss.Style // Inactive entry bullet
+		SelectedGlyph lipgloss.Style // Selection arrow for the active entry
+		KindTag       lipgloss.Style // "agent"/"fetch" tag
+		ActiveTool    lipgloss.Style // Live nested tool name
+		Waiting       lipgloss.Style // Prompt shown while an agent boots
+		Done          lipgloss.Style // Terminal success marker
+		Canceled      lipgloss.Style // Terminal cancel marker
+		Meter         lipgloss.Style // Live received-data meter
+		Elapsed       lipgloss.Style // Elapsed time
+		ComposePrompt lipgloss.Style // "msg ▸" input label
+		ComposeInput  lipgloss.Style // Inline message input text
+		HelpKey       lipgloss.Style // Keystroke hint style
+		HelpText      lipgloss.Style // Help action text style
+	}
 }
 
 // ChromaTheme converts the current markdown chroma styles to a chroma
