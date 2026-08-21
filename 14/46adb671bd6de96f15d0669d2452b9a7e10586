@@ -1,0 +1,16 @@
+internal/agent/tools/exa.go
+  h_9b4a5c940a23e2 9,59-67,70,73-76,158-159,167-178,180,184,294-295,298-300,341
+internal/agent/tools/exa_test.go
+  h_9b4a5c940a23e2 5,23,25,28,140-151,167-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "1446adb671bd6de96f15d0669d2452b9a7e10586",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
