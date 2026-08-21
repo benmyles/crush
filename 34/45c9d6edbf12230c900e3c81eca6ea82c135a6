@@ -1,0 +1,24 @@
+internal/ui/model/agents.go
+  h_9b4a5c940a23e2 66-74,148-195,486-487,501-505,511,514-516,599-606
+internal/ui/model/agents_test.go
+  h_9b4a5c940a23e2 157-182
+internal/ui/model/agents_updates.go
+  h_9b4a5c940a23e2 12,114-116,131-146
+internal/ui/model/ui.go
+  h_9b4a5c940a23e2 22,972-980,1933-1945,2010-2022
+internal/ui/styles/quickstyle.go
+  h_9b4a5c940a23e2 1089
+internal/ui/styles/styles.go
+  h_9b4a5c940a23e2 628
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "3445c9d6edbf12230c900e3c81eca6ea82c135a6",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
