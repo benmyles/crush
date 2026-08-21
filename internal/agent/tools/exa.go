@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strconv"
@@ -55,13 +56,23 @@ func resolveWebBackend(resolver WebBackendResolver) (WebBackend, string) {
 // httptest server.
 var exaAPIURL = "https://api.exa.ai"
 
-// exaRetryBackoffBase is the base delay for exponential backoff on
-// retryable Exa errors. It is a var so tests can shrink it.
-var exaRetryBackoffBase = time.Second
+// exaRetryDelays is the backoff schedule between retry attempts. Each
+// delay is randomized with 25% jitter before use. It is a var so tests can
+// shrink it.
+var exaRetryDelays = []time.Duration{
+	2 * time.Second,
+	5 * time.Second,
+	15 * time.Second,
+	30 * time.Second,
+}
 
 // exaMaxRetries is how many retries follow the initial request. Requests
-// returning 429 or 5xx are retried with exponential backoff.
+// returning 429 or 5xx are retried with backoff.
 const exaMaxRetries = 4
+
+// exaMaxCharacters is the largest maxCharacters value the Exa API accepts
+// for text content. The API rejects requests that exceed it.
+const exaMaxCharacters = 1_000_000
 
 // exaSearchEndpoint returns the Exa search endpoint.
 func exaSearchEndpoint() string { return exaAPIURL + "/search" }
@@ -144,8 +155,8 @@ func isRetryableExaStatus(status int) bool {
 }
 
 // exaRetryBackoff computes the wait before the next attempt. The
-// Retry-After header wins when present; otherwise exponential backoff
-// applies, capped at 8 seconds.
+// Retry-After header wins when present; otherwise the fixed schedule
+// applies with 25% jitter.
 func exaRetryBackoff(resp *http.Response, attempt int) time.Duration {
 	if resp != nil && resp.Header.Get("Retry-After") != "" {
 		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
@@ -153,15 +164,24 @@ func exaRetryBackoff(resp *http.Response, attempt int) time.Duration {
 		}
 	}
 
-	delay := exaRetryBackoffBase << attempt
-	if delay > 8*time.Second {
-		return 8 * time.Second
+	delay := exaRetryDelays[len(exaRetryDelays)-1]
+	if attempt >= 0 && attempt < len(exaRetryDelays) {
+		delay = exaRetryDelays[attempt]
 	}
-	return delay
+	return jitterDuration(delay, 0.25)
+}
+
+// jitterDuration randomizes d by up to ±fraction around its base value.
+func jitterDuration(d time.Duration, fraction float64) time.Duration {
+	spread := time.Duration(float64(d) * fraction)
+	if spread <= 0 {
+		return d
+	}
+	return d - spread + time.Duration(rand.Int64N(2*int64(spread)+1))
 }
 
 // doExaRequest sends a JSON request to the Exa API, retrying transient
-// failures (429 and 5xx) with exponential backoff.
+// failures (429 and 5xx) with backoff.
 func doExaRequest(ctx context.Context, client *http.Client, method, endpoint, apiKey string, body any, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -271,9 +291,13 @@ func searchExa(ctx context.Context, client *http.Client, apiKey, query string, m
 
 // fetchExaContents fetches a single URL's content through the Exa contents
 // API, which returns clean markdown text. maxCharacters caps the returned
-// text; 0 allows the API default.
+// text; 0 allows the API default. Values above the API's limit are clamped
+// so requests never fail validation.
 func fetchExaContents(ctx context.Context, client *http.Client, apiKey, rawURL string, maxCharacters int) (string, error) {
 	reqBody := exaContentsRequest{URLs: []string{rawURL}}
+	if maxCharacters > exaMaxCharacters {
+		maxCharacters = exaMaxCharacters
+	}
 	if maxCharacters > 0 {
 		reqBody.Text = &exaTextConfig{MaxCharacters: maxCharacters}
 	}
@@ -314,7 +338,7 @@ func FetchURLContent(ctx context.Context, client *http.Client, resolver WebBacke
 		if apiKey == "" {
 			return "", fmt.Errorf("web backend is set to Exa but EXA_API_KEY is not set")
 		}
-		return fetchExaContents(ctx, client, apiKey, rawURL, 2_000_000)
+		return fetchExaContents(ctx, client, apiKey, rawURL, exaMaxCharacters)
 	}
 	return FetchURLAndConvert(ctx, client, rawURL)
 }

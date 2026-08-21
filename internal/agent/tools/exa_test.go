@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,12 +20,12 @@ func serveExaStub(t *testing.T, handler http.HandlerFunc) {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	origEndpoint := exaAPIURL
-	origBackoff := exaRetryBackoffBase
+	origDelays := exaRetryDelays
 	exaAPIURL = srv.URL
-	exaRetryBackoffBase = time.Millisecond
+	exaRetryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond}
 	t.Cleanup(func() {
 		exaAPIURL = origEndpoint
-		exaRetryBackoffBase = origBackoff
+		exaRetryDelays = origDelays
 	})
 }
 
@@ -136,6 +137,18 @@ func TestSearchExaSurfacesAPIError(t *testing.T) {
 	require.Contains(t, err.Error(), "Invalid API key")
 }
 
+func TestExaRetryBackoffSchedule(t *testing.T) {
+	for attempt, base := range []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second} {
+		got := exaRetryBackoff(nil, attempt)
+		require.InDelta(t, float64(base), float64(got), float64(base)*0.25,
+			"attempt %d: expected %v ± 25%% jitter, got %v", attempt, base, got)
+	}
+
+	// Retry-After wins over the schedule.
+	resp := &http.Response{Header: http.Header{"Retry-After": []string{"7"}}}
+	require.Equal(t, 7*time.Second, exaRetryBackoff(resp, 0))
+}
+
 func TestFetchExaContents(t *testing.T) {
 	serveExaStub(t, func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/contents", r.URL.Path)
@@ -149,6 +162,21 @@ func TestFetchExaContents(t *testing.T) {
 	content, err := fetchExaContents(context.Background(), http.DefaultClient, "test-key", "https://example.com/doc", 10_000)
 	require.NoError(t, err)
 	require.Equal(t, "# Heading\n\nBody content.", content)
+}
+
+func TestFetchExaContentsClampsMaxCharacters(t *testing.T) {
+	serveExaStub(t, func(w http.ResponseWriter, r *http.Request) {
+		var req exaContentsRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		require.NotNil(t, req.Text)
+		require.Equal(t, exaMaxCharacters, req.Text.MaxCharacters)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results": [{"title": "Docs", "text": "content."}]}`))
+	})
+
+	content, err := fetchExaContents(context.Background(), http.DefaultClient, "test-key", "https://example.com/doc", 2_000_000)
+	require.NoError(t, err)
+	require.Equal(t, "content.", content)
 }
 
 func TestFetchExaContentsURLError(t *testing.T) {
