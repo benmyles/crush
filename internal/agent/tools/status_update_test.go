@@ -64,9 +64,11 @@ func TestStatusUpdateTool(t *testing.T) {
 	require.Len(t, notified, 1)
 	require.Equal(t, "sess-1", notified[0].SessionID)
 
-	// A later update replaces the previous one.
+	// A later update replaces the previous one, and whitespace-only
+	// blockers are normalized to empty.
 	_, err = runStatusTool(t, tool, "sess-1", StatusUpdateParams{
 		Done: "Migration tests", Doing: "Fixing lint", Next: "Commit",
+		Blockers: "  \n\t ",
 	})
 	require.NoError(t, err)
 	got, err = store.Get(context.Background(), "sess-1")

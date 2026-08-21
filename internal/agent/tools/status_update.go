@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"strings"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/status"
@@ -45,7 +46,10 @@ func NewStatusUpdateTool(store *status.Store, notify StatusNotifier) fantasy.Age
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for recording a status update")
 			}
-			update, err := store.Upsert(ctx, sessionID, params.Done, params.Doing, params.Next, params.Blockers)
+			// Trim stray whitespace so fields like blockers render cleanly
+			// or drop out of the UI entirely when effectively empty.
+			blockers := strings.TrimSpace(params.Blockers)
+			update, err := store.Upsert(ctx, sessionID, strings.TrimSpace(params.Done), strings.TrimSpace(params.Doing), strings.TrimSpace(params.Next), blockers)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("failed to record status update: %w", err)
 			}
