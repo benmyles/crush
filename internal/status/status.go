@@ -1,5 +1,5 @@
 // Package status implements agent status updates: mini standup reports
-// (recently done, now doing, next, blockers) that the agent emits through
+// (recently done, now doing, next) that the agent emits through
 // the status_update tool. The reminder loop prods the model when no update
 // arrived within ReminderInterval while the feature is enabled.
 package status
@@ -22,8 +22,6 @@ type Update struct {
 	Doing string `json:"doing"`
 	// Next summarizes what the agent will work on after the current task.
 	Next string `json:"next"`
-	// Blockers carries anything blocking progress, empty when none.
-	Blockers string `json:"blockers,omitempty"`
 	// UpdatedAt is the unix timestamp of the latest update.
 	UpdatedAt int64 `json:"updated_at"`
 }
@@ -41,9 +39,8 @@ func ReminderPrompt() string {
 	var b strings.Builder
 	b.WriteString("[Status update] More than two minutes passed since your last ")
 	b.WriteString("status update. Call the status_update tool now with what you ")
-	b.WriteString("recently did, what you are doing now, what you will do next, ")
-	b.WriteString("and any blockers (omit the blockers field when nothing is ")
-	b.WriteString("blocking you). Then review your todo list and make sure every ")
+	b.WriteString("recently did, what you are doing now, and what you will do ")
+	b.WriteString("next. Then review your todo list and make sure every ")
 	b.WriteString("todo is up-to-date and accurate: mark finished work completed, ")
 	b.WriteString("split or update stale items, and keep exactly the work that ")
 	b.WriteString("remains. Then continue working; do not ask the user ")

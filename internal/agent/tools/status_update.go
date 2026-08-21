@@ -26,9 +26,6 @@ type StatusUpdateParams struct {
 	Doing string `json:"doing" description:"What you are working on right now (present tense, concise)"`
 	// Next summarizes what the agent will work on after the current task.
 	Next string `json:"next" description:"What you will do next (short intent)"`
-	// Blockers carries anything blocking progress. Optional: omit this
-	// field entirely when nothing blocks you.
-	Blockers string `json:"blockers,omitempty" description:"Anything blocking progress. Omit this field entirely when nothing blocks you"`
 }
 
 // StatusNotifier is invoked after a status update is recorded so the
@@ -47,10 +44,9 @@ func NewStatusUpdateTool(store *status.Store, notify StatusNotifier) fantasy.Age
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for recording a status update")
 			}
-			// Trim stray whitespace so fields like blockers render cleanly
-			// or drop out of the UI entirely when effectively empty.
-			blockers := strings.TrimSpace(params.Blockers)
-			update, err := store.Upsert(ctx, sessionID, strings.TrimSpace(params.Done), strings.TrimSpace(params.Doing), strings.TrimSpace(params.Next), blockers)
+			// Trim stray whitespace so fields render cleanly or drop out of
+			// the UI entirely when effectively empty.
+			update, err := store.Upsert(ctx, sessionID, strings.TrimSpace(params.Done), strings.TrimSpace(params.Doing), strings.TrimSpace(params.Next))
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("failed to record status update: %w", err)
 			}

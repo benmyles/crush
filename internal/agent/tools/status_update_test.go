@@ -23,7 +23,6 @@ func newStatusTestStore(t *testing.T) *statuspkg.Store {
 		done TEXT NOT NULL,
 		doing TEXT NOT NULL,
 		next TEXT NOT NULL,
-		blockers TEXT,
 		updated_at INTEGER NOT NULL
 	)`)
 	require.NoError(t, err)
@@ -50,7 +49,7 @@ func TestStatusUpdateTool(t *testing.T) {
 	// Records the first update.
 	resp, err := runStatusTool(t, tool, "sess-1", StatusUpdateParams{
 		Done: "Added the caching layer", Doing: "Writing migration tests",
-		Next: "Run the full suite", Blockers: "CI is down",
+		Next: "Run the full suite",
 	})
 	require.NoError(t, err)
 	require.Contains(t, resp.Content, "Status update recorded")
@@ -60,21 +59,17 @@ func TestStatusUpdateTool(t *testing.T) {
 	require.Equal(t, "Added the caching layer", got.Done)
 	require.Equal(t, "Writing migration tests", got.Doing)
 	require.Equal(t, "Run the full suite", got.Next)
-	require.Equal(t, "CI is down", got.Blockers)
 	require.Len(t, notified, 1)
 	require.Equal(t, "sess-1", notified[0].SessionID)
 
-	// A later update replaces the previous one, and whitespace-only
-	// blockers are normalized to empty.
+	// A later update replaces the previous one.
 	_, err = runStatusTool(t, tool, "sess-1", StatusUpdateParams{
 		Done: "Migration tests", Doing: "Fixing lint", Next: "Commit",
-		Blockers: "  \n\t ",
 	})
 	require.NoError(t, err)
 	got, err = store.Get(context.Background(), "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "Migration tests", got.Done)
-	require.Equal(t, "", got.Blockers)
 	require.Len(t, notified, 2)
 
 	// Missing session ID errors.
@@ -85,8 +80,8 @@ func TestStatusUpdateTool(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestStatusUpdateToolSchema asserts blockers stays an optional field so
-// models that omit it are never coerced into emitting placeholder text.
+// TestStatusUpdateToolSchema asserts the schema carries exactly the three
+// standup fields, with no blockers field.
 func TestStatusUpdateToolSchema(t *testing.T) {
 	t.Parallel()
 	tool := NewStatusUpdateTool(newStatusTestStore(t), nil)
@@ -94,5 +89,5 @@ func TestStatusUpdateToolSchema(t *testing.T) {
 	require.Contains(t, info.Required, "done")
 	require.Contains(t, info.Required, "doing")
 	require.Contains(t, info.Required, "next")
-	require.NotContains(t, info.Required, "blockers")
+	require.NotContains(t, info.Parameters, "blockers")
 }

@@ -37,7 +37,7 @@ func (m *UI) handleStatusFetched(msg statusFetchedMsg) tea.Cmd {
 }
 
 // statusInfo renders the latest agent status update for the sidebar: a
-// relative timestamp and the done/doing/next/blockers standup rows.
+// relative timestamp and the done/doing/next standup rows.
 func (m *UI) statusInfo(width int, isSection bool) string {
 	t := m.com.Styles
 
@@ -60,9 +60,6 @@ func (m *UI) statusInfo(width int, isSection bool) string {
 		statusRow(t, "✓", t.Sidebar.StatusDone, u.Done),
 		statusRow(t, "→", t.Sidebar.StatusDoing, u.Doing),
 		statusRow(t, "▸", t.Sidebar.StatusNext, u.Next),
-	}
-	if u.Blockers != "" {
-		rows = append(rows, statusRow(t, "⛔", t.Sidebar.StatusBlockers, u.Blockers))
 	}
 
 	body := lipgloss.JoinVertical(lipgloss.Left, append([]string{header}, rows...)...)

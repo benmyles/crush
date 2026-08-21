@@ -101,7 +101,7 @@ func TestMaybeAppendStatusReminder(t *testing.T) {
 	t.Run("recent update suppresses the reminder", func(t *testing.T) {
 		sess, err := sa.sessions.Create(ctx, "sess-2")
 		require.NoError(t, err)
-		_, err = store.Upsert(ctx, sess.ID, "did", "doing", "next", "")
+		_, err = store.Upsert(ctx, sess.ID, "did", "doing", "next")
 		require.NoError(t, err)
 		call2 := SessionAgentCall{SessionID: sess.ID, Prompt: "work"}
 		got := sa.maybeAppendStatusReminder(ctx, call2, baseCopy())
@@ -111,7 +111,7 @@ func TestMaybeAppendStatusReminder(t *testing.T) {
 	t.Run("old update injects immediately", func(t *testing.T) {
 		sess, err := sa.sessions.Create(ctx, "sess-3")
 		require.NoError(t, err)
-		_, err = store.Upsert(ctx, sess.ID, "did", "doing", "next", "")
+		_, err = store.Upsert(ctx, sess.ID, "did", "doing", "next")
 		require.NoError(t, err)
 		_, err = conn.Exec(`UPDATE status_updates SET updated_at = updated_at - 300 WHERE session_id = ?`, sess.ID)
 		require.NoError(t, err)

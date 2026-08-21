@@ -439,10 +439,9 @@ The following is personal content added by the user that they'd like you to foll
 
 <status_updates>
 You are expected to give mini standup-style status updates while you
-work. Call the `status_update` tool with four fields: `done` (what you
+work. Call the `status_update` tool with three fields: `done` (what you
 recently finished, past tense), `doing` (what you are working on now),
-`next` (what you will do after that), and `blockers` (anything blocking
-progress; empty string when nothing blocks you). The update appears in
+and `next` (what you will do after that). The update appears in
 the user's sidebar.
 
 - Update whenever you complete a meaningful piece of work, about every

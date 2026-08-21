@@ -40,12 +40,12 @@ func (s *Store) get(ctx context.Context, sessionID string) (*Update, error) {
 		return nil, nil
 	}
 	row := s.db.QueryRowContext(ctx,
-		`SELECT session_id, done, doing, next, COALESCE(blockers, ''), updated_at
+		`SELECT session_id, done, doing, next, updated_at
 		   FROM status_updates WHERE session_id = ?`,
 		sessionID)
 	var u Update
 	if err := row.Scan(&u.SessionID, &u.Done, &u.Doing, &u.Next,
-		&u.Blockers, &u.UpdatedAt); err != nil {
+		&u.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -56,7 +56,7 @@ func (s *Store) get(ctx context.Context, sessionID string) (*Update, error) {
 
 // Upsert records a new status update, replacing any previous one for the
 // session.
-func (s *Store) Upsert(ctx context.Context, sessionID, done, doing, next, blockers string) (Update, error) {
+func (s *Store) Upsert(ctx context.Context, sessionID, done, doing, next string) (Update, error) {
 	if s == nil || s.db == nil {
 		return Update{}, nil
 	}
@@ -65,12 +65,12 @@ func (s *Store) Upsert(ctx context.Context, sessionID, done, doing, next, blocke
 	}
 	now := time.Now().Unix()
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO status_updates (session_id, done, doing, next, blockers, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO status_updates (session_id, done, doing, next, updated_at)
+		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   done = excluded.done, doing = excluded.doing, next = excluded.next,
-		   blockers = excluded.blockers, updated_at = excluded.updated_at`,
-		sessionID, done, doing, next, blockers, now); err != nil {
+		   updated_at = excluded.updated_at`,
+		sessionID, done, doing, next, now); err != nil {
 		return Update{}, fmt.Errorf("failed to upsert status update: %w", err)
 	}
 	return s.Get(ctx, sessionID)

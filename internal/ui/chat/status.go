@@ -63,9 +63,6 @@ func (s *StatusUpdateRenderContext) RenderTool(sty *styles.Styles, width int, op
 		statusRow(sty.Sidebar.StatusDoing, "→", params.Doing),
 		statusRow(sty.Sidebar.StatusNext, "▸", params.Next),
 	}
-	if params.Blockers != "" {
-		rows = append(rows, statusRow(sty.Sidebar.StatusBlockers, "⛔", params.Blockers))
-	}
 	body := sty.Tool.Body.Render(strings.Join(rows, "\n"))
 	return joinToolParts(header, body)
 }

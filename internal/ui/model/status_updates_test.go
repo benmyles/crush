@@ -17,7 +17,6 @@ func TestStatusInfoRendersStandup(t *testing.T) {
 		Done:      "Added the caching layer",
 		Doing:     "Writing migration tests",
 		Next:      "Run the full suite",
-		Blockers:  "CI is down",
 		UpdatedAt: time.Now().Add(-5 * time.Minute).Unix(),
 	}
 
@@ -26,7 +25,6 @@ func TestStatusInfoRendersStandup(t *testing.T) {
 	require.Contains(t, out, "Added the caching layer")
 	require.Contains(t, out, "Writing migration tests")
 	require.Contains(t, out, "Run the full suite")
-	require.Contains(t, out, "CI is down")
 	require.Contains(t, out, "5m ago")
 }
 
@@ -37,21 +35,6 @@ func TestStatusInfoEmptyState(t *testing.T) {
 	out := u.statusInfo(60, true)
 	require.Contains(t, out, "Status")
 	require.Contains(t, out, "None.")
-}
-
-func TestStatusInfoWithoutBlockers(t *testing.T) {
-	t.Parallel()
-
-	u := newTestUI()
-	u.statusUpdate = status.Update{
-		SessionID: "sess-1",
-		Done:      "a",
-		Doing:     "b",
-		Next:      "c",
-		UpdatedAt: time.Now().Unix(),
-	}
-	out := u.statusInfo(60, true)
-	require.NotContains(t, out, "⛔")
 }
 
 func TestFormatSince(t *testing.T) {

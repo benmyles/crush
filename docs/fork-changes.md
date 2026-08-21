@@ -72,7 +72,7 @@ Commits: `2f7a1868`, `e9f22ad0`, `c37079ba`, `d655ffac` (partial).
 ### 3. Agent status updates with periodic reminders
 
 Agents can report mini standup updates via the `status_update` tool
-(`done`/`doing`/`next`/`blockers`). Updates are persisted per session, shown
+(`done`/`doing`/`next`). Updates are persisted per session, shown
 in the UI sidebar, and a reminder loop prods the agent for a fresh update
 every couple of minutes of continuous work. The injected reminder also asks
 the agent to reconcile its todo list: mark finished work completed and

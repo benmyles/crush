@@ -1,7 +1,7 @@
 # status_update
 
 Records a structured status update for the session: what you recently
-did, what you are doing now, what you will do next, and any blockers.
+did, what you are doing now, and what you will do next.
 Treat this like a mini standup report shown to the user in the sidebar.
 
 Use it:
@@ -14,6 +14,4 @@ Use it:
 
 Keep each field concise (a sentence or two). Use resume-style phrases
 for `done` (e.g. "Added the caching layer"), present tense for `doing`
-(e.g. "Writing migration tests"), and short intents for `next`. Put
-anything blocking progress in `blockers`; omit the field entirely when
-nothing blocks you.
+(e.g. "Writing migration tests"), and short intents for `next`.
