@@ -1,0 +1,40 @@
+internal/agent/agent.go
+  h_9b4a5c940a23e2 1159-1169
+internal/agent/common_test.go
+  h_9b4a5c940a23e2 157
+internal/agent/pause_goal_test.go
+  h_9b4a5c940a23e2 22-85,183-247
+internal/agent/templates/coder.md.tpl
+  h_9b4a5c940a23e2 435
+internal/agent/tools/crush_info.go
+  h_9b4a5c940a23e2 405
+internal/config/config.go
+  h_9b4a5c940a23e2 848
+internal/config/load_test.go
+  h_9b4a5c940a23e2 810,839
+internal/ui/chat/file.go
+  h_9b4a5c940a23e2 7,9,13,15,122-124,130-131,136,177-212
+internal/ui/chat/file_test.go
+  h_9b4a5c940a23e2 1-76
+internal/ui/model/goal.go
+  h_9b4a5c940a23e2 48-51,55
+internal/ui/model/goal_test.go
+  h_9b4a5c940a23e2 1-22
+internal/ui/model/session_busy_test.go
+  h_9b4a5c940a23e2 21,124-130
+internal/ui/styles/quickstyle.go
+  h_9b4a5c940a23e2 839
+internal/ui/styles/styles.go
+  h_9b4a5c940a23e2 234-236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "5ca940b6745fd027fa02bffd5035c76b521a591c",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
