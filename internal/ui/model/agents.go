@@ -63,6 +63,15 @@ type agentEntry struct {
 	currentTool string
 	// inputRunes drives the live data meter (streamed nested input).
 	inputRunes int
+	// outputRunes accumulates assistant output characters from the
+	// child session, also driving the data meter.
+	outputRunes int
+	// tokens is the child session's latest token usage (input plus
+	// output), refreshed as each generation completes.
+	tokens int64
+	// doing is a short human status explanation ("Running bash" or
+	// "Awaiting model"); empty falls back to the current tool.
+	doing string
 }
 
 // AgentsPanel is the bottom dock showing live sub-agent progress. It is
@@ -132,6 +141,54 @@ func (p *AgentsPanel) SetActivity(toolCallID, toolName string, inputRunes int) {
 		e.status = agentStatusWorking
 		e.currentTool = toolName
 		e.inputRunes = inputRunes
+		return
+	}
+}
+
+// SetUsage records the child session's latest token usage for the entry,
+// summing prompt and completion tokens the sub-agent has consumed so far.
+func (p *AgentsPanel) SetUsage(toolCallID string, promptTokens, completionTokens int64) {
+	for _, e := range p.entries {
+		if e.toolCallID != toolCallID {
+			continue
+		}
+		if e.status == agentStatusDone || e.status == agentStatusCanceled {
+			return
+		}
+		e.tokens = promptTokens + completionTokens
+		return
+	}
+}
+
+// AddOutput accumulates assistant output characters into the entry's
+// data meter so streamed model output is reflected live.
+func (p *AgentsPanel) AddOutput(toolCallID string, runes int) {
+	if runes <= 0 {
+		return
+	}
+	for _, e := range p.entries {
+		if e.toolCallID != toolCallID {
+			continue
+		}
+		if e.status == agentStatusDone || e.status == agentStatusCanceled {
+			return
+		}
+		e.outputRunes += runes
+		return
+	}
+}
+
+// SetDoing sets the short status explanation for an entry ("Running
+// bash", "Awaiting model"). An empty text clears it.
+func (p *AgentsPanel) SetDoing(toolCallID, text string) {
+	for _, e := range p.entries {
+		if e.toolCallID != toolCallID {
+			continue
+		}
+		if e.status == agentStatusDone || e.status == agentStatusCanceled {
+			return
+		}
+		e.doing = text
 		return
 	}
 }
@@ -426,8 +483,8 @@ func (p *AgentsPanel) renderRow(e *agentEntry, selected bool, width int) string 
 	}
 	kindTag := t.KindTag.Render(kind)
 
-	// Activity: prefer the live tool, fall back to the prompt while the
-	// sub-agent is still bootstrapping.
+	// Activity: prefer the live doing text, then the current tool, and
+	// fall back to the prompt while the sub-agent is still bootstrapping.
 	var activity string
 	switch e.status {
 	case agentStatusWaiting:
@@ -441,15 +498,22 @@ func (p *AgentsPanel) renderRow(e *agentEntry, selected bool, width int) string 
 	case agentStatusCanceled:
 		activity = t.Canceled.Render("canceled")
 	default:
-		activity = t.ActiveTool.Render(e.currentTool)
+		if e.doing != "" {
+			activity = t.ActiveTool.Render(e.doing)
+		} else {
+			activity = t.ActiveTool.Render(e.currentTool)
+		}
 	}
 
 	segments := []string{glyph, kindTag, activity}
 
 	if e.status == agentStatusWorking || e.status == agentStatusWaiting {
-		meter := t.Meter.Render(agentMeter(e.inputRunes))
+		meter := t.Meter.Render(agentMeter(e.inputRunes + e.outputRunes))
 		elapsed := t.Elapsed.Render(elapsedSince(e.startedAt))
 		segments = append(segments, meter, elapsed)
+		if e.tokens > 0 {
+			segments = append(segments, t.Tokens.Render(humanizeTokens(e.tokens)))
+		}
 	}
 
 	row := lipgloss.JoinHorizontal(lipgloss.Left, segmentSpace(segments)...)
@@ -530,6 +594,14 @@ func agentMeter(inputRunes int) string {
 	}
 	b.WriteByte(']')
 	return b.String()
+}
+
+// humanizeTokens renders a compact token count ("832 tok", "1.2k tok").
+func humanizeTokens(tokens int64) string {
+	if tokens >= 1000 {
+		return fmt.Sprintf("%.1fk tok", float64(tokens)/1000)
+	}
+	return fmt.Sprintf("%d tok", tokens)
 }
 
 // truncateText truncates s to maxLen runes, appending an ellipsis.

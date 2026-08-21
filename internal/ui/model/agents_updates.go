@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/chat"
 	"github.com/charmbracelet/crush/internal/ui/util"
 )
@@ -110,9 +111,9 @@ func (m *UI) registerAgentItems(parentMessageID string, items []chat.MessageItem
 	}
 }
 
-// noteAgentActivity feeds live nested-tool progress into the dock for
-// the parent agent call identified by toolCallID.
-func (m *UI) noteAgentActivity(toolCallID string, nestedTools []chat.ToolMessageItem) tea.Cmd {
+// noteAgentActivity feeds live nested-tool progress and the doing text
+// into the dock for the parent agent call identified by toolCallID.
+func (m *UI) noteAgentActivity(toolCallID string, nestedTools []chat.ToolMessageItem, doing string) tea.Cmd {
 	if m.agents == nil || !m.agents.Visible() {
 		// The dock can only be fed entries the model registered; if it
 		// is not visible there is nothing to update and no ticker to arm.
@@ -127,6 +128,22 @@ func (m *UI) noteAgentActivity(toolCallID string, nestedTools []chat.ToolMessage
 		runes += utf8.RuneCountInString(nt.ToolCall().Input)
 	}
 	m.agents.SetActivity(toolCallID, toolName, runes)
+	m.agents.SetDoing(toolCallID, doing)
+	return m.agentsEnsureTicking()
+}
+
+// noteAgentSessionUsage feeds a child agent-tool session's latest token
+// usage into the dock, keeping the per-agent token label live as each
+// generation completes.
+func (m *UI) noteAgentSessionUsage(sesh *session.Session) tea.Cmd {
+	if m.agents == nil || !m.agents.Visible() || sesh == nil {
+		return nil
+	}
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sesh.ID)
+	if !ok {
+		return nil
+	}
+	m.agents.SetUsage(toolCallID, sesh.PromptTokens, sesh.CompletionTokens)
 	return m.agentsEnsureTicking()
 }
 

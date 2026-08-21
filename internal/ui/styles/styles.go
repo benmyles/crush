@@ -625,6 +625,7 @@ type Styles struct {
 		Canceled      lipgloss.Style // Terminal cancel marker
 		Meter         lipgloss.Style // Live received-data meter
 		Elapsed       lipgloss.Style // Elapsed time
+		Tokens        lipgloss.Style // Live token usage ("1.2k tok")
 		ComposePrompt lipgloss.Style // "msg ▸" input label
 		ComposeInput  lipgloss.Style // Inline message input text
 		HelpKey       lipgloss.Style // Keystroke hint style

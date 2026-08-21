@@ -154,3 +154,29 @@ func TestAgentsPanelActivityIgnoresTerminal(t *testing.T) {
 	assert.Equal(t, agentStatusDone, p.entries[0].status)
 	assert.Equal(t, "", p.entries[0].currentTool)
 }
+
+func TestAgentsPanelUsageAndDoing(t *testing.T) {
+	t.Parallel()
+	p := NewAgentsPanel(testStyles())
+	p.Register("tc-1", "sess-1", "agent", "x")
+	p.SetDoing("tc-1", "Running bash")
+	p.SetUsage("tc-1", 300, 700)
+	p.AddOutput("tc-1", 300)
+	p.SetActivity("tc-1", "bash", 1200)
+
+	view := p.Render(80)
+	assert.Contains(t, view, "Running bash")
+	assert.Contains(t, view, "1.0k tok")
+
+	// Awaiting-status text renders once the next tool result arrives.
+	p.SetDoing("tc-1", "Awaiting model")
+	view = p.Render(80)
+	assert.Contains(t, view, "Awaiting model")
+
+	// Terminal rows ignore late usage and doing updates.
+	p.MarkDone("tc-1")
+	p.SetDoing("tc-1", "Running grep")
+	p.SetUsage("tc-1", 5, 5)
+	assert.Equal(t, "Awaiting model", p.entries[0].doing)
+	assert.Equal(t, int64(1000), p.entries[0].tokens)
+}

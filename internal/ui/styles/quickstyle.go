@@ -1086,6 +1086,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Agents.Canceled = lipgloss.NewStyle().Foreground(o.destructive)
 	s.Agents.Meter = lipgloss.NewStyle().Foreground(o.fgSubtle)
 	s.Agents.Elapsed = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Agents.Tokens = lipgloss.NewStyle().Foreground(o.fgSubtle)
 	s.Agents.ComposePrompt = lipgloss.NewStyle().Foreground(o.accent).Bold(true)
 	s.Agents.ComposeInput = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Agents.HelpKey = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)

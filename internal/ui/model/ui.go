@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -968,7 +969,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
-		if m.session != nil && msg.Payload.ID == m.session.ID {
+		if m.session == nil || msg.Payload.ID != m.session.ID {
+			// A child agent-tool session saved its usage: feed the live
+			// token counts into the dock row for that sub-agent.
+			if cmd := m.noteAgentSessionUsage(&msg.Payload); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			break
+		}
+		{
 			prevPillsHeight := m.pillsAreaHeight()
 			m.session = &msg.Payload
 			// The pills panel reserves vertical space that the chat area
@@ -1914,15 +1923,23 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.Cmd {
 	var cmds []tea.Cmd
 
-	// Only process messages with tool calls or results.
-	if len(event.Payload.ToolCalls()) == 0 && len(event.Payload.ToolResults()) == 0 {
-		return nil
-	}
-
 	// Check if this is an agent tool session and parse it.
 	childSessionID := event.Payload.SessionID
 	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
 	if !ok {
+		return nil
+	}
+
+	// Assistant output characters count toward the dock meter, including
+	// the final answer message, which carries no tool calls or results.
+	if event.Payload.Role == message.Assistant && m.agents != nil {
+		runes := utf8.RuneCountInString(event.Payload.Content().Text) +
+			utf8.RuneCountInString(event.Payload.ReasoningContent().String())
+		m.agents.AddOutput(toolCallID, runes)
+	}
+
+	// Only process messages with tool calls or results below.
+	if len(event.Payload.ToolCalls()) == 0 && len(event.Payload.ToolResults()) == 0 {
 		return nil
 	}
 
@@ -1990,7 +2007,19 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	// Update the agent item with the new nested tools.
 	agentItem.SetNestedTools(nestedTools)
 
-	if cmd := m.noteAgentActivity(toolCallID, nestedTools); cmd != nil {
+	// Derive the human status text from the latest child activity: a new
+	// tool call means the sub-agent is running that tool; a tool result
+	// without pending calls means it is back to the model.
+	doing := ""
+	if calls := event.Payload.ToolCalls(); len(calls) > 0 {
+		if name := calls[len(calls)-1].Name; name != "" {
+			doing = "Running " + name
+		}
+	} else if len(event.Payload.ToolResults()) > 0 {
+		doing = "Awaiting model"
+	}
+
+	if cmd := m.noteAgentActivity(toolCallID, nestedTools, doing); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 
