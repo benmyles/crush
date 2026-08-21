@@ -19,8 +19,10 @@ var webSearchDescriptionTpl = template.Must(
 		Parse(string(webSearchDescriptionTmpl)),
 )
 
-// NewWebSearchTool creates a web search tool for sub-agents (no permissions needed).
-func NewWebSearchTool(client *http.Client) fantasy.AgentTool {
+// NewWebSearchTool creates a web search tool for sub-agents (no permissions
+// needed). The backend resolver selects Exa or DuckDuckGo per call; pass nil
+// to always use the default resolution.
+func NewWebSearchTool(client *http.Client, backendResolver WebBackendResolver) fantasy.AgentTool {
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.MaxIdleConns = 100
@@ -49,8 +51,18 @@ func NewWebSearchTool(client *http.Client) fantasy.AgentTool {
 				maxResults = 20
 			}
 
-			maybeDelaySearch()
-			results, err := searchDuckDuckGo(ctx, client, params.Query, maxResults)
+			backend, apiKey := resolveWebBackend(backendResolver)
+			var results []SearchResult
+			var err error
+			if backend == WebBackendExa {
+				if apiKey == "" {
+					return fantasy.NewTextErrorResponse("Web backend is set to Exa but EXA_API_KEY is not set"), nil
+				}
+				results, err = searchExa(ctx, client, apiKey, params.Query, maxResults)
+			} else {
+				maybeDelaySearch()
+				results, err = searchDuckDuckGo(ctx, client, params.Query, maxResults)
+			}
 			slog.Debug("Web search completed", "query", params.Query, "results", len(results), "err", err)
 			if err != nil {
 				return fantasy.NewTextErrorResponse("Failed to search: " + err.Error()), nil

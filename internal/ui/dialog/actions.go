@@ -84,6 +84,9 @@ type (
 	ActionSelectNotificationStyle struct {
 		Style string
 	}
+	ActionSelectWebBackend struct {
+		Backend string
+	}
 	ActionToggleTransparentBackground struct{}
 	ActionToggleStatusUpdates         struct{}
 	ActionToggleSubagents             struct{}

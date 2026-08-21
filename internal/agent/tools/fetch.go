@@ -42,7 +42,7 @@ func fetchDescription() string {
 	})
 }
 
-func NewFetchTool(permissions permission.Service, workingDir string, client *http.Client) fantasy.AgentTool {
+func NewFetchTool(permissions permission.Service, workingDir string, client *http.Client, backendResolver WebBackendResolver) fantasy.AgentTool {
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.MaxIdleConns = 100
@@ -96,7 +96,8 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 				return NewPermissionDeniedResponse(), nil
 			}
 
-			// maxFetchTimeoutSeconds is the maximum allowed timeout for fetch requests (2 minutes)
+			// maxFetchTimeoutSeconds is the maximum allowed timeout for fetch
+			// requests (2 minutes).
 			const maxFetchTimeoutSeconds = 120
 
 			// Handle timeout with context
@@ -108,6 +109,32 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 				var cancel context.CancelFunc
 				requestCtx, cancel = context.WithTimeout(ctx, time.Duration(params.Timeout)*time.Second)
 				defer cancel()
+			}
+
+			// When Exa is the active web backend, text and markdown fetches
+			// go through the Exa contents API, which returns clean markdown.
+			// Raw HTML is not available via Exa, so html format stays on the
+			// direct path below.
+			if backend, apiKey := resolveWebBackend(backendResolver); backend == WebBackendExa && format != "html" {
+				if apiKey == "" {
+					return fantasy.NewTextErrorResponse("Web backend is set to Exa but EXA_API_KEY is not set"), nil
+				}
+
+				content, err := fetchExaContents(requestCtx, client, apiKey, params.URL, MaxFetchSize)
+				if err != nil {
+					return fantasy.NewTextErrorResponse(err.Error()), nil
+				}
+
+				if format == "markdown" {
+					content = "```\n" + content + "\n```"
+				}
+
+				if int64(len(content)) >= MaxFetchSize {
+					content = content[:MaxFetchSize]
+					content += fmt.Sprintf("\n\n[Content truncated to %d bytes]", MaxFetchSize)
+				}
+
+				return fantasy.NewTextResponse(content), nil
 			}
 
 			req, err := http.NewRequestWithContext(requestCtx, "GET", params.URL, nil)

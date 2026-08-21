@@ -107,9 +107,13 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 
 			var fullPrompt string
 
+			webBackend := func() tools.WebBackend {
+				return tools.WebBackend(c.cfg.Config().Options.WebBackend)
+			}
+
 			if params.URL != "" {
 				// URL mode: fetch the URL content first.
-				content, err := tools.FetchURLAndConvert(ctx, client, params.URL)
+				content, err := tools.FetchURLContent(ctx, client, webBackend, params.URL)
 				if err != nil {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to fetch URL: %s", err)), nil
 				}
@@ -162,8 +166,8 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				return fantasy.ToolResponse{}, errors.New("small model provider not configured")
 			}
 
-			webFetchTool := tools.NewWebFetchTool(tmpDir, client)
-			webSearchTool := tools.NewWebSearchTool(client)
+			webFetchTool := tools.NewWebFetchTool(tmpDir, client, webBackend)
+			webSearchTool := tools.NewWebSearchTool(client, webBackend)
 			fetchTools := []fantasy.AgentTool{
 				webFetchTool,
 				webSearchTool,

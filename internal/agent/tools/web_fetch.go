@@ -21,8 +21,10 @@ var webFetchDescriptionTpl = template.Must(
 		Parse(string(webFetchDescriptionTmpl)),
 )
 
-// NewWebFetchTool creates a simple web fetch tool for sub-agents (no permissions needed).
-func NewWebFetchTool(workingDir string, client *http.Client) fantasy.AgentTool {
+// NewWebFetchTool creates a simple web fetch tool for sub-agents (no
+// permissions needed). The backend resolver routes through the Exa contents
+// API when active; pass nil to always use the default resolution.
+func NewWebFetchTool(workingDir string, client *http.Client, backendResolver WebBackendResolver) fantasy.AgentTool {
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.MaxIdleConns = 100
@@ -43,7 +45,7 @@ func NewWebFetchTool(workingDir string, client *http.Client) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("url is required"), nil
 			}
 
-			content, err := FetchURLAndConvert(ctx, client, params.URL)
+			content, err := FetchURLContent(ctx, client, backendResolver, params.URL)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to fetch URL: %s", err)), nil
 			}

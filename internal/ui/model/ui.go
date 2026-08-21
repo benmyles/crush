@@ -2071,6 +2071,17 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			m.notifyBackend = selectNotificationBackend(m.caps, cfg)
 		}
 		m.dialog.CloseDialog(dialog.NotificationsID)
+	case dialog.ActionSelectWebBackend:
+		cfg := m.com.Config()
+		if cfg != nil && cfg.Options != nil {
+			cfg.Options.WebBackend = msg.Backend
+			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.web_backend", msg.Backend); err != nil {
+				cmds = append(cmds, util.ReportError(err))
+			} else {
+				cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Web backend set to: "+msg.Backend)))
+			}
+		}
+		m.dialog.CloseDialog(dialog.WebBackendID)
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
@@ -5023,6 +5034,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openNotificationsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.WebBackendID:
+		if cmd := m.openWebBackendDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.CompactionSettingsID:
 		if cmd := m.openCompactionSettingsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -5190,6 +5205,18 @@ func (m *UI) openNotificationsDialog() tea.Cmd {
 
 	notificationsDialog := dialog.NewNotifications(m.com)
 	m.dialog.OpenDialog(notificationsDialog)
+	return nil
+}
+
+// openWebBackendDialog opens the search/fetch backend picker dialog.
+func (m *UI) openWebBackendDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.WebBackendID) {
+		m.dialog.BringToFront(dialog.WebBackendID)
+		return nil
+	}
+
+	webBackendDialog := dialog.NewWebBackend(m.com)
+	m.dialog.OpenDialog(webBackendDialog)
 	return nil
 }
 

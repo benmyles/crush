@@ -614,6 +614,9 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	notificationLabel := "Notification Style"
 	commands = append(commands, NewCommandItem(c.com.Styles, "select_notifications", notificationLabel, "", ActionOpenDialog{DialogID: NotificationsID}))
 
+	// Add a command for selecting the search/fetch backend.
+	commands = append(commands, NewCommandItem(c.com.Styles, "select_web_backend", "Search & Fetch Backend", "", ActionOpenDialog{DialogID: WebBackendID}).WithAliases("exa", "search backend"))
+
 	// Context compaction: the engine settings dialog and a shortcut to the
 	// compaction model slot of the model picker.
 	commands = append(commands,

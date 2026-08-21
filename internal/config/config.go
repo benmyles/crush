@@ -339,6 +339,7 @@ type Options struct {
 	Progress                  *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
 	Notifications             string       `json:"notifications,omitempty" jsonschema:"description=Notification style to use. Options: auto (default)\\, native\\, osc\\, bell\\, disabled. Auto selects based on environment: native for local sessions\\, osc for SSH (with automatic OSC 99/777 detection).,enum=auto,enum=native,enum=osc,enum=bell,enum=disabled,default=auto"`
 	StatusUpdates             bool         `json:"status_updates,omitempty" jsonschema:"description=Enable periodic agent status updates (done, doing, next, blockers) shown in the sidebar,default=false"`
+	WebBackend                string       `json:"web_backend,omitempty" jsonschema:"description=Backend for web search and web fetching. Default uses Exa when the EXA_API_KEY environment variable is set and falls back to DuckDuckGo search and direct HTTP fetching otherwise. Exa forces the Exa API.,enum=default,enum=exa,default=default"`
 	DisableSubagents          bool         `json:"disable_subagents,omitempty" jsonschema:"description=Disable the agent tool so the coder cannot spawn sub-agents,default=false"`
 	DisabledSkills            []string     `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=crush-config"`
 }
