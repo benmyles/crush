@@ -111,16 +111,25 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 				defer cancel()
 			}
 
-			// When Exa is the active web backend, text and markdown fetches
-			// go through the Exa contents API, which returns clean markdown.
-			// Raw HTML is not available via Exa, so html format stays on the
-			// direct path below.
-			if backend, apiKey := resolveWebBackend(backendResolver); backend == WebBackendExa && format != "html" {
+			// When a remote API backend is active, text and markdown fetches
+			// go through that backend's API, which returns clean markdown.
+			// Raw HTML is not available via those APIs, so html format stays
+			// on the direct path below.
+			if backend, apiKey := resolveWebBackend(backendResolver); format != "html" && backend != WebBackendDefault {
 				if apiKey == "" {
+					if backend == WebBackendFirecrawl {
+						return fantasy.NewTextErrorResponse("Web backend is set to Firecrawl but FIRECRAWL_API_KEY is not set"), nil
+					}
 					return fantasy.NewTextErrorResponse("Web backend is set to Exa but EXA_API_KEY is not set"), nil
 				}
 
-				content, err := fetchExaContents(requestCtx, client, apiKey, params.URL, MaxFetchSize)
+				var content string
+				var err error
+				if backend == WebBackendFirecrawl {
+					content, err = fetchFirecrawl(requestCtx, client, apiKey, params.URL, MaxFetchSize)
+				} else {
+					content, err = fetchExaContents(requestCtx, client, apiKey, params.URL, MaxFetchSize)
+				}
 				if err != nil {
 					return fantasy.NewTextErrorResponse(err.Error()), nil
 				}

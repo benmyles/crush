@@ -8,49 +8,10 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 )
-
-// WebBackend identifies the backend used for web search and web fetching.
-type WebBackend string
-
-const (
-	// WebBackendDefault resolves the backend automatically: Exa when
-	// EXA_API_KEY is set, DuckDuckGo (search) or direct HTTP (fetch)
-	// otherwise.
-	WebBackendDefault WebBackend = "default"
-
-	// WebBackendExa forces the Exa backend for searches and fetches.
-	WebBackendExa WebBackend = "exa"
-)
-
-// WebBackendResolver returns the configured web backend at call time so
-// runtime option changes take effect without rebuilding tools. A nil
-// resolver always resolves to WebBackendDefault.
-type WebBackendResolver func() WebBackend
-
-// resolveWebBackend returns the effective backend and Exa API key for the
-// current call.
-func resolveWebBackend(resolver WebBackendResolver) (WebBackend, string) {
-	setting := WebBackendDefault
-	if resolver != nil {
-		setting = resolver()
-	}
-
-	apiKey := os.Getenv("EXA_API_KEY")
-	if setting == WebBackendExa {
-		return WebBackendExa, apiKey
-	}
-
-	// Default: prefer Exa when a key is available.
-	if apiKey != "" {
-		return WebBackendExa, apiKey
-	}
-	return WebBackendDefault, ""
-}
 
 // exaAPIURL is a package var so tests can point the client at a local
 // httptest server.
@@ -329,16 +290,25 @@ func fetchExaContents(ctx context.Context, client *http.Client, apiKey, rawURL s
 	return content, nil
 }
 
-// FetchURLContent fetches a URL, routing through the Exa contents API when
-// the resolved web backend is Exa and falling back to a direct HTTP fetch
-// otherwise.
+// FetchURLContent fetches a URL, routing through the Firecrawl scrape API
+// or the Exa contents API when the resolved web backend is one of those
+// and falling back to a direct HTTP fetch otherwise.
 func FetchURLContent(ctx context.Context, client *http.Client, resolver WebBackendResolver, rawURL string) (string, error) {
 	backend, apiKey := resolveWebBackend(resolver)
-	if backend == WebBackendExa {
+
+	switch backend {
+	case WebBackendFirecrawl:
+		if apiKey == "" {
+			return "", fmt.Errorf("web backend is set to Firecrawl but FIRECRAWL_API_KEY is not set")
+		}
+		return fetchFirecrawl(ctx, client, apiKey, rawURL, 0)
+
+	case WebBackendExa:
 		if apiKey == "" {
 			return "", fmt.Errorf("web backend is set to Exa but EXA_API_KEY is not set")
 		}
 		return fetchExaContents(ctx, client, apiKey, rawURL, exaMaxCharacters)
 	}
+
 	return FetchURLAndConvert(ctx, client, rawURL)
 }

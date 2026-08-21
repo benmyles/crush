@@ -416,6 +416,10 @@ github.com/esiqveland/notify
 # github.com/felixge/httpsnoop v1.1.0
 ## explicit; go 1.25
 github.com/felixge/httpsnoop
+# github.com/firecrawl/firecrawl/apps/go-sdk v1.12.0
+## explicit; go 1.23
+github.com/firecrawl/firecrawl/apps/go-sdk
+github.com/firecrawl/firecrawl/apps/go-sdk/option
 # github.com/fsnotify/fsnotify v1.9.0
 ## explicit; go 1.17
 github.com/fsnotify/fsnotify

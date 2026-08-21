@@ -43,8 +43,9 @@ func getModels(t *testing.T, r *vcr.Recorder, pair modelPair) (fantasy.LanguageM
 
 func setupAgent(t *testing.T, pair modelPair) (SessionAgent, fakeEnv) {
 	// VCR-replayed agents expect the direct fetch path. The repository
-	// .env can supply a real EXA_API_KEY, which would reroute fetch and
-	// search calls through the Exa API mid-replay.
+	// .env can supply real FIRECRAWL_API_KEY or EXA_API_KEY values, which
+	// would reroute fetch and search calls through those APIs mid-replay.
+	t.Setenv("FIRECRAWL_API_KEY", "")
 	t.Setenv("EXA_API_KEY", "")
 
 	r := vcr.NewRecorder(t)

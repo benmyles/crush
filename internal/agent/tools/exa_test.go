@@ -30,32 +30,60 @@ func serveExaStub(t *testing.T, handler http.HandlerFunc) {
 }
 
 func TestResolveWebBackend(t *testing.T) {
-	t.Run("default without key falls back", func(t *testing.T) {
+	t.Run("default without keys falls back", func(t *testing.T) {
+		t.Setenv("FIRECRAWL_API_KEY", "")
 		t.Setenv("EXA_API_KEY", "")
 		backend, key := resolveWebBackend(nil)
 		require.Equal(t, WebBackendDefault, backend)
 		require.Empty(t, key)
 	})
 
-	t.Run("default with key prefers exa", func(t *testing.T) {
+	t.Run("default with only exa key prefers exa", func(t *testing.T) {
+		t.Setenv("FIRECRAWL_API_KEY", "")
 		t.Setenv("EXA_API_KEY", "test-key")
 		backend, key := resolveWebBackend(nil)
 		require.Equal(t, WebBackendExa, backend)
 		require.Equal(t, "test-key", key)
 	})
 
+	t.Run("default with only firecrawl key prefers firecrawl", func(t *testing.T) {
+		t.Setenv("FIRECRAWL_API_KEY", "fc-test-key")
+		t.Setenv("EXA_API_KEY", "")
+		backend, key := resolveWebBackend(nil)
+		require.Equal(t, WebBackendFirecrawl, backend)
+		require.Equal(t, "fc-test-key", key)
+	})
+
+	t.Run("default with both keys prefers firecrawl", func(t *testing.T) {
+		t.Setenv("FIRECRAWL_API_KEY", "fc-test-key")
+		t.Setenv("EXA_API_KEY", "test-key")
+		backend, key := resolveWebBackend(nil)
+		require.Equal(t, WebBackendFirecrawl, backend)
+		require.Equal(t, "fc-test-key", key)
+	})
+
 	t.Run("explicit exa wins without key", func(t *testing.T) {
+		t.Setenv("FIRECRAWL_API_KEY", "")
 		t.Setenv("EXA_API_KEY", "")
 		backend, key := resolveWebBackend(func() WebBackend { return WebBackendExa })
 		require.Equal(t, WebBackendExa, backend)
 		require.Empty(t, key)
 	})
 
-	t.Run("explicit default still prefers exa with key", func(t *testing.T) {
+	t.Run("explicit firecrawl wins without key", func(t *testing.T) {
+		t.Setenv("FIRECRAWL_API_KEY", "")
+		t.Setenv("EXA_API_KEY", "")
+		backend, key := resolveWebBackend(func() WebBackend { return WebBackendFirecrawl })
+		require.Equal(t, WebBackendFirecrawl, backend)
+		require.Empty(t, key)
+	})
+
+	t.Run("explicit default prefers firecrawl with key", func(t *testing.T) {
+		t.Setenv("FIRECRAWL_API_KEY", "fc-test-key")
 		t.Setenv("EXA_API_KEY", "test-key")
 		backend, key := resolveWebBackend(func() WebBackend { return WebBackendDefault })
-		require.Equal(t, WebBackendExa, backend)
-		require.Equal(t, "test-key", key)
+		require.Equal(t, WebBackendFirecrawl, backend)
+		require.Equal(t, "fc-test-key", key)
 	})
 }
 
@@ -202,6 +230,7 @@ func TestFetchURLContentRouting(t *testing.T) {
 	})
 
 	// With a key in the environment, the default backend resolves to Exa.
+	t.Setenv("FIRECRAWL_API_KEY", "")
 	t.Setenv("EXA_API_KEY", "test-key")
 	content, err := FetchURLContent(context.Background(), http.DefaultClient, nil, "https://example.com/doc")
 	require.NoError(t, err)

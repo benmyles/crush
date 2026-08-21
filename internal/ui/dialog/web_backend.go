@@ -29,7 +29,8 @@ type WebBackendOption struct {
 
 // AllWebBackendOptions lists all available search/fetch backends in order.
 var AllWebBackendOptions = []WebBackendOption{
-	{ID: "default", Title: "Default", Description: "Use Exa when EXA_API_KEY is set, otherwise DuckDuckGo search and direct HTTP fetching"},
+	{ID: "default", Title: "Default", Description: "Use Firecrawl when FIRECRAWL_API_KEY is set, then Exa when EXA_API_KEY is set, otherwise DuckDuckGo search and direct HTTP fetching"},
+	{ID: "firecrawl", Title: "Firecrawl", Description: "Search and fetch through the Firecrawl API (requires FIRECRAWL_API_KEY)"},
 	{ID: "exa", Title: "Exa", Description: "Search and fetch through the Exa API (requires EXA_API_KEY)"},
 }
 

@@ -22,8 +22,9 @@ var webFetchDescriptionTpl = template.Must(
 )
 
 // NewWebFetchTool creates a simple web fetch tool for sub-agents (no
-// permissions needed). The backend resolver routes through the Exa contents
-// API when active; pass nil to always use the default resolution.
+// permissions needed). The backend resolver routes through the Firecrawl
+// scrape API or the Exa contents API when active; pass nil to always use
+// the default resolution.
 func NewWebFetchTool(workingDir string, client *http.Client, backendResolver WebBackendResolver) fantasy.AgentTool {
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()

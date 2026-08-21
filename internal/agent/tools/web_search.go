@@ -20,8 +20,8 @@ var webSearchDescriptionTpl = template.Must(
 )
 
 // NewWebSearchTool creates a web search tool for sub-agents (no permissions
-// needed). The backend resolver selects Exa or DuckDuckGo per call; pass nil
-// to always use the default resolution.
+// needed). The backend resolver selects Firecrawl, Exa, or DuckDuckGo per
+// call; pass nil to always use the default resolution.
 func NewWebSearchTool(client *http.Client, backendResolver WebBackendResolver) fantasy.AgentTool {
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -54,12 +54,18 @@ func NewWebSearchTool(client *http.Client, backendResolver WebBackendResolver) f
 			backend, apiKey := resolveWebBackend(backendResolver)
 			var results []SearchResult
 			var err error
-			if backend == WebBackendExa {
+			switch backend {
+			case WebBackendFirecrawl:
+				if apiKey == "" {
+					return fantasy.NewTextErrorResponse("Web backend is set to Firecrawl but FIRECRAWL_API_KEY is not set"), nil
+				}
+				results, err = searchFirecrawl(ctx, client, apiKey, params.Query, maxResults)
+			case WebBackendExa:
 				if apiKey == "" {
 					return fantasy.NewTextErrorResponse("Web backend is set to Exa but EXA_API_KEY is not set"), nil
 				}
 				results, err = searchExa(ctx, client, apiKey, params.Query, maxResults)
-			} else {
+			default:
 				maybeDelaySearch()
 				results, err = searchDuckDuckGo(ctx, client, params.Query, maxResults)
 			}
