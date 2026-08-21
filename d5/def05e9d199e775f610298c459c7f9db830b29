@@ -1,0 +1,38 @@
+docs/fork-changes.md
+  h_9b4a5c940a23e2 75
+internal/agent/status_reminder_test.go
+  h_9b4a5c940a23e2 104,114
+internal/agent/templates/coder.md.tpl
+  h_9b4a5c940a23e2 442,444
+internal/agent/tools/status_update.go
+  h_9b4a5c940a23e2 47-49
+internal/agent/tools/status_update.md
+  h_9b4a5c940a23e2 4,17
+internal/agent/tools/status_update_test.go
+  h_9b4a5c940a23e2 52,65,83-84,92
+internal/config/config.go
+  h_9b4a5c940a23e2 341
+internal/db/migrations/20260821000000_drop_status_update_blockers.sql
+  h_9b4a5c940a23e2 1-9
+internal/status/status.go
+  h_9b4a5c940a23e2 2,42-43
+internal/status/store.go
+  h_9b4a5c940a23e2 43,48,59,68-69,72-73
+internal/status/store_test.go
+  h_9b4a5c940a23e2 40,48-49,63,65,67,79
+internal/ui/model/status_updates.go
+  h_9b4a5c940a23e2 40
+internal/ui/styles/styles.go
+  h_9b4a5c940a23e2 239-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "d5def05e9d199e775f610298c459c7f9db830b29",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
