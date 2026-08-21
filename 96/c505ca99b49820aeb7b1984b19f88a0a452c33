@@ -1,0 +1,21 @@
+internal/agent/coordinator.go
+  s_8e90415ba236f6::t_87610a69fa194d 31,114-117,180-185,250,1468-1474,1480-1482,1494-1496,1500-1511,1944-1955,1964-1966,1988-2015
+internal/proto/agent.go
+  s_8e90415ba236f6::t_e49ade7a758bbb 55-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "96c505ca99b49820aeb7b1984b19f88a0a452c33",
+  "prompts": {},
+  "sessions": {
+    "s_8e90415ba236f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b05b589-7561-413a-a88b-fb19dab85b43",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
