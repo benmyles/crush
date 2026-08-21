@@ -916,6 +916,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		fantasy.WithSystemPrompt(systemPrompt),
 		fantasy.WithTools(agentTools...),
 		fantasy.WithUserAgent(userAgent),
+		fantasy.WithMaxRetries(10),
 	)
 
 	sessionLock := sync.Mutex{}
@@ -2099,6 +2100,7 @@ func (a *sessionAgent) legacySummarize(ctx context.Context, sessionID string, op
 		largeModel.Model,
 		fantasy.WithSystemPrompt(string(summaryPrompt)),
 		fantasy.WithUserAgent(userAgent),
+		fantasy.WithMaxRetries(10),
 	)
 	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:             message.Assistant,
@@ -2291,6 +2293,7 @@ func (a *sessionAgent) fantasyCompleter(ctx context.Context, systemPrompt, userT
 		model.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
 		fantasy.WithUserAgent(userAgent),
+		fantasy.WithMaxRetries(10),
 	)
 	var sb strings.Builder
 	maxTokens := maxOutputTokens
@@ -2919,6 +2922,7 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID, userPrompt 
 			fantasy.WithSystemPrompt(string(p)+"\n /no_think"),
 			fantasy.WithMaxOutputTokens(tok),
 			fantasy.WithUserAgent(userAgent),
+			fantasy.WithMaxRetries(10),
 		)
 	}
 
