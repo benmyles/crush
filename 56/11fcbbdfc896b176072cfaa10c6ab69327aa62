@@ -1,0 +1,16 @@
+internal/agent/tools/status_update.go
+  h_9b4a5c940a23e2 7,49-52
+internal/agent/tools/status_update_test.go
+  h_9b4a5c940a23e2 67-68,71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "5611fcbbdfc896b176072cfaa10c6ab69327aa62",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
