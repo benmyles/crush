@@ -603,6 +603,12 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 		commands = append(commands, NewCommandItem(c.com.Styles, "toggle_pills", label, "ctrl+t", ActionTogglePills{}))
 	}
+	if c.hasQueue {
+		commands = append(commands,
+			NewCommandItem(c.com.Styles, "edit_queued_prompt", "Edit Queued Prompt", "ctrl+e", ActionQueueEdit{}),
+			NewCommandItem(c.com.Styles, "remove_queued_prompt", "Remove Queued Prompt", "ctrl+q", ActionQueueRemove{}),
+		)
+	}
 
 	// Add a command for selecting notification style via picker dialog.
 	notificationLabel := "Notification Style"
@@ -635,6 +641,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		statusUpdatesLabel = "Disable Status Updates"
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_status_updates", statusUpdatesLabel, "", ActionToggleStatusUpdates{}))
+
+	// Add sub-agents toggle.
+	subagentsLabel := "Disable Sub-Agents"
+	if cfg != nil && cfg.Options != nil && cfg.Options.DisableSubagents {
+		subagentsLabel = "Enable Sub-Agents"
+	}
+	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_subagents", subagentsLabel, "", ActionToggleSubagents{}))
 
 	commands = append(
 		commands,

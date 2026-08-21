@@ -55,7 +55,15 @@ func TestPendingWriteToolMeterResetsEachThousand(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			rendered := ansi.Strip(pendingWriteTool(&sty, test.charCount, false))
+			opts := &ToolRenderOpts{
+				ToolCall: message.ToolCall{
+					ID:    "write-" + test.name,
+					Name:  tools.WriteToolName,
+					Input: strings.Repeat("x", test.charCount),
+				},
+				Status: ToolStatusRunning,
+			}
+			rendered := ansi.Strip(pendingTool(&sty, "Write", opts, false))
 			require.Contains(t, rendered, test.want)
 		})
 	}

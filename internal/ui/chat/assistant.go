@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -637,15 +638,26 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 	return a.streamingContent.Render(content, width, renderer)
 }
 
+// renderSpinning renders the working indicator for an assistant turn that
+// has no visible content yet. Instead of an animated spinner it shows a
+// static marker or the received-data meter: thinking fills as the
+// reasoning text streams in.
 func (a *AssistantMessageItem) renderSpinning() string {
-	if a.liveCompaction {
-		a.anim.SetLabel("Compacting")
-	} else if a.message.IsThinking() {
-		a.anim.SetLabel("Thinking")
-	} else if a.message.IsSummaryMessage {
-		a.anim.SetLabel("Summarizing")
+	label := a.sty.Messages.ThinkingFooterTitle
+	switch {
+	case a.liveCompaction:
+		return label.Render(styles.SpinnerIcon + " Compacting")
+	case a.message.IsThinking():
+		charCount := utf8.RuneCountInString(a.message.ReasoningContent().Thinking)
+		return fmt.Sprintf("%s %s",
+			label.Render("Thinking"),
+			loaderDataView(a.sty, charCount),
+		)
+	case a.message.IsSummaryMessage:
+		return label.Render(styles.SpinnerIcon + " Summarizing")
+	default:
+		return styles.SpinnerIcon
 	}
-	return a.anim.Render()
 }
 
 // renderError renders an error or provider-refusal banner.

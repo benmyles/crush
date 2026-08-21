@@ -45,7 +45,7 @@ type BashToolRenderContext struct {
 func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Bash", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Bash", opts, opts.Compact)
 	}
 
 	var params tools.BashParams
@@ -134,7 +134,7 @@ type JobOutputToolRenderContext struct{}
 func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Job", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Job", opts, opts.Compact)
 	}
 
 	var params tools.JobOutputParams
@@ -185,7 +185,7 @@ type JobKillToolRenderContext struct{}
 func (j *JobKillToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Job", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Job", opts, opts.Compact)
 	}
 
 	var params tools.JobKillParams

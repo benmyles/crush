@@ -32,7 +32,7 @@ type SymbolsToolRenderContext struct{}
 func (r *SymbolsToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "List Symbols", opts.Anim, opts.Compact)
+		return pendingTool(sty, "List Symbols", opts, opts.Compact)
 	}
 
 	var params tools.SymbolsParams

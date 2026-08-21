@@ -918,6 +918,10 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		)
 	}
 
+	// Terminal title tool. Cosmetic, so it is always available when the
+	// agent is connected to a subscriber for title changes.
+	allTools = append(allTools, tools.NewSetTerminalTitleTool(c.publishTerminalTitle))
+
 	// Compaction recall + operator tools. Built here (before the
 	// AllowedTools filter and hook wrapping) so allow-lists, disabled_tools,
 	// and PreToolUse hooks apply to them. recall_expand is sub-agent-only so
@@ -1529,6 +1533,19 @@ func (c *coordinator) publishStatusUpdate(u status.Update) {
 		SessionID:    u.SessionID,
 		Type:         notify.TypeStatusUpdate,
 		StatusUpdate: &u,
+	})
+}
+
+// publishTerminalTitle broadcasts an agent-curated terminal title change
+// to subscribers.
+func (c *coordinator) publishTerminalTitle(sessionID, title string) {
+	if c.notify == nil {
+		return
+	}
+	c.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+		SessionID:     sessionID,
+		Type:          notify.TypeTerminalTitleChanged,
+		TerminalTitle: title,
 	})
 }
 

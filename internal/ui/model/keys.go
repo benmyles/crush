@@ -33,6 +33,8 @@ type KeyMap struct {
 		PillRight      key.Binding
 		QueueRecall    key.Binding
 		QueueRemove    key.Binding
+		QueueEdit      key.Binding
+		QueueDelete    key.Binding
 		Down           key.Binding
 		Up             key.Binding
 		UpDown         key.Binding
@@ -199,6 +201,18 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.QueueRemove = key.NewBinding(
 		key.WithKeys("x"),
 		key.WithHelp("x", "remove queued"),
+	)
+	// QueueEdit and QueueDelete are session-wide shortcuts that work even
+	// when the pills panel is collapsed or focused on the todo section.
+	// They focus the queue section first, then edit or remove the item at
+	// the cursor.
+	km.Chat.QueueEdit = key.NewBinding(
+		key.WithKeys("ctrl+e"),
+		key.WithHelp("ctrl+e", "edit queued prompt"),
+	)
+	km.Chat.QueueDelete = key.NewBinding(
+		key.WithKeys("ctrl+q"),
+		key.WithHelp("ctrl+q", "remove queued prompt"),
 	)
 
 	km.Chat.Down = key.NewBinding(

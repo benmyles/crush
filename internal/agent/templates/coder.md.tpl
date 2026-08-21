@@ -303,16 +303,19 @@ After significant changes:
 </testing>
 
 <tool_usage>
-- Default to using tools (ls, grep, view, agent, tests, web_fetch, etc.) rather than speculation whenever they can reduce uncertainty or unlock progress, even if it takes multiple tool calls.
+- Default to using tools (ls, grep, view, {{if not .Config.Options.DisableSubagents}}agent, {{end}}tests, web_fetch, etc.) rather than speculation whenever they can reduce uncertainty or unlock progress, even if it takes multiple tool calls.
 - Search before assuming
 - Read files before editing
 - Always use absolute paths for file operations (editing, reading, writing)
-- Use Agent tool for complex searches
-- Run tools in parallel when safe (no dependencies)
+{{if not .Config.Options.DisableSubagents}}- Use Agent tool for complex searches
+{{end}}- Run tools in parallel when safe (no dependencies)
 - When making multiple independent bash calls, send them in a single message with multiple tool calls for parallel execution
 - Summarize tool output for user (they don't see it)
 - Never use `curl` through the bash tool it is not allowed use the fetch tool instead.
 - Only use the tools you know exist.
+
+- Prefer the terminal tools (terminal_start, terminal_input, terminal_output, terminal_kill) over the bash tool for interactive sessions and long-running commands; use bash for quick non-interactive commands.
+- When waiting on terminal_output, never wait_for text that also appears in the command you typed: the terminal echoes the command first and matches immediately. Compute a completion marker instead, e.g. `echo DONE_$((6*7))` with wait_for "DONE_42".
 
 <bash_commands>
 **CRITICAL**: The `description` parameter is REQUIRED for all bash tool calls. Always provide it.
@@ -451,3 +454,18 @@ the user's sidebar.
 - Do not include secrets, tokens, or other sensitive values in updates.
 </status_updates>
 {{end}}
+
+<terminal_title>
+Keep the terminal window title in sync with your current work using the
+`set_terminal_title` tool. The title is shown in the user's terminal
+tab or window title bar next to a small state glyph.
+
+- Set it whenever you start a new task, meaningfully change what you
+  are working on, or your work completes.
+- Curate a terse 2-4 word phrase in lowercase, present tense, e.g.
+  "fixing deploy pipeline", "migrating auth queries", or "writing
+  database tests".
+- Clear it (empty `title`) once the task is finished, so the default
+  prompt-based title returns.
+- Never include secrets, tokens, or sensitive values in titles.
+</terminal_title>

@@ -157,8 +157,24 @@ Commits: `e5b3c10b`, `0271ad47`.
 
 - Live write progress driven by streamed tool input (`5ca940b6`).
 - Terminal window title reflects session and busy state; when a goal is
-  active it shows goal text with a state emoji instead of status
-  placeholders (`44a86d11`, `c37079ba`).
+  active it shows goal text with a state glyph instead of status
+  placeholders (`44a86d11`, `c37079ba`). State glyphs are plain unicode
+  characters rather than emoji, and the `set_terminal_title` tool lets
+  the agent curate a 2-4 word title for the current task.
+- All in-flight UI indicators (tool rows, nested agent runs, thinking,
+  compacting) render the shared received-data meter
+  (`1k [====......] 1,024 chars`) instead of cycling spinner animations.
+- Queued prompts can be edited or removed without navigating the pills
+  panel: `ctrl+e` recalls the selected queued prompt into the composer,
+  `ctrl+q` removes it, and both appear in the commands (ctrl+p) panel and
+  the pills hint.
+- Sub-agents can be disabled with `options.disable_subagents` (crushrc:
+  `options subagents <bool>`) or the commands (ctrl+p) panel; the coder
+  prompt drops the agent-tool guidance when disabled.
+- The coder prompt prefers the tmux-backed terminal tools over the bash
+  tool for interactive sessions and warns against terminal_output
+  `wait_for` strings that match the typed command echo (use computed
+  completion markers instead).
 
 ## Configuration surface
 
@@ -168,6 +184,8 @@ New config touches beyond upstream:
   parallel block threshold (crushrc: `option compaction <key> <value>`).
 - `models.compaction` — dedicated compaction model slot
   (crushrc: `model compaction <provider>/<id>`).
+- `options.disable_subagents` — removes the agent tool from the coder's
+  allowed tools (crushrc: `options subagents <bool>`, default enabled).
 - `models` / `model picker` compaction slot in the TUI settings dialog.
 - Goals, pause state, and status updates persist via three new SQLite
   migrations:
@@ -196,4 +214,5 @@ New config touches beyond upstream:
 | `llm_map` | Deterministic parallel map over a JSONL dataset |
 | `update_goal` / `goal_complete` / `goal_blocked` | Session goal lifecycle |
 | `status_update` | Mini standup updates surfaced in the sidebar |
+| `set_terminal_title` | Curated 2-4 word terminal window title for the current task |
 | `terminal_start` / `terminal_input` / `terminal_output` / `terminal_resize` / `terminal_kill` | tmux-backed interactive terminal control |

@@ -56,6 +56,10 @@ const (
 	// TypeStatusUpdate carries a new agent status update recorded by the
 	// status_update tool. Payload: Notification.StatusUpdate.
 	TypeStatusUpdate Type = "status_update"
+	// TypeTerminalTitleChanged carries a new agent-curated terminal
+	// window title set by the set_terminal_title tool. Payload:
+	// Notification.TerminalTitle (empty clears the custom title).
+	TypeTerminalTitleChanged Type = "terminal_title_changed"
 )
 
 // CompactionStreamKind identifies the kind of a live compaction stream
@@ -106,6 +110,10 @@ type Notification struct {
 	// StatusUpdate carries the recorded update for TypeStatusUpdate.
 	// Nil for every other type.
 	StatusUpdate *status.Update
+	// TerminalTitle carries the agent-curated terminal window title for
+	// TypeTerminalTitleChanged. Empty clears the custom title; other
+	// types ignore it.
+	TerminalTitle string
 	// Message carries the error text for TypeAgentError. Other
 	// notification types ignore it.
 	Message string

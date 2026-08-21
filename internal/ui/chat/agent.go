@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -127,7 +128,7 @@ type AgentToolRenderContext struct {
 func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
-		return pendingTool(sty, "Agent", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Agent", opts, opts.Compact)
 	}
 
 	var params agent.AgentParams
@@ -176,9 +177,18 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	var parts []string
 	parts = append(parts, childTools.Enumerator(roundedEnumerator(2, taskTagWidth-5)).String())
 
-	// Show animation if still running.
+	// Show the live data meter while the delegate agent is still running:
+	// it fills from the nested tool calls' streamed input, so the working
+	// row shows received data instead of an animated spinner.
 	if !opts.HasResult() && !opts.IsCanceled() {
-		parts = append(parts, "", opts.Anim.Render())
+		charCount := 0
+		for _, nestedTool := range r.agent.nestedTools {
+			charCount += utf8.RuneCountInString(nestedTool.ToolCall().Input)
+		}
+		if charCount == 0 {
+			charCount = utf8.RuneCountInString(opts.ToolCall.Input)
+		}
+		parts = append(parts, "", loaderDataView(sty, charCount))
 	}
 
 	result := lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -290,7 +300,7 @@ type agenticFetchParams struct {
 func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.fetch.nestedTools) == 0 {
-		return pendingTool(sty, "Agentic Fetch", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Agentic Fetch", opts, opts.Compact)
 	}
 
 	var params agenticFetchParams
@@ -345,9 +355,18 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 	var parts []string
 	parts = append(parts, childTools.Enumerator(roundedEnumerator(2, promptTagWidth-5)).String())
 
-	// Show animation if still running.
+	// Show the live data meter while the fetch is still running: it fills
+	// from the nested tool calls' streamed input, so the working row shows
+	// received data instead of an animated spinner.
 	if !opts.HasResult() && !opts.IsCanceled() {
-		parts = append(parts, "", opts.Anim.Render())
+		charCount := 0
+		for _, nestedTool := range r.fetch.nestedTools {
+			charCount += utf8.RuneCountInString(nestedTool.ToolCall().Input)
+		}
+		if charCount == 0 {
+			charCount = utf8.RuneCountInString(opts.ToolCall.Input)
+		}
+		parts = append(parts, "", loaderDataView(sty, charCount))
 	}
 
 	result := lipgloss.JoinVertical(lipgloss.Left, parts...)

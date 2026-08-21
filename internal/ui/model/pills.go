@@ -297,6 +297,42 @@ func (m *UI) switchPillSection(dir int) tea.Cmd {
 	return nil
 }
 
+// focusQueueSection expands the pills panel and moves focus to the queue
+// section, clamping the cursor onto a valid item. Reports false when there
+// is no queue to operate on.
+func (m *UI) focusQueueSection() bool {
+	if !m.hasSession() || m.promptQueue <= 0 {
+		return false
+	}
+	m.pillsExpanded = true
+	m.focusedPillSection = pillSectionQueue
+	if m.queueCursor >= len(m.promptQueueItems) {
+		m.queueCursor = 0
+	}
+	m.renderPills()
+	m.updateLayoutAndSize()
+	return true
+}
+
+// editQueuedPrompt focuses the queue section and pulls the item at the
+// cursor back into the composer for editing. Used by the ctrl+e shortcut and
+// the commands (ctrl+g) panel.
+func (m *UI) editQueuedPrompt() tea.Cmd {
+	if !m.focusQueueSection() {
+		return nil
+	}
+	return m.recallQueuedPrompt()
+}
+
+// removeQueuedPromptShortcut focuses the queue section and removes the item
+// at the cursor. Used by the ctrl+q shortcut and the commands (ctrl+g) panel.
+func (m *UI) removeQueuedPromptShortcut() tea.Cmd {
+	if !m.focusQueueSection() {
+		return nil
+	}
+	return m.removeSelectedQueuedPrompt(false)
+}
+
 // queueSectionFocused reports whether the expanded pills panel has the
 // queue section focused with a non-empty queue, the mode in which the
 // cursor, edit, and remove keys operate on queue items.
@@ -411,9 +447,6 @@ func (m *UI) renderPills() {
 	queueFocused := m.pillsExpanded && effective == pillSectionQueue
 
 	inProgressIcon := t.Tool.TodoInProgressIcon.Render(styles.SpinnerIcon)
-	if m.todoIsSpinning {
-		inProgressIcon = m.todoSpinner.View()
-	}
 
 	var pills []string
 	if hasIncomplete {
@@ -457,7 +490,9 @@ func (m *UI) renderPills() {
 		helpDesc = "close"
 	}
 	if queueFocused && hasQueue {
-		helpDesc += "  enter edit  x remove"
+		helpDesc += "  enter edit  x remove  ctrl+e edit any  ctrl+q remove any"
+	} else if hasQueue {
+		helpDesc += "  ctrl+e edit queued  ctrl+q remove queued"
 	}
 	helpKey := t.Pills.HelpKey.Render("ctrl+t")
 	helpText := t.Pills.HelpText.Render(helpDesc)

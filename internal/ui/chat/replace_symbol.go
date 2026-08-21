@@ -33,7 +33,7 @@ type ReplaceSymbolToolRenderContext struct{}
 func (r *ReplaceSymbolToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	// Replace symbol uses full width for diffs, like edit.
 	if opts.IsPending() {
-		return pendingTool(sty, "Replace Symbol", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Replace Symbol", opts, opts.Compact)
 	}
 
 	var params tools.ReplaceSymbolParams

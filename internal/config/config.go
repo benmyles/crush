@@ -339,6 +339,7 @@ type Options struct {
 	Progress                  *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
 	Notifications             string       `json:"notifications,omitempty" jsonschema:"description=Notification style to use. Options: auto (default)\\, native\\, osc\\, bell\\, disabled. Auto selects based on environment: native for local sessions\\, osc for SSH (with automatic OSC 99/777 detection).,enum=auto,enum=native,enum=osc,enum=bell,enum=disabled,default=auto"`
 	StatusUpdates             bool         `json:"status_updates,omitempty" jsonschema:"description=Enable periodic agent status updates (done, doing, next, blockers) shown in the sidebar,default=false"`
+	DisableSubagents          bool         `json:"disable_subagents,omitempty" jsonschema:"description=Disable the agent tool so the coder cannot spawn sub-agents,default=false"`
 	DisabledSkills            []string     `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=crush-config"`
 }
 
@@ -846,6 +847,7 @@ func allToolNames() []string {
 		"goal_complete",
 		"goal_blocked",
 		"status_update",
+		"set_terminal_title",
 	}
 }
 
@@ -876,7 +878,11 @@ func filterSlice(data []string, mask []string, include bool) []string {
 }
 
 func (c *Config) SetupAgents() {
-	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
+	disabledTools := c.Options.DisabledTools
+	if c.Options.DisableSubagents {
+		disabledTools = append(disabledTools, "agent")
+	}
+	allowedTools := resolveAllowedTools(allToolNames(), disabledTools)
 
 	agents := map[string]Agent{
 		AgentCoder: {

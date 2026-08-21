@@ -35,7 +35,7 @@ type QuestionToolRenderContext struct{}
 func (q *QuestionToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Question", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Question", opts, opts.Compact)
 	}
 
 	var params tools.QuestionParams

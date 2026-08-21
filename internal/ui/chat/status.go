@@ -35,7 +35,7 @@ type StatusUpdateRenderContext struct{}
 func (s *StatusUpdateRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Status", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Status", opts, opts.Compact)
 	}
 
 	var params tools.StatusUpdateParams

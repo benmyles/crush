@@ -32,7 +32,7 @@ type CallHierarchyToolRenderContext struct{}
 func (r *CallHierarchyToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Call Hierarchy", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Call Hierarchy", opts, opts.Compact)
 	}
 
 	var params tools.CallHierarchyParams

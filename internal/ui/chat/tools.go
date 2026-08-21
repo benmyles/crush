@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -521,8 +522,10 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 
-// pendingTool renders a tool that is still in progress with an animation.
-func pendingTool(sty *styles.Styles, name string, anim *anim.Anim, nested bool) string {
+// pendingTool renders a pending tool call with the live progress meter.
+// Instead of an animated spinner the row shows the tool's received input
+// filling a gradient meter, e.g. "Write 2k [======....] 2,014 chars".
+func pendingTool(sty *styles.Styles, name string, opts *ToolRenderOpts, nested bool) string {
 	icon := sty.Tool.IconPending.Render()
 	nameStyle := sty.Tool.NameNormal
 	if nested {
@@ -530,12 +533,11 @@ func pendingTool(sty *styles.Styles, name string, anim *anim.Anim, nested bool) 
 	}
 	toolName := nameStyle.Render(name)
 
-	var animView string
-	if anim != nil {
-		animView = anim.Render()
-	}
-
-	return fmt.Sprintf("%s %s %s", icon, toolName, animView)
+	return fmt.Sprintf("%s %s %s",
+		icon,
+		toolName,
+		loaderDataView(sty, utf8.RuneCountInString(opts.ToolCall.Input)),
+	)
 }
 
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.

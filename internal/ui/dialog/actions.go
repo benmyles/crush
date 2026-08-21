@@ -76,6 +76,8 @@ type (
 	ActionToggleCompactMode       struct{}
 	ActionToggleThinking          struct{}
 	ActionTogglePills             struct{}
+	ActionQueueEdit               struct{}
+	ActionQueueRemove             struct{}
 	ActionExternalEditor          struct{}
 	ActionToggleYoloMode          struct{}
 	ActionToggleNotifications     struct{}
@@ -84,6 +86,7 @@ type (
 	}
 	ActionToggleTransparentBackground struct{}
 	ActionToggleStatusUpdates         struct{}
+	ActionToggleSubagents             struct{}
 	ActionInitializeProject           struct{}
 	ActionSummarize                   struct {
 		SessionID string

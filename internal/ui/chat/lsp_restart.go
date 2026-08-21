@@ -32,7 +32,7 @@ type LSPRestartToolRenderContext struct{}
 func (r *LSPRestartToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Restart LSP", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Restart LSP", opts, opts.Compact)
 	}
 
 	var params tools.LSPRestartParams

@@ -38,7 +38,7 @@ type TerminalToolRenderContext struct{}
 func (t *TerminalToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Terminal", opts.Anim, opts.Compact)
+		return pendingTool(sty, "Terminal", opts, opts.Compact)
 	}
 
 	action, terminalID, description := terminalToolHeader(opts.ToolCall)

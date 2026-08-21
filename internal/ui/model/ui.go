@@ -259,6 +259,11 @@ type UI struct {
 	// Updated from status_update notifications and session loads. Session
 	// switches must reset it.
 	statusUpdate status.Update
+	// terminalTitle caches the agent-curated terminal window title for
+	// the current session. Updated from terminal_title_changed
+	// notifications and cleared on new user messages. Session switches
+	// must reset it.
+	terminalTitle string
 
 	header *header
 
@@ -390,10 +395,6 @@ type UI struct {
 	busyFetchGen uint64
 	pillsView    string
 
-	// Todo spinner
-	todoSpinner    spinner.Model
-	todoIsSpinning bool
-
 	// Compaction pulse pill state. compacting is lit by
 	// notify.TypeCompactionStarted and cleared by
 	// TypeCompactionFinished; compactPulse counts animation frames so the
@@ -459,11 +460,6 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		com.Styles.Completions.Match,
 	)
 
-	todoSpinner := spinner.New(
-		spinner.WithSpinner(spinner.MiniDot),
-		spinner.WithStyle(com.Styles.Pills.TodoSpinner),
-	)
-
 	compactSpinner := spinner.New(
 		spinner.WithSpinner(spinner.MiniDot),
 		spinner.WithStyle(com.Styles.Pills.TodoSpinner),
@@ -497,7 +493,6 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		header:              header,
 		completions:         comp,
 		attachments:         attachments,
-		todoSpinner:         todoSpinner,
 		compactSpinner:      compactSpinner,
 		lspStates:           make(map[string]workspace.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
@@ -833,6 +828,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// are session-scoped by the agent.
 		m.goal = goal.Goal{}
 		m.statusUpdate = status.Update{}
+		m.terminalTitle = ""
 		m.pausedActive = false
 		cmds = append(cmds, m.dispatchGoalFetch(m.session.ID, false))
 		cmds = append(cmds, m.dispatchStatusFetch(m.session.ID))
@@ -876,11 +872,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingBangCommand = ""
 		}
 		if hasInProgressTodo(m.session.Todos) {
-			// only start spinner if there is an in-progress todo
-			if m.isAgentBusy() {
-				m.todoIsSpinning = true
-				cmds = append(cmds, m.todoSpinner.Tick)
-			}
 			m.updateLayoutAndSize()
 		}
 		// Reload prompt history for the new session.
@@ -956,13 +947,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		if m.session != nil && msg.Payload.ID == m.session.ID {
-			prevHasInProgress := hasInProgressTodo(m.session.Todos)
 			prevPillsHeight := m.pillsAreaHeight()
 			m.session = &msg.Payload
-			if !prevHasInProgress && hasInProgressTodo(m.session.Todos) {
-				m.todoIsSpinning = true
-				cmds = append(cmds, m.todoSpinner.Tick)
-			}
 			// The pills panel reserves vertical space that the chat area
 			// must yield. Recompute the layout whenever that footprint
 			// changes (todos appearing, the list growing, etc.) so the
@@ -992,6 +978,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case pubsub.CreatedEvent:
 			cmds = append(cmds, m.appendSessionMessage(msg.Payload))
+			// A curated window title describes the previous task. A new
+			// user message starts a new one, so drop the custom title
+			// and fall back to the default prompt-based title.
+			if msg.Payload.Role == message.User {
+				m.terminalTitle = ""
+			}
 			// A new message is a run boundary — a user prompt starting
 			// a turn or the agent replying/dequeueing. Drop the
 			// memoized busy state and re-fetch it and the queue
@@ -1010,15 +1002,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
 		case pubsub.DeletedEvent:
 			m.chat.RemoveMessage(msg.Payload.ID)
-		}
-		// start the spinner if there is a new message
-		if hasInProgressTodo(m.session.Todos) && m.isAgentBusy() && !m.todoIsSpinning {
-			m.todoIsSpinning = true
-			cmds = append(cmds, m.todoSpinner.Tick)
-		}
-		// stop the spinner if the agent is not busy anymore
-		if m.todoIsSpinning && !m.isAgentBusy() {
-			m.todoIsSpinning = false
 		}
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
@@ -1331,14 +1314,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dialog.HasDialogs() {
 			// route to dialog
 			if cmd := m.handleDialogMsg(msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-		if m.state == uiChat && m.hasSession() && hasInProgressTodo(m.session.Todos) && m.todoIsSpinning {
-			var cmd tea.Cmd
-			m.todoSpinner, cmd = m.todoSpinner.Update(msg)
-			if cmd != nil {
-				m.renderPills()
 				cmds = append(cmds, cmd)
 			}
 		}
@@ -2174,6 +2149,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionQueueEdit:
+		cmds = append(cmds, m.editQueuedPrompt())
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionQueueRemove:
+		cmds = append(cmds, m.removeQueuedPromptShortcut())
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleThinking:
 		cmds = append(cmds, m.updateAgentModelCmd(func() tea.Msg {
 			cfg := m.com.Config()
@@ -2236,6 +2217,24 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				status = "enabled"
 			}
 			return util.NewInfoMsg("Status updates " + status)
+		}))
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionToggleSubagents:
+		cmds = append(cmds, m.updateAgentModelCmd(func() tea.Msg {
+			cfg := m.com.Config()
+			if cfg == nil || cfg.Options == nil {
+				return util.ReportError(errors.New("configuration not found"))()
+			}
+			newValue := !cfg.Options.DisableSubagents
+			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.disable_subagents", newValue); err != nil {
+				return util.ReportError(err)()
+			}
+			m.com.Workspace.UpdateAgentModel(context.TODO())
+			status := "enabled"
+			if newValue {
+				status = "disabled"
+			}
+			return util.NewInfoMsg("Sub-agents " + status)
 		}))
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionQuit:
@@ -3066,6 +3065,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 		case uiFocusMain:
 			switch {
+			case m.promptQueue > 0 && key.Matches(msg, m.keyMap.Chat.QueueEdit):
+				cmds = append(cmds, m.editQueuedPrompt())
+			case m.promptQueue > 0 && key.Matches(msg, m.keyMap.Chat.QueueDelete):
+				cmds = append(cmds, m.removeQueuedPromptShortcut())
 			case m.queueSectionFocused() && key.Matches(msg, m.keyMap.Chat.Up):
 				m.moveQueueCursor(-1)
 			case m.queueSectionFocused() && key.Matches(msg, m.keyMap.Chat.Down):
@@ -3429,18 +3432,18 @@ func (m *UI) View() tea.View {
 	return v
 }
 
-// Terminal window title icons. Each title is a single state emoji plus
-// text, so the glyphs below are plain single-codepoint emoji widely
-// supported by terminal emulators.
+// Terminal window title icons. Each title is a single plain unicode
+// state glyph plus text, so the glyphs render cleanly in every terminal
+// without emoji presentation.
 const (
-	titleIconWaiting    = "⏳"
-	titleIconThinking   = "💭"
-	titleIconResponding = "💬"
-	titleIconQuestion   = "❔"
-	titleIconPaused     = "⏸️"
-	titleIconBlocked    = "⛔"
-	titleIconStalled    = "💤"
-	titleIconComplete   = "✅"
+	titleIconWaiting    = "○"
+	titleIconThinking   = "◐"
+	titleIconResponding = "●"
+	titleIconQuestion   = "?"
+	titleIconPaused     = "‖"
+	titleIconBlocked    = "!"
+	titleIconStalled    = "…"
+	titleIconComplete   = "✓"
 )
 
 // maxTitleWidth caps the terminal title text so very long goals or
@@ -3448,12 +3451,17 @@ const (
 const maxTitleWidth = 80
 
 // windowTitle returns the text to show in the terminal window title.
-// When the session has a goal, the title is the goal text prefixed with
-// an emoji describing the current state (thinking, responding, waiting
-// for a question, paused, blocked, stalled, complete). Without a goal it
-// is the first user message, so the title stays stable and readable
-// instead of flipping between transient status placeholders.
+// When the agent has set a curated title with set_terminal_title, that
+// title is shown, prefixed with a glyph describing the current state
+// (thinking, responding, waiting for a question, paused, blocked,
+// stalled, complete). Otherwise the title is the goal text when the
+// session has one, or the first user message, so the title stays stable
+// and readable instead of flipping between transient status
+// placeholders.
 func (m *UI) windowTitle() string {
+	if text := shortenTitle(m.terminalTitle); text != "" {
+		return m.goalStateIcon() + " " + text
+	}
 	if m.goal.Exists() {
 		if text := shortenTitle(m.goal.Text); text != "" {
 			return m.goalStateIcon() + " " + text
@@ -4516,7 +4524,6 @@ func (m *UI) refreshStyles() {
 		t.Attachments.Skill,
 		t.Attachments.Remove,
 	)
-	m.todoSpinner.Style = t.Pills.TodoSpinner
 	m.status.help.Styles = t.Help
 	m.chat.InvalidateRenderCaches()
 }
@@ -4810,11 +4817,9 @@ func (m *UI) cancelAgent() tea.Cmd {
 		}
 
 		m.com.Workspace.AgentCancel(m.session.ID)
-		// Stop the spinning todo indicator and drop the memoized busy
-		// state the cancel just changed; the pill re-renders now from
-		// last-known state and again when the off-thread refresh (and
-		// the agent's own events) land.
-		m.todoIsSpinning = false
+		// Drop the memoized busy state the cancel just changed; the pill
+		// re-renders now from last-known state and again when the
+		// off-thread refresh (and the agent's own events) land.
 		m.invalidateBusyCaches()
 		m.renderPills()
 		return m.dispatchBusyRefresh()
@@ -5214,6 +5219,11 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 	case notify.TypeStatusUpdate:
 		if n.StatusUpdate != nil && m.hasSession() && n.StatusUpdate.SessionID == m.session.ID {
 			m.statusUpdate = *n.StatusUpdate
+		}
+		return nil
+	case notify.TypeTerminalTitleChanged:
+		if m.hasSession() && n.SessionID == m.session.ID {
+			m.terminalTitle = n.TerminalTitle
 		}
 		return nil
 	case notify.TypeReAuthenticate:
