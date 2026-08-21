@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/status"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
@@ -511,6 +512,25 @@ func (c *Client) ResumeSessionGoal(ctx context.Context, id string, sessionID str
 		return fmt.Errorf("failed to resume session goal: status code %d", rsp.StatusCode)
 	}
 	return nil
+}
+
+// GetSessionStatus retrieves the latest status update for a session. A
+// session without a recorded update yields an update with an empty
+// session ID.
+func (c *Client) GetSessionStatus(ctx context.Context, id string, sessionID string) (status.Update, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/status", id, sessionID), nil, nil)
+	if err != nil {
+		return status.Update{}, fmt.Errorf("failed to get session status: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return status.Update{}, fmt.Errorf("failed to get session status: status code %d", rsp.StatusCode)
+	}
+	var u status.Update
+	if err := json.NewDecoder(rsp.Body).Decode(&u); err != nil {
+		return status.Update{}, fmt.Errorf("failed to decode session status: %w", err)
+	}
+	return u, nil
 }
 
 // PauseAgent latches the global pause flag on every session with an

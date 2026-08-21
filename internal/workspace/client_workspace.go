@@ -31,6 +31,7 @@ import (
 	"github.com/charmbracelet/crush/internal/question"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/status"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/pkg/browser"
@@ -350,6 +351,10 @@ func (w *ClientWorkspace) GoalResume(ctx context.Context, sessionID string) erro
 
 func (w *ClientWorkspace) GoalClear(ctx context.Context, sessionID string) error {
 	return w.client.ClearSessionGoal(ctx, w.workspaceID(), sessionID)
+}
+
+func (w *ClientWorkspace) StatusGet(ctx context.Context, sessionID string) (status.Update, error) {
+	return w.client.GetSessionStatus(ctx, w.workspaceID(), sessionID)
 }
 
 func (w *ClientWorkspace) AgentPause() bool {

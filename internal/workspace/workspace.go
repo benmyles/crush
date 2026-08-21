@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/crush/internal/question"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/status"
 )
 
 // Reasons the coder agent may be unavailable, returned by
@@ -175,6 +176,9 @@ type Workspace interface {
 	// agent is idle, continues the work with a fresh goal check.
 	GoalResume(ctx context.Context, sessionID string) error
 	GoalClear(ctx context.Context, sessionID string) error
+	// StatusGet returns the latest recorded status update for the
+	// session, or an empty update when the session has none.
+	StatusGet(ctx context.Context, sessionID string) (status.Update, error)
 	// AgentPause latches the global pause flag on every session with an
 	// active run; those runs stop at their next step boundary. It
 	// reports whether any session was actually paused.

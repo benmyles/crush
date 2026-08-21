@@ -629,6 +629,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
 
+	// Add status updates toggle.
+	statusUpdatesLabel := "Enable Status Updates"
+	if cfg != nil && cfg.Options != nil && cfg.Options.StatusUpdates {
+		statusUpdatesLabel = "Disable Status Updates"
+	}
+	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_status_updates", statusUpdatesLabel, "", ActionToggleStatusUpdates{}))
+
 	commands = append(
 		commands,
 		NewCommandItem(c.com.Styles, "quit", "Quit", "ctrl+c", tea.QuitMsg{}).WithAliases("exit"),

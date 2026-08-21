@@ -48,6 +48,7 @@ import (
 	"github.com/charmbracelet/crush/internal/question"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/status"
 	"github.com/charmbracelet/crush/internal/stringext"
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/attachments"
@@ -254,6 +255,10 @@ type UI struct {
 	goal goal.Goal
 	// goalExpanded tracks whether the sidebar goal section is expanded.
 	goalExpanded bool
+	// statusUpdate caches the latest agent status update for the sidebar.
+	// Updated from status_update notifications and session loads. Session
+	// switches must reset it.
+	statusUpdate status.Update
 
 	header *header
 
@@ -793,6 +798,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case goalFetchedMsg:
 		cmds = append(cmds, m.handleGoalFetched(msg))
+	case statusFetchedMsg:
+		cmds = append(cmds, m.handleStatusFetched(msg))
 	case goalSetSuccessMsg:
 		cmds = append(cmds, m.handleGoalSetSuccess(msg))
 	case goalClearedMsg:
@@ -825,8 +832,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// off-thread; the pause pill follows pause notifications, which
 		// are session-scoped by the agent.
 		m.goal = goal.Goal{}
+		m.statusUpdate = status.Update{}
 		m.pausedActive = false
 		cmds = append(cmds, m.dispatchGoalFetch(m.session.ID, false))
+		cmds = append(cmds, m.dispatchStatusFetch(m.session.ID))
 		// Session switch: the memoized busy state and queued prompts
 		// belong to the previous session. Drop them and re-fetch
 		// off-thread so the queue pill and esc behavior track the new
@@ -2210,6 +2219,24 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			}
 			return util.NewInfoMsg("Transparent background " + status)
 		})
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionToggleStatusUpdates:
+		cmds = append(cmds, m.updateAgentModelCmd(func() tea.Msg {
+			cfg := m.com.Config()
+			if cfg == nil || cfg.Options == nil {
+				return util.ReportError(errors.New("configuration not found"))()
+			}
+			newValue := !cfg.Options.StatusUpdates
+			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.status_updates", newValue); err != nil {
+				return util.ReportError(err)()
+			}
+			m.com.Workspace.UpdateAgentModel(context.TODO())
+			status := "disabled"
+			if newValue {
+				status = "enabled"
+			}
+			return util.NewInfoMsg("Status updates " + status)
+		}))
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionQuit:
 		cmds = append(cmds, tea.Quit)
@@ -5182,6 +5209,11 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 		if n.Goal != nil && m.hasSession() && n.Goal.SessionID == m.session.ID {
 			m.goal = *n.Goal
 			m.renderPills()
+		}
+		return nil
+	case notify.TypeStatusUpdate:
+		if n.StatusUpdate != nil && m.hasSession() && n.StatusUpdate.SessionID == m.session.ID {
+			m.statusUpdate = *n.StatusUpdate
 		}
 		return nil
 	case notify.TypeReAuthenticate:

@@ -5,6 +5,7 @@ package notify
 
 import (
 	"github.com/charmbracelet/crush/internal/goal"
+	"github.com/charmbracelet/crush/internal/status"
 )
 
 // Type identifies the kind of agent notification.
@@ -52,6 +53,9 @@ const (
 	// TypeGoalStateChanged carries a goal state transition (set,
 	// updated, completed, blocked, stalled). Payload: Notification.Goal.
 	TypeGoalStateChanged Type = "goal_state_changed"
+	// TypeStatusUpdate carries a new agent status update recorded by the
+	// status_update tool. Payload: Notification.StatusUpdate.
+	TypeStatusUpdate Type = "status_update"
 )
 
 // CompactionStreamKind identifies the kind of a live compaction stream
@@ -99,6 +103,9 @@ type Notification struct {
 	// Goal carries the new goal state for TypeGoalStateChanged. Nil
 	// for every other type.
 	Goal *goal.Goal
+	// StatusUpdate carries the recorded update for TypeStatusUpdate.
+	// Nil for every other type.
+	StatusUpdate *status.Update
 	// Message carries the error text for TypeAgentError. Other
 	// notification types ignore it.
 	Message string

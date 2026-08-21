@@ -1045,6 +1045,29 @@ func (c *controllerV1) handleGetWorkspaceAgentSessionGoal(w http.ResponseWriter,
 	jsonEncode(w, g)
 }
 
+// handleGetWorkspaceAgentSessionStatus returns the latest status update
+// for a session.
+//
+//	@Summary		Get session status update
+//	@Tags			agent
+//	@Produce		json
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Param			sid	path	string	true	"Session ID"
+//	@Success		200	{object}	status.Update
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/agent/sessions/{sid}/status [get]
+func (c *controllerV1) handleGetWorkspaceAgentSessionStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	u, err := c.backend.GetStatus(r.Context(), id, sid)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, u)
+}
+
 // handlePostWorkspaceAgentSessionGoalSet sets or reactivates a session goal.
 //
 //	@Summary		Set session goal

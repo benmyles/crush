@@ -836,6 +836,11 @@ func quickStyle(o quickStyleOpts) Styles {
 	// Sidebar
 	s.Sidebar.SessionTitle = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Sidebar.WorkingDir = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Sidebar.StatusLabel = lipgloss.NewStyle().Foreground(o.infoMoreSubtle)
+	s.Sidebar.StatusDone = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Sidebar.StatusDoing = lipgloss.NewStyle().Foreground(o.info)
+	s.Sidebar.StatusNext = lipgloss.NewStyle().Foreground(o.fgBase)
+	s.Sidebar.StatusBlockers = lipgloss.NewStyle().Foreground(o.error)
 
 	// ModelInfo
 	s.ModelInfo.Icon = lipgloss.NewStyle().Foreground(o.fgMostSubtle)

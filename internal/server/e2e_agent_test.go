@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/status"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -229,6 +230,10 @@ func (c *scriptedCoordinator) GenerateTitle(context.Context, string, string)    
 func (c *scriptedCoordinator) SetGoal(context.Context, string, string) error { return nil }
 func (c *scriptedCoordinator) GetGoal(context.Context, string) (goal.Goal, error) {
 	return goal.Goal{}, nil
+}
+
+func (c *scriptedCoordinator) GetStatus(context.Context, string) (status.Update, error) {
+	return status.Update{}, nil
 }
 func (c *scriptedCoordinator) ResumeGoal(context.Context, string) error { return nil }
 func (c *scriptedCoordinator) ClearGoal(context.Context, string) error  { return nil }

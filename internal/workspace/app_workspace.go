@@ -24,6 +24,7 @@ import (
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/status"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -274,6 +275,13 @@ func (w *AppWorkspace) GoalClear(ctx context.Context, sessionID string) error {
 		return errors.New("agent coordinator not initialized")
 	}
 	return w.app.AgentCoordinator.ClearGoal(ctx, sessionID)
+}
+
+func (w *AppWorkspace) StatusGet(ctx context.Context, sessionID string) (status.Update, error) {
+	if w.app.AgentCoordinator == nil {
+		return status.Update{}, errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.GetStatus(ctx, sessionID)
 }
 
 func (w *AppWorkspace) AgentPause() bool {

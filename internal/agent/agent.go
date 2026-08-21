@@ -49,6 +49,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/status"
 	"github.com/charmbracelet/crush/internal/stringext"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/x/ansi"
@@ -283,6 +284,19 @@ type sessionAgent struct {
 	// loop. Nil means the host has no goal store (tests, agents without
 	// a DB): scheduling is disabled and goal tools are not registered.
 	goals *goal.Store
+
+	// statusUpdates persists the latest status update per session and
+	// backs the reminder injection. Nil means the host has no status
+	// store: reminders are disabled.
+	statusUpdates *status.Store
+	// statusRemindedAt records, per session, the unix time of the last
+	// injected status reminder so consecutive steps of one run cannot
+	// spam the model.
+	statusRemindedAt *csync.Map[string, int64]
+	// statusBaseline records, per session, the unix time of the first
+	// observed step when no status update was ever recorded, so a fresh
+	// session is prodded on the interval rather than immediately.
+	statusBaseline *csync.Map[string, int64]
 	// paused holds, per session, whether a pause request is latched:
 	// runs stop at their next step boundary, the continuation waits at
 	// the queue front, and new prompts hold until Resume lifts it.
@@ -356,6 +370,11 @@ type SessionAgentOptions struct {
 	// agent: completed turns schedule goal checks while a goal is
 	// active.
 	Goals *goal.Store
+	// StatusUpdates, when non-nil, enables status-update reminders: the
+	// agent is prodded to report when ReminderInterval passes without an
+	// update while it is working. The same store backs the status_update
+	// tool.
+	StatusUpdates *status.Store
 }
 
 func NewSessionAgent(
@@ -383,6 +402,9 @@ func NewSessionAgent(
 		activeRequests:       csync.NewMap[string, *activeCancel](),
 		compactionRequested:  csync.NewMap[string, string](),
 		goals:                opts.Goals,
+		statusUpdates:        opts.StatusUpdates,
+		statusRemindedAt:     csync.NewMap[string, int64](),
+		statusBaseline:       csync.NewMap[string, int64](),
 		paused:               csync.NewMap[string, *atomic.Bool](),
 		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
 		acceptedRuns:         csync.NewMap[string, int](),
@@ -1036,6 +1058,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 				prepared.Messages = append(prepared.Messages, userMessage.ToAIMessage()...)
 			}
+
+			// Status-update cadence: when enabled, remind the model to
+			// report if it has not done so within ReminderInterval.
+			prepared.Messages = a.maybeAppendStatusReminder(callContext, call, prepared.Messages)
 
 			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)
 
@@ -1832,6 +1858,57 @@ func (a *sessionAgent) publishGoalState(sessionID string, g goal.Goal) {
 		Type:      notify.TypeGoalStateChanged,
 		Goal:      &g,
 	})
+}
+
+// maybeAppendStatusReminder appends a synthetic user reminder asking for
+// a status update when the feature is enabled, the run is interactive on
+// the main agent, and no update was recorded within
+// status.ReminderInterval. Consecutive reminders are spaced by the same
+// interval so a model that ignores one is not spammed at every step.
+// It returns the messages unchanged when no reminder is due.
+func (a *sessionAgent) maybeAppendStatusReminder(ctx context.Context, call SessionAgentCall, msgs []fantasy.Message) []fantasy.Message {
+	if a.statusUpdates == nil || a.isSubAgent || call.NonInteractive {
+		return msgs
+	}
+	cfg := a.cfg.Config()
+	if cfg == nil || cfg.Options == nil || !cfg.Options.StatusUpdates {
+		return msgs
+	}
+	now := time.Now().Unix()
+	interval := int64(status.ReminderInterval.Seconds())
+
+	ref := a.statusReference(ctx, call.SessionID, now)
+	if now-ref < interval {
+		return msgs
+	}
+	if last, _ := a.statusRemindedAt.Get(call.SessionID); last != 0 && now-last < interval {
+		return msgs
+	}
+	a.statusRemindedAt.Set(call.SessionID, now)
+	return append(msgs, fantasy.NewUserMessage(status.ReminderPrompt()))
+}
+
+// statusReference returns the unix timestamp the reminder interval is
+// measured from: the latest recorded update for the session, or a
+// baseline stamped when the session is first observed without one (so a
+// fresh session earns its first reminder on the interval, not
+// immediately). Store errors return now, which defers any reminder to
+// the next interval.
+func (a *sessionAgent) statusReference(ctx context.Context, sessionID string, now int64) int64 {
+	latest, err := a.statusUpdates.Get(ctx, sessionID)
+	if err != nil {
+		slog.Warn("Failed to read status update", "session_id", sessionID, "error", err)
+		return now
+	}
+	if latest.Exists() {
+		return latest.UpdatedAt
+	}
+	baseline, _ := a.statusBaseline.Get(sessionID)
+	if baseline == 0 {
+		a.statusBaseline.Set(sessionID, now)
+		return now
+	}
+	return baseline
 }
 
 // publishPauseState notifies observers when a pause latch takes effect

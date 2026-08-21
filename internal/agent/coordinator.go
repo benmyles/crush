@@ -46,6 +46,7 @@ import (
 	"github.com/charmbracelet/crush/internal/question"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/status"
 	"github.com/charmbracelet/crush/internal/terminal"
 	"golang.org/x/sync/errgroup"
 
@@ -130,6 +131,9 @@ type Coordinator interface {
 	GetGoal(ctx context.Context, sessionID string) (goal.Goal, error)
 	ResumeGoal(ctx context.Context, sessionID string) error
 	ClearGoal(ctx context.Context, sessionID string) error
+	// GetStatus returns the latest recorded status update for the
+	// session, or an empty update when the session has none.
+	GetStatus(ctx context.Context, sessionID string) (status.Update, error)
 	// Pause latches the pause flag on every session with an active run;
 	// those runs stop at their next step boundary. It reports whether any
 	// session was actually paused.
@@ -160,6 +164,10 @@ type coordinator struct {
 	// goals persists session goal state and backs the goal tools and
 	// supervision loop. Nil when the coordinator has no database.
 	goals *goal.Store
+	// statusUpdates persists the latest agent status update per session
+	// and backs the status_update tool. Nil when the coordinator has no
+	// database.
+	statusUpdates *status.Store
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -226,6 +234,7 @@ func NewCoordinator(ctx context.Context, opts CoordinatorOptions) (Coordinator, 
 		querier:         opts.Querier,
 		dbConn:          opts.DBConn,
 		goals:           goal.NewStore(opts.DBConn),
+		statusUpdates:   status.NewStore(opts.DBConn),
 		agents:          make(map[string]SessionAgent),
 		allSkills:       allSkills,
 		activeSkills:    activeSkills,
@@ -761,6 +770,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		Notify:               c.notify,
 		RunComplete:          c.runComplete,
 		Goals:                c.goals,
+		StatusUpdates:        c.statusUpdates,
 	})
 
 	// The readiness goroutines below perform one-time setup — building the
@@ -897,6 +907,14 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 			tools.NewUpdateGoalTool(c.goals, c.publishGoalState),
 			tools.NewCompleteGoalTool(c.goals, c.publishGoalState),
 			tools.NewBlockGoalTool(c.goals, c.publishGoalState),
+		)
+	}
+
+	// Status update tool. Registered with a functioning status store so
+	// the agent's standup reports persist and reach the UI.
+	if c.statusUpdates != nil && c.dbConn != nil {
+		allTools = append(allTools,
+			tools.NewStatusUpdateTool(c.statusUpdates, c.publishStatusUpdate),
 		)
 	}
 
@@ -1502,6 +1520,18 @@ func (c *coordinator) publishGoalState(g goal.Goal) {
 	})
 }
 
+// publishStatusUpdate broadcasts a recorded status update to subscribers.
+func (c *coordinator) publishStatusUpdate(u status.Update) {
+	if c.notify == nil {
+		return
+	}
+	c.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+		SessionID:    u.SessionID,
+		Type:         notify.TypeStatusUpdate,
+		StatusUpdate: &u,
+	})
+}
+
 // SetGoal creates or reactivates the session's goal.
 func (c *coordinator) SetGoal(ctx context.Context, sessionID, text string) error {
 	if c.goals == nil {
@@ -1521,6 +1551,15 @@ func (c *coordinator) GetGoal(ctx context.Context, sessionID string) (goal.Goal,
 		return goal.Goal{}, goal.ErrNoGoal
 	}
 	return c.goals.Get(ctx, sessionID)
+}
+
+// GetStatus returns the latest status update for the session, or an
+// empty update when the session has none.
+func (c *coordinator) GetStatus(ctx context.Context, sessionID string) (status.Update, error) {
+	if c.statusUpdates == nil {
+		return status.Update{}, nil
+	}
+	return c.statusUpdates.Get(ctx, sessionID)
 }
 
 // ResumeGoal reactivates a blocked or stalled goal and, when the session

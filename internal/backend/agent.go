@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/shell"
+	"github.com/charmbracelet/crush/internal/status"
 )
 
 // SendMessage validates and accepts a prompt for the workspace's agent,
@@ -281,6 +282,18 @@ func (b *Backend) ClearGoal(ctx context.Context, workspaceID, sessionID string) 
 		return ErrAgentNotInitialized
 	}
 	return ws.AgentCoordinator.ClearGoal(ctx, sessionID)
+}
+
+// GetStatus returns the latest status update for the session.
+func (b *Backend) GetStatus(ctx context.Context, workspaceID, sessionID string) (status.Update, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return status.Update{}, err
+	}
+	if ws.AgentCoordinator == nil {
+		return status.Update{}, ErrAgentNotInitialized
+	}
+	return ws.AgentCoordinator.GetStatus(ctx, sessionID)
 }
 
 // Pause latches the global pause flag on every session with an active

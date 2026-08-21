@@ -83,6 +83,7 @@ type (
 		Style string
 	}
 	ActionToggleTransparentBackground struct{}
+	ActionToggleStatusUpdates         struct{}
 	ActionInitializeProject           struct{}
 	ActionSummarize                   struct {
 		SessionID string

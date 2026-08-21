@@ -233,6 +233,13 @@ type Styles struct {
 	Sidebar struct {
 		SessionTitle lipgloss.Style // Current session title at top of sidebar
 		WorkingDir   lipgloss.Style // Working directory path (PrettyPath)
+
+		// StatusUpdater adds styles for agent status update rows.
+		StatusLabel    lipgloss.Style
+		StatusDone     lipgloss.Style
+		StatusDoing    lipgloss.Style
+		StatusNext     lipgloss.Style
+		StatusBlockers lipgloss.Style
 	}
 
 	// ModelInfo (model name, provider, reasoning, token/cost summary)
