@@ -1,0 +1,64 @@
+go.mod
+  h_9b4a5c940a23e2 121
+go.sum
+  h_9b4a5c940a23e2 172-173
+internal/agent/agent_test.go
+  h_9b4a5c940a23e2 46-48
+internal/agent/tools/exa.go
+  h_9b4a5c940a23e2 293-295,298-306,312
+internal/agent/tools/exa_test.go
+  h_9b4a5c940a23e2 33-34,41-42,49-64,66,73-82,85-86,233
+internal/agent/tools/fetch.go
+  h_9b4a5c940a23e2 114-118,120-122,126-132
+internal/agent/tools/firecrawl.go
+  h_9b4a5c940a23e2 1-105
+internal/agent/tools/firecrawl_test.go
+  h_9b4a5c940a23e2 1-152
+internal/agent/tools/web_backend.go
+  h_9b4a5c940a23e2 1-54
+internal/agent/tools/web_fetch.go
+  h_9b4a5c940a23e2 25-27
+internal/agent/tools/web_search.go
+  h_9b4a5c940a23e2 23-24,57-63,68
+internal/agent/tools/web_search.md.tpl
+  h_9b4a5c940a23e2 1
+internal/config/config.go
+  h_9b4a5c940a23e2 342
+internal/ui/dialog/commands.go
+  h_9b4a5c940a23e2 618
+internal/ui/dialog/web_backend.go
+  h_9b4a5c940a23e2 32-33
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/LICENSE
+  h_9b4a5c940a23e2 1-680
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/README.md
+  h_9b4a5c940a23e2 1-428
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/firecrawl.go
+  h_9b4a5c940a23e2 1-1171
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/firecrawl_error.go
+  h_9b4a5c940a23e2 1-46
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/http_client.go
+  h_9b4a5c940a23e2 1-323
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/models.go
+  h_9b4a5c940a23e2 1-694
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/option/option.go
+  h_9b4a5c940a23e2 1-76
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/options.go
+  h_9b4a5c940a23e2 1-234
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/parse.go
+  h_9b4a5c940a23e2 1-129
+vendor/github.com/firecrawl/firecrawl/apps/go-sdk/version.go
+  h_9b4a5c940a23e2 1-12
+vendor/modules.txt
+  h_9b4a5c940a23e2 419-422
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "9e777759d105adf391326224f76a91acdadee1ad",
+  "prompts": {},
+  "humans": {
+    "h_9b4a5c940a23e2": {
+      "author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
