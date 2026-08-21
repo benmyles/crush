@@ -1,0 +1,107 @@
+internal/agent/agent.go
+  s_62e473f1f2c916::t_fb1a0d5aa4bbb2 52,287-299,373-377,405-407,1062-1065,1863-1913
+internal/agent/coordinator.go
+  s_8a9f6942d6fe52::t_a1625d014f5cb8 49,134-136,167-170,237,773,913-920,1523-1534,1556-1564
+internal/agent/notify/notify.go
+  s_8a9f6942d6fe52::t_3d3ec80332a18a 8,56-58,106-108
+internal/agent/status_reminder_test.go
+  s_62e473f1f2c916::t_404fa98ec64e7a 1-136
+internal/agent/templates/coder.md.tpl
+  s_62e473f1f2c916::t_0de87bcf9655a4 435-453
+internal/agent/tools/status_update.go
+  s_8a9f6942d6fe52::t_491894b1d6dc78 1-58
+internal/agent/tools/status_update.md
+  s_8a9f6942d6fe52::t_db3d6b59469931 1-19
+internal/agent/tools/status_update_test.go
+  s_8a9f6942d6fe52::t_bc78d4d5071098 1-84
+internal/backend/agent.go
+  s_8a9f6942d6fe52::t_571818660e328f 15,285-296
+internal/backend/agent_runcomplete_test.go
+  s_62e473f1f2c916::t_e005aeec73ce35 15,61-64
+internal/backend/agent_test.go
+  s_62e473f1f2c916::t_03a27b41f7f165 15,71-74
+internal/client/proto.go
+  s_62e473f1f2c916::t_2338b13b1d6484 22,517-535
+internal/config/config.go
+  s_62e473f1f2c916::t_51a7a56e6c3359 341
+internal/db/migrations/20260819000001_add_status_updates.sql
+  s_62e473f1f2c916::t_86634c7c327d7e 1-17
+internal/server/agent_cancel_test.go
+  s_62e473f1f2c916::t_d39840f18962bb 21,95-98
+internal/server/e2e_agent_test.go
+  s_62e473f1f2c916::t_ee4e4f7cf4390b 23,234-237
+internal/server/proto.go
+  s_8a9f6942d6fe52::t_21082cf2bac69f 1048-1070
+internal/server/server.go
+  s_8a9f6942d6fe52::t_df1cb0010d976d 209
+internal/server/sessions_isbusy_test.go
+  s_62e473f1f2c916::t_cd76cdf97e3c2e 19,65-68
+internal/shellconfig/options.go
+  s_62e473f1f2c916::t_2cdf18bbfb5fa9 185-189
+internal/shellconfig/options_test.go
+  s_62e473f1f2c916::t_1c37dcd12e4bf6 16-17,29
+internal/status/status.go
+  s_62e473f1f2c916::t_19cbf906b1f71a 1-48
+internal/status/store.go
+  s_dc585eeb83247e::t_580e136b5cd007 1-77
+internal/status/store_test.go
+  s_8a9f6942d6fe52::t_215129c689b146 1-92
+internal/ui/chat/status.go
+  s_62e473f1f2c916::t_f92ee1a04c8013 1-78
+internal/ui/chat/tools.go
+  s_62e473f1f2c916::t_50bd2ed069203e 265-266
+internal/ui/dialog/actions.go
+  s_62e473f1f2c916::t_3eea7b291fc1b9 86
+internal/ui/dialog/commands.go
+  s_62e473f1f2c916::t_01e0f3b8d3fc19 632-638
+internal/ui/model/sidebar.go
+  s_62e473f1f2c916::t_9bc30652583436 102,115-116
+internal/ui/model/status_updates.go
+  s_62e473f1f2c916::t_001a2aa05afb62 1-90
+internal/ui/model/status_updates_test.go
+  s_62e473f1f2c916::t_72994904bffd40 1-65
+internal/ui/model/ui.go
+  s_62e473f1f2c916::t_626bae6beb5da6 51,258-261,801-802,835,838,2223-2240,5214-5218
+internal/ui/styles/quickstyle.go
+  s_62e473f1f2c916::t_fdfa38e440b67d 839-843
+internal/ui/styles/styles.go
+  s_62e473f1f2c916::t_f92593c10b8da5 236-242
+internal/workspace/app_workspace.go
+  s_62e473f1f2c916::t_3f00a4084f1ffe 27,280-286
+internal/workspace/client_workspace.go
+  s_62e473f1f2c916::t_15a81a034511f4 34,356-359
+internal/workspace/workspace.go
+  s_62e473f1f2c916::t_c109f94d909c2f 28,179-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "61f6491bc1aba4df6163498f9ef7b5db23649b83",
+  "prompts": {},
+  "sessions": {
+    "s_62e473f1f2c916": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01c18-5a01-7df1-87b2-0f1770c2a5f8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_8a9f6942d6fe52": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01d16-6c40-70d3-a1bc-57bb22f2bc0e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_dc585eeb83247e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01d6e-2885-7612-bd01-5d9f2e83932e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
