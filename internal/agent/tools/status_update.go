@@ -26,8 +26,9 @@ type StatusUpdateParams struct {
 	Doing string `json:"doing" description:"What you are working on right now (present tense, concise)"`
 	// Next summarizes what the agent will work on after the current task.
 	Next string `json:"next" description:"What you will do next (short intent)"`
-	// Blockers carries anything blocking progress; empty when none.
-	Blockers string `json:"blockers" description:"Anything blocking progress, empty string when nothing blocks you"`
+	// Blockers carries anything blocking progress. Optional: omit this
+	// field entirely when nothing blocks you.
+	Blockers string `json:"blockers,omitempty" description:"Anything blocking progress. Omit this field entirely when nothing blocks you"`
 }
 
 // StatusNotifier is invoked after a status update is recorded so the

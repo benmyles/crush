@@ -84,3 +84,15 @@ func TestStatusUpdateTool(t *testing.T) {
 	})
 	require.Error(t, err)
 }
+
+// TestStatusUpdateToolSchema asserts blockers stays an optional field so
+// models that omit it are never coerced into emitting placeholder text.
+func TestStatusUpdateToolSchema(t *testing.T) {
+	t.Parallel()
+	tool := NewStatusUpdateTool(newStatusTestStore(t), nil)
+	info := tool.Info()
+	require.Contains(t, info.Required, "done")
+	require.Contains(t, info.Required, "doing")
+	require.Contains(t, info.Required, "next")
+	require.NotContains(t, info.Required, "blockers")
+}

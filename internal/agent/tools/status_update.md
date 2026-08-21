@@ -15,5 +15,5 @@ Use it:
 Keep each field concise (a sentence or two). Use resume-style phrases
 for `done` (e.g. "Added the caching layer"), present tense for `doing`
 (e.g. "Writing migration tests"), and short intents for `next`. Put
-anything blocking progress in `blockers`; leave it empty when nothing
-blocks you.
+anything blocking progress in `blockers`; omit the field entirely when
+nothing blocks you.
