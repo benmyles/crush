@@ -1,0 +1,19 @@
+AGENTS.md
+  s_44b68ce05dd21d::t_5f4489e3f73b2d 18-19,21-31,36,39-42,44,46-47,49-62,64-67,73-74,77-79,84-98,104-105,107-108,113-114,120,126-138,155-158,164-167,170-172,178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "b8966ebb09d2d59147f0795dfa12a792722467c1",
+  "prompts": {},
+  "sessions": {
+    "s_44b68ce05dd21d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db5dad5c-9f8e-4d3e-9a82-f2a5e3432e53",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
