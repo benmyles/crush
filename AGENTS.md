@@ -15,63 +15,127 @@ The module path is `github.com/charmbracelet/crush`.
 
 ```
 main.go                            CLI entry point (cobra via internal/cmd)
+.agents/skills/                    Repo-level agent skills (authoring builtin
+                                   skills and shell builtins)
 internal/
-  app/app.go                       Top-level wiring: DB, config, agents, LSP, MCP, events
-  cmd/                             CLI commands (root, run, login, models, stats, sessions)
+  app/app.go                       Top-level wiring: DB, config, agents, LSP,
+                                   MCP, events
+  backend/                         Transport-agnostic workspace/session/agent
+                                   operations; consumed by the HTTP server
+  server/                          HTTP API server speaking the Crush RPC protocol
+  client/                          RPC client for talking to a Crush server
+  proto/                           RPC types shared by client and server
+  workspace/                       Workspace interface for frontends; local and
+                                   remote implementations
+  cmd/                             CLI commands (root, run, login, logout, models,
+                                   stats, logs, projects, server, schema)
   config/
     config.go                      Config struct, context file paths, agent definitions
     load.go                        crushrc and crush.json loading and validation
     provider.go                    Provider configuration and model resolution
-  shellconfig/                      Bash-powered config format (crushrc builtins)
+  shellconfig/                     Bash-powered config format (crushrc builtins)
   agent/
     agent.go                       SessionAgent: runs LLM conversations per session
-    coordinator.go                 Coordinator: manages named agents ("coder", "task")
-    hooked_tool.go                 Decorator that runs PreToolUse hooks before tool execution
+    coordinator.go                 Coordinator: manages named agents ("coder",
+                                   "task"), tool calls, permissions, and hooks
+    hooked_tool.go                 Decorator that runs PreToolUse hooks before
+                                   tool execution
     prompts.go                     Loads Go-template system prompts
+    prompt/                        Prompt assembly helpers
     templates/                     System prompt templates (coder.md.tpl, task.md.tpl, etc.)
-    tools/                         All built-in tools (bash, edit, view, grep, glob, etc.)
+    tools/                         All built-in tools (bash, edit, view, grep,
+                                   glob, etc.)
       mcp/                         MCP client integration
-  hooks/                           Hook engine: runs user shell commands on hook events
-    hooks.go                       Decision types, aggregation logic, event constants
+    fireworksdsv4/                 DSV4 constrained decoding for Fireworks models
+    codex/, hyper/                 Provider-specific integrations
+    notify/                        Model notifications
+    compaction_support.go          Bridges the compaction engine to the agent
+  compaction/                      Automatic context compaction engine
+  goal/                            Session goals and the goal supervision loop
+  status/                          Agent status updates (standup-style reminders)
+  commands/                        User-defined slash command loading
+  terminal/                         tmux-backed interactive terminal sessions
+  question/                        Blocking user questions via pubsub (the
+                                   question tool)
+  hooks/                           Hook engine: runs user shell commands on hook
+                                   events
+    hooks.go                       Decision types, aggregation logic
     runner.go                      Parallel hook execution, timeout, dedup
-    input.go                       Stdin payload builder, env vars, stdout parsing (Crush + Claude Code compat)
+    input.go                       Stdin payload builder, env vars, stdout
+                                   parsing (Crush + Claude Code compat)
+  hookevent/                       Hook event name constants shared with hooks
+                                   and config
   session/session.go               Session CRUD backed by SQLite
   message/                         Message model and content types
   db/                              SQLite via sqlc, with migrations
     sql/                           Raw SQL queries (consumed by sqlc)
     migrations/                    Schema migrations
-  lsp/                             LSP client manager, auto-discovery, on-demand startup
+  lsp/                             LSP client manager, auto-discovery, on-demand
+                                   startup
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
-  skills/                          Skill file discovery and loading
-  shell/                           Bash command execution with background job support
+  skills/                           Skill file discovery and loading
+  shell/                            Bash command execution with background job
+                                   support
   event/                           Telemetry (PostHog)
   pubsub/                          Internal pub/sub for cross-component messaging
   filetracker/                     Tracks files touched per session
   history/                         Prompt history
+  swagger/                         Generated OpenAPI spec for the HTTP API
+  discover/                        Model discovery (catwalk/litellm)
+  projects/                        Project list management
+  update/                          Update checker
+  oauth/                           OAuth token handling
+  herdr/                           herdr terminal multiplexer integration
+  clipboard/                       Cross-platform clipboard access
+  lock/                            Cross-process advisory file locking
+  log/                             slog setup
+  csync/                           Concurrent data structures
+  diff/                            Unified diff generation
+  diffdetect/                      Detects unified-diff markers in text
+  dns/                             Termux/Android DNS resolver configuration
+  ansiext/, env/, filepathext/,     Small utility packages
+  fsext/, format/, home/, stringext/
 ```
 
 ### Key Dependency Roles
 
 - **`charm.land/fantasy`**: LLM provider abstraction layer. Handles protocol
-  differences between Anthropic, OpenAI, Gemini, etc. Used in `internal/app`
-  and `internal/agent`.
+  differences between Anthropic, OpenAI, Gemini, etc. Used in `internal/app`,
+  `internal/agent`, and `internal/backend`.
 - **`charm.land/bubbletea/v2`**: TUI framework powering the interactive UI.
+- **`charm.land/bubbles/v2`**: Reusable TUI components.
+- **`charm.land/fang/v2`**: CLI argument parsing in `internal/cmd`.
 - **`charm.land/lipgloss/v2`**: Terminal styling.
 - **`charm.land/glamour/v2`**: Markdown rendering in the terminal.
 - **`charm.land/catwalk`**: Snapshot/golden-file testing for TUI components.
 - **`sqlc`**: Generates Go code from SQL queries in `internal/db/sql/`.
+- **`charm.land/x/vcr`**: Records and replays provider API cassettes in
+  tests.
 
 ### Key Patterns
 
 - **Config is a Service**: accessed via `config.Service`, not global state.
 - **Tools are self-documenting**: each tool has a `.go` implementation and a
-  `.md` description file in `internal/agent/tools/`.
+  `.md` or `.md.tpl` description file in `internal/agent/tools/`.
 - **System prompts are Go templates**: `internal/agent/templates/*.md.tpl`
   with runtime data injected.
 - **Context files**: Crush reads AGENTS.md, CRUSH.md, CLAUDE.md, GEMINI.md
   (and `.local` variants) from the working directory for project-specific
   instructions.
+- **HTTP API**: `internal/backend` holds transport-agnostic operations;
+  `internal/server` serves the HTTP API while `internal/client` and
+  `internal/workspace` provide remote frontends. RPC types live in
+  `internal/proto`; the OpenAPI spec is generated into
+  `internal/swagger`.
+- **Context compaction**: `internal/compaction` compacts long conversations
+  into summaries stored in the session store, triggered automatically or
+  via the `compact_context` tool.
+- **Goals**: `internal/goal` tracks a session objective; the supervision
+  loop prods the model between turns until the goal is marked complete or
+  blocked via the goal tools.
+- **Status updates**: `internal/status` reminds the agent to emit
+  standup-style updates through the `status_update` tool.
 - **Bash config format**: Crush's primary config format is `crushrc` — a
   Bash script using builtins (`provider`, `model`, `mcp`, `lsp`,
   `permissions`, `hook`, `options`) to define config. `crush.json` is still
@@ -88,28 +152,30 @@ internal/
 - **Hooks**: User-defined shell commands in `crushrc` (or `crush.json`)
   that fire before tool execution. The engine (`internal/hooks/`) is
   independent of fantasy and agent — it takes inputs, runs commands,
-  returns decisions. The `hookedTool` decorator in
-  `internal/agent/hooked_tool.go` wraps tools at the coordinator level.
-  Hooks run before permission checks. See `HOOKS.md` for the user-facing
-  protocol.
+  returns decisions. Event name constants live in `internal/hookevent/`.
+  The `hookedTool` decorator in `internal/agent/hooked_tool.go` wraps
+  tools at the coordinator level. Hooks run before permission checks. See
+  `docs/hooks/README.md` for the user-facing protocol.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
 ## Build/Test/Lint Commands
 
-- **Build**: `go build .` or `go run .`
-- **Test**: `task test` or `go test ./...` (run single test:
-  `go test ./internal/llm/prompt -run TestGetContextFromPaths`)
+- **Build**: `go build .`, `go run .`, or `task build`
+- **Test**: `task test` (runs `go test -race -failfast ./...`) or
+  `go test ./...` (run a single test:
+  `go test ./internal/agent/tools -run TestDeleteContentRejectsMultipleMatchesWithoutReplaceAll`)
 - **Update Golden Files**: `go test ./... -update` (regenerates `.golden`
   files when test output changes)
-  - Update specific package:
-    `go test ./internal/tui/components/core -update` (in this case,
-    we're updating "core")
+  - Update a specific package: `go test ./internal/ui/diffview -update`
+- **Record VCR Cassettes**: `task test:record` (re-records provider API
+  cassettes in `internal/agent/testdata/`)
 - **Lint**: `task lint:fix`
 - **Format**: `task fmt` (`gofumpt -w .`)
 - **Modernize**: `task modernize` (runs `modernize` which makes code
   simplifications)
 - **Dev**: `task dev` (runs with profiling enabled)
+- **Generate**: `task sqlc` (SQL query code) and `task swag` (OpenAPI spec)
 
 ## Code Style Guidelines
 
