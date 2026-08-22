@@ -522,9 +522,9 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 
-// pendingTool renders a pending tool call with the live progress meter.
-// Instead of an animated spinner the row shows the tool's received input
-// filling a gradient meter, e.g. "Write 2k [======....] 2,014 chars".
+// pendingTool renders a pending tool call. Once input has streamed the row
+// shows the received-data meter, e.g. "Write 2k [======....] 2,014 chars";
+// until then it shows the animated loader.
 func pendingTool(sty *styles.Styles, name string, opts *ToolRenderOpts, nested bool) string {
 	icon := sty.Tool.IconPending.Render()
 	nameStyle := sty.Tool.NameNormal
@@ -533,11 +533,20 @@ func pendingTool(sty *styles.Styles, name string, opts *ToolRenderOpts, nested b
 	}
 	toolName := nameStyle.Render(name)
 
-	return fmt.Sprintf("%s %s %s",
-		icon,
-		toolName,
-		loaderDataView(sty, utf8.RuneCountInString(opts.ToolCall.Input)),
-	)
+	charCount := utf8.RuneCountInString(opts.ToolCall.Input)
+	if charCount > 0 {
+		return fmt.Sprintf("%s %s %s",
+			icon,
+			toolName,
+			loaderDataView(sty, charCount),
+		)
+	}
+
+	var animView string
+	if opts.Anim != nil {
+		animView = opts.Anim.Render()
+	}
+	return fmt.Sprintf("%s %s %s", icon, toolName, animView)
 }
 
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.

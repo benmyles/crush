@@ -639,24 +639,29 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 }
 
 // renderSpinning renders the working indicator for an assistant turn that
-// has no visible content yet. Instead of an animated spinner it shows a
-// static marker or the received-data meter: thinking fills as the
-// reasoning text streams in.
+// has no visible content yet. The animated loader runs until data streams
+// in; thinking then switches to the received-data meter.
 func (a *AssistantMessageItem) renderSpinning() string {
 	label := a.sty.Messages.ThinkingFooterTitle
 	switch {
 	case a.liveCompaction:
-		return label.Render(styles.SpinnerIcon + " Compacting")
+		a.anim.SetLabel("Compacting")
+		return a.anim.Render()
 	case a.message.IsThinking():
 		charCount := utf8.RuneCountInString(a.message.ReasoningContent().Thinking)
+		if charCount == 0 {
+			a.anim.SetLabel("Thinking")
+			return a.anim.Render()
+		}
 		return fmt.Sprintf("%s %s",
 			label.Render("Thinking"),
 			loaderDataView(a.sty, charCount),
 		)
 	case a.message.IsSummaryMessage:
-		return label.Render(styles.SpinnerIcon + " Summarizing")
+		a.anim.SetLabel("Summarizing")
+		return a.anim.Render()
 	default:
-		return styles.SpinnerIcon
+		return a.anim.Render()
 	}
 }
 

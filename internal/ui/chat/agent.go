@@ -178,8 +178,8 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	parts = append(parts, childTools.Enumerator(roundedEnumerator(2, taskTagWidth-5)).String())
 
 	// Show the live data meter while the delegate agent is still running:
-	// it fills from the nested tool calls' streamed input, so the working
-	// row shows received data instead of an animated spinner.
+	// it fills from the nested tool calls' streamed input. Until data arrives
+	// the row falls back to the animated loader.
 	if !opts.HasResult() && !opts.IsCanceled() {
 		charCount := 0
 		for _, nestedTool := range r.agent.nestedTools {
@@ -188,7 +188,11 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		if charCount == 0 {
 			charCount = utf8.RuneCountInString(opts.ToolCall.Input)
 		}
-		parts = append(parts, "", loaderDataView(sty, charCount))
+		if charCount > 0 {
+			parts = append(parts, "", loaderDataView(sty, charCount))
+		} else if opts.Anim != nil {
+			parts = append(parts, "", opts.Anim.Render())
+		}
 	}
 
 	result := lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -356,8 +360,8 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 	parts = append(parts, childTools.Enumerator(roundedEnumerator(2, promptTagWidth-5)).String())
 
 	// Show the live data meter while the fetch is still running: it fills
-	// from the nested tool calls' streamed input, so the working row shows
-	// received data instead of an animated spinner.
+	// from the nested tool calls' streamed input. Until data arrives the
+	// row falls back to the animated loader.
 	if !opts.HasResult() && !opts.IsCanceled() {
 		charCount := 0
 		for _, nestedTool := range r.fetch.nestedTools {
@@ -366,7 +370,11 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 		if charCount == 0 {
 			charCount = utf8.RuneCountInString(opts.ToolCall.Input)
 		}
-		parts = append(parts, "", loaderDataView(sty, charCount))
+		if charCount > 0 {
+			parts = append(parts, "", loaderDataView(sty, charCount))
+		} else if opts.Anim != nil {
+			parts = append(parts, "", opts.Anim.Render())
+		}
 	}
 
 	result := lipgloss.JoinVertical(lipgloss.Left, parts...)

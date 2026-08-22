@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -45,7 +46,6 @@ func TestPendingWriteToolMeterResetsEachThousand(t *testing.T) {
 		charCount int
 		want      string
 	}{
-		{name: "empty", charCount: 0, want: "Write 0k [..........] 0 chars"},
 		{name: "initial characters", charCount: 1, want: "Write 0k [=.........] 1 chars"},
 		{name: "almost full", charCount: 999, want: "Write 0k [=========.] 999 chars"},
 		{name: "reset", charCount: 1000, want: "Write 1k [..........] 1,000 chars"},
@@ -67,6 +67,26 @@ func TestPendingWriteToolMeterResetsEachThousand(t *testing.T) {
 			require.Contains(t, rendered, test.want)
 		})
 	}
+}
+
+// The meter only takes over once input actually streams; before that the
+// row shows the animated loader.
+func TestPendingWriteToolShowsLoaderBeforeInputStreams(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.CharmtonePantera()
+	loader := anim.New(anim.Settings{ID: "loader-1", Size: 5, Label: "Test", NoScramble: true})
+	opts := &ToolRenderOpts{
+		ToolCall: message.ToolCall{
+			ID:   "write-empty",
+			Name: tools.WriteToolName,
+		},
+		Anim:   loader,
+		Status: ToolStatusRunning,
+	}
+	rendered := ansi.Strip(pendingTool(&sty, "Write", opts, false))
+	require.Contains(t, rendered, "Test")
+	require.NotContains(t, rendered, "chars")
 }
 
 func TestPendingWriteToolCountsUnicodeCharacters(t *testing.T) {
