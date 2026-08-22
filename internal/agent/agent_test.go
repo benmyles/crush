@@ -14,9 +14,11 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"charm.land/x/vcr"
+	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1068,4 +1070,37 @@ func TestProviderRetryLogFields(t *testing.T) {
 			"status_code", 503,
 		}, fields)
 	})
+}
+
+func TestPublishRetry(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	a := NewSessionAgent(SessionAgentOptions{
+		Sessions: env.sessions,
+		Messages: env.messages,
+	}).(*sessionAgent)
+
+	// Without a notify publisher the helper must be a safe no-op.
+	a.publishRetry(SessionAgentCall{SessionID: "sess"}, 1, nil, time.Second)
+
+	broker := pubsub.NewBroker[notify.Notification]()
+	a.notify = broker
+	sub := broker.Subscribe(t.Context())
+
+	a.publishRetry(SessionAgentCall{SessionID: "child-sess"}, 3, &fantasy.ProviderError{
+		StatusCode: 429,
+	}, 7*time.Second)
+
+	select {
+	case ev := <-sub:
+		require.Equal(t, notify.TypeAgentRetry, ev.Payload.Type)
+		require.Equal(t, "child-sess", ev.Payload.SessionID)
+		require.NotNil(t, ev.Payload.Retry)
+		require.Equal(t, 3, ev.Payload.Retry.Attempt)
+		require.Equal(t, 429, ev.Payload.Retry.StatusCode)
+		require.Equal(t, 7*time.Second, ev.Payload.Retry.Delay)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a retry notification")
+	}
 }

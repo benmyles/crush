@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -72,6 +73,10 @@ type agentEntry struct {
 	// doing is a short human status explanation ("Running bash" or
 	// "Awaiting model"); empty falls back to the current tool.
 	doing string
+	// retryUntil is the deadline of an in-flight provider retry backoff.
+	// Zero means the entry is not in backoff; while set, the row shows a
+	// live "retrying in Ns" countdown instead of the doing text.
+	retryUntil time.Time
 }
 
 // AgentsPanel is the bottom dock showing live sub-agent progress. It is
@@ -141,6 +146,7 @@ func (p *AgentsPanel) SetActivity(toolCallID, toolName string, inputRunes int) {
 		e.status = agentStatusWorking
 		e.currentTool = toolName
 		e.inputRunes = inputRunes
+		e.retryUntil = time.Time{}
 		return
 	}
 }
@@ -156,6 +162,7 @@ func (p *AgentsPanel) SetUsage(toolCallID string, promptTokens, completionTokens
 			return
 		}
 		e.tokens = promptTokens + completionTokens
+		e.retryUntil = time.Time{}
 		return
 	}
 }
@@ -174,6 +181,7 @@ func (p *AgentsPanel) AddOutput(toolCallID string, runes int) {
 			return
 		}
 		e.outputRunes += runes
+		e.retryUntil = time.Time{}
 		return
 	}
 }
@@ -189,6 +197,22 @@ func (p *AgentsPanel) SetDoing(toolCallID, text string) {
 			return
 		}
 		e.doing = text
+		return
+	}
+}
+
+// SetRetry puts an entry into a transient retry backoff: the row shows
+// a live "retrying in Ns" countdown until the deadline elapses or the
+// entry observes new activity.
+func (p *AgentsPanel) SetRetry(toolCallID string, delay time.Duration) {
+	for _, e := range p.entries {
+		if e.toolCallID != toolCallID {
+			continue
+		}
+		if e.status == agentStatusDone || e.status == agentStatusCanceled {
+			return
+		}
+		e.retryUntil = time.Now().Add(delay)
 		return
 	}
 }
@@ -498,6 +522,14 @@ func (p *AgentsPanel) renderRow(e *agentEntry, selected bool, width int) string 
 	case agentStatusCanceled:
 		activity = t.Canceled.Render("canceled")
 	default:
+		if !e.retryUntil.IsZero() {
+			remaining := time.Until(e.retryUntil)
+			if remaining > 0 {
+				activity = t.Retrying.Render(fmt.Sprintf("retrying in %ds", int(math.Ceil(remaining.Seconds()))))
+				break
+			}
+			e.retryUntil = time.Time{}
+		}
 		if e.doing != "" {
 			activity = t.ActiveTool.Render(e.doing)
 		} else {

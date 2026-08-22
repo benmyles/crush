@@ -620,6 +620,7 @@ type Styles struct {
 		KindTag       lipgloss.Style // "agent"/"fetch" tag
 		ActiveTool    lipgloss.Style // Live nested tool name
 		Waiting       lipgloss.Style // Prompt shown while an agent boots
+		Retrying      lipgloss.Style // Live backoff countdown during retries
 		Done          lipgloss.Style // Terminal success marker
 		Canceled      lipgloss.Style // Terminal cancel marker
 		Meter         lipgloss.Style // Live received-data meter

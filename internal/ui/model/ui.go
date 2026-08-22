@@ -5489,6 +5489,36 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 			m.agents.MarkDone(toolCallID)
 		}
 		return m.agentsEnsureTicking()
+	case notify.TypeAgentRetry:
+		// A provider request failed transiently and the agent is backing
+		// off. Child sessions show a live countdown in the dock row;
+		// the main session gets a transient status banner so a long
+		// backoff never reads as a hang.
+		if n.Retry == nil {
+			return nil
+		}
+		if m.hasSession() && n.SessionID == m.session.ID {
+			text := fmt.Sprintf("Rate limited, retrying in %s", n.Retry.Delay.Round(time.Second))
+			if n.Retry.StatusCode != http.StatusTooManyRequests {
+				text = fmt.Sprintf("Provider request failed, retrying in %s", n.Retry.Delay.Round(time.Second))
+			}
+			// Keep the banner up until the retry roughly fires so the
+			// backoff never reads as a hang, bounded to a minute.
+			ttl := n.Retry.Delay
+			if ttl < 5*time.Second {
+				ttl = 5 * time.Second
+			} else if ttl > time.Minute {
+				ttl = time.Minute
+			}
+			info := util.InfoMsg{Type: util.InfoTypeWarn, Msg: text, TTL: ttl}
+			m.status.SetInfoMsg(info)
+			return clearInfoMsgCmd(info.TTL)
+		}
+		_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(n.SessionID)
+		if ok {
+			m.agents.SetRetry(toolCallID, n.Retry.Delay)
+		}
+		return m.agentsEnsureTicking()
 	default:
 		return nil
 	}

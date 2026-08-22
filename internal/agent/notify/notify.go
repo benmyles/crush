@@ -4,6 +4,8 @@
 package notify
 
 import (
+	"time"
+
 	"github.com/charmbracelet/crush/internal/goal"
 	"github.com/charmbracelet/crush/internal/status"
 )
@@ -67,6 +69,10 @@ const (
 	// TypeSubAgentFinished indicates a sub-agent run returned. The UI
 	// uses it to retire the live progress entry for the child session.
 	TypeSubAgentFinished Type = "subagent_finished"
+	// TypeAgentRetry indicates a provider request failed transiently
+	// (rate limit, network error) and the agent is backing off before it
+	// retries. Payload: Notification.Retry.
+	TypeAgentRetry Type = "agent_retry"
 )
 
 // CompactionStreamKind identifies the kind of a live compaction stream
@@ -93,6 +99,20 @@ type CompactionStreamEvent struct {
 	// Text carries the delta for the delta kinds, and the complete body
 	// when a non-streaming fallback emits output.
 	Text string
+}
+
+// Retry carries the details of a transient failure the agent is about
+// to retry. It is the payload of TypeAgentRetry.
+type Retry struct {
+	// Attempt is the 1-based count of retries in the current run; it
+	// increments once per transient failure observed.
+	Attempt int
+	// StatusCode is the HTTP status of the failed provider response
+	// (e.g. 429 for rate limiting). Zero means the failure was
+	// transport-level and carried no status.
+	StatusCode int
+	// Delay is the backoff before the next attempt.
+	Delay time.Duration
 }
 
 // Notification represents a domain event published by the agent.
@@ -143,6 +163,9 @@ type Notification struct {
 	// CompactionStream carries the live stream event for
 	// TypeCompactionStream. Nil for every other type.
 	CompactionStream *CompactionStreamEvent
+	// Retry carries the transient failure the agent is backing off and
+	// retrying for TypeAgentRetry. Nil for every other type.
+	Retry *Retry
 }
 
 // RunComplete is the authoritative end-of-run signal for a session.

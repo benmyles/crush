@@ -1081,6 +1081,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Agents.KindTag = lipgloss.NewStyle().Foreground(o.fgBase).Background(o.bgLessVisible).Padding(0, 1)
 	s.Agents.ActiveTool = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Agents.Waiting = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Agents.Retrying = lipgloss.NewStyle().Foreground(o.warning)
 	s.Agents.Done = lipgloss.NewStyle().Foreground(o.success)
 	s.Agents.Canceled = lipgloss.NewStyle().Foreground(o.destructive)
 	s.Agents.Meter = lipgloss.NewStyle().Foreground(o.fgSubtle)

@@ -870,6 +870,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// the lock so a Cancel that arrives between here and assistant creation
 	// is not lost.
 	runCtx := context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
+	// Bind tool retry notifications to this session so rate-limit backoffs
+	// (e.g. Firecrawl 429s) surface in the UI. A notifier already on the
+	// context — runSubAgent binds one to the child session — wins so
+	// sub-agent retries map to their dock row.
+	if tools.GetRetryNotifierFromContext(runCtx) == nil {
+		runCtx = tools.WithRetryNotifier(runCtx, func(attempt, statusCode int, delay time.Duration) {
+			a.publishToolRetry(call.SessionID, attempt, statusCode, delay)
+		})
+	}
 	genCtx, cancel = context.WithCancel(runCtx)
 	ac := &activeCancel{cancel: cancel}
 	a.activeRequests.Set(call.SessionID, ac)
@@ -1024,6 +1033,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	var shouldSummarize bool
 	var stoppedForPause bool
 	var stoppedForInterim bool
+	// retryAttempt counts transient provider failures across this run so
+	// observers can tell successive backoffs apart.
+	retryAttempt := 0
 	sanitizedToolCalls := make(map[string]bool)
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
@@ -1181,7 +1193,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			return a.messages.Update(ctx, *currentAssistant)
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
+			retryAttempt++
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
+			a.publishRetry(call, retryAttempt, err, delay)
 			// Reset streamed content so the retried response doesn't
 			// concatenate with partial content from the failed attempt.
 			// On the final attempt (no more retries), any partial content
@@ -3596,6 +3610,36 @@ func buildSummaryPrompt(todos []session.Todo) string {
 		sb.WriteString("Instruct the resuming assistant to use the `todos` tool to continue tracking progress on these tasks.")
 	}
 	return sb.String()
+}
+
+// publishRetry notifies observers that a provider request failed
+// transiently and the agent is backing off before retrying, so live
+// status can show the wait instead of appearing frozen.
+func (a *sessionAgent) publishRetry(call SessionAgentCall, attempt int, err *fantasy.ProviderError, delay time.Duration) {
+	statusCode := 0
+	if err != nil {
+		statusCode = err.StatusCode
+	}
+	a.publishToolRetry(call.SessionID, attempt, statusCode, delay)
+}
+
+// publishToolRetry notifies observers that a tool's outbound request was
+// rate limited (HTTP 429) and the tool is backing off before retrying.
+// Child sessions show a live countdown in the sub-agent dock row; the
+// main session gets a transient status banner.
+func (a *sessionAgent) publishToolRetry(sessionID string, attempt, statusCode int, delay time.Duration) {
+	if a.notify == nil {
+		return
+	}
+	a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+		SessionID: sessionID,
+		Type:      notify.TypeAgentRetry,
+		Retry: &notify.Retry{
+			Attempt:    attempt,
+			StatusCode: statusCode,
+			Delay:      delay,
+		},
+	})
 }
 
 func providerRetryLogFields(err *fantasy.ProviderError, delay time.Duration) []any {

@@ -180,3 +180,27 @@ func TestAgentsPanelUsageAndDoing(t *testing.T) {
 	assert.Equal(t, "Awaiting model", p.entries[0].doing)
 	assert.Equal(t, int64(1000), p.entries[0].tokens)
 }
+
+func TestAgentsPanelRetryCountdown(t *testing.T) {
+	t.Parallel()
+	p := NewAgentsPanel(testStyles())
+	p.Register("tc-1", "sess-1", "agent", "x")
+	p.SetActivity("tc-1", "bash", 1200)
+
+	// A retry notice arms the backoff countdown and hides the doing text.
+	p.SetRetry("tc-1", 30*time.Second)
+	view := p.Render(80)
+	assert.Contains(t, view, "retrying in")
+	assert.NotContains(t, view, "bash")
+
+	// Fresh activity (streamed output, tool calls, usage) clears it.
+	p.AddOutput("tc-1", 10)
+	view = p.Render(80)
+	assert.NotContains(t, view, "retrying in")
+
+	// Terminal rows ignore retry notices.
+	p.SetRetry("tc-1", time.Second)
+	p.MarkDone("tc-1")
+	view = p.Render(80)
+	assert.NotContains(t, view, "retrying in")
+}

@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"os/exec"
 	"testing"
+	"time"
 
 	"charm.land/fantasy"
 )
@@ -15,6 +16,7 @@ type (
 	messageIDContextKey string
 	supportsImagesKey   string
 	modelNameKey        string
+	retryNotifierKey    string
 )
 
 const (
@@ -26,6 +28,9 @@ const (
 	SupportsImagesContextKey supportsImagesKey = "supports_images"
 	// ModelNameContextKey is the key for the model name in the context.
 	ModelNameContextKey modelNameKey = "model_name"
+	// RetryNotifierContextKey is the key for the retry notifier in the
+	// context.
+	RetryNotifierContextKey retryNotifierKey = "retry_notifier"
 )
 
 // getContextValue is a generic helper that retrieves a typed value from context.
@@ -59,6 +64,23 @@ func GetSupportsImagesFromContext(ctx context.Context) bool {
 // GetModelNameFromContext retrieves the model name from the context.
 func GetModelNameFromContext(ctx context.Context) string {
 	return getContextValue(ctx, ModelNameContextKey, "")
+}
+
+// RetryNotifier is invoked when a tool's outbound request fails with an
+// HTTP 429 (rate limit) and the tool is backing off before retrying, so
+// the wait can be surfaced live instead of reading as a hang. It may be
+// nil.
+type RetryNotifier func(attempt, statusCode int, delay time.Duration)
+
+// WithRetryNotifier returns a context carrying the given retry notifier.
+func WithRetryNotifier(ctx context.Context, notifier RetryNotifier) context.Context {
+	return context.WithValue(ctx, RetryNotifierContextKey, notifier)
+}
+
+// GetRetryNotifierFromContext retrieves the retry notifier from the
+// context, or nil when none was set.
+func GetRetryNotifierFromContext(ctx context.Context) RetryNotifier {
+	return getContextValue(ctx, RetryNotifierContextKey, RetryNotifier(nil))
 }
 
 // NewPermissionDeniedResponse returns a tool response indicating the user

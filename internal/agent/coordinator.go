@@ -1987,6 +1987,25 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		params.SessionSetup(session.ID)
 	}
 
+	// Bind tool retry notifications to the child session so rate-limit
+	// backoffs (e.g. Firecrawl 429s) show up as a countdown in the
+	// sub-agent dock row. This lives on the context rather than the child
+	// agent because agentic_fetch's SessionAgent has no Notify publisher
+	// of its own.
+	if c.notify != nil {
+		ctx = tools.WithRetryNotifier(ctx, func(attempt, statusCode int, delay time.Duration) {
+			c.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+				SessionID: session.ID,
+				Type:      notify.TypeAgentRetry,
+				Retry: &notify.Retry{
+					Attempt:    attempt,
+					StatusCode: statusCode,
+					Delay:      delay,
+				},
+			})
+		})
+	}
+
 	// Register the live run so targeted cancel, busy-state probes, and
 	// interim messages can reach the child session, which lives on its
 	// own SessionAgent instance that currentAgent cannot see.
