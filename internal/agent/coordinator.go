@@ -22,6 +22,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	codexcatalog "github.com/charmbracelet/crush/internal/agent/codex"
+	"github.com/charmbracelet/crush/internal/agent/fireworksdsv4"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/prompt"
@@ -732,6 +733,15 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig, sessionI
 			options[openaicompat.Name] = parsed
 		}
 
+	case fireworksdsv4.Name:
+		if _, hasReasoningEffort := mergedOptions["reasoning_effort"]; !hasReasoningEffort && shouldSetEffort {
+			mergedOptions["reasoning_effort"] = reasoningEffort
+		}
+		parsed, err := fireworksdsv4.ParseOptions(mergedOptions)
+		if err == nil {
+			options[fireworksdsv4.Name] = parsed
+		}
+
 	default:
 		// Known custom providers (litellm, ollama, omlx) are
 		// openai-compat under the hood.
@@ -1280,6 +1290,35 @@ func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers 
 	return openaicompat.New(opts...)
 }
 
+func (c *coordinator) buildFireworksDSV4Provider(baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerCfg config.ProviderConfig, model config.SelectedModel) (fantasy.Provider, error) {
+	defaultEffort := model.ReasoningEffort
+	maxOutputTokens := model.MaxTokens
+	for _, configured := range providerCfg.Models {
+		if configured.ID != model.Model {
+			continue
+		}
+		if defaultEffort == "" {
+			defaultEffort = configured.DefaultReasoningEffort
+		}
+		if maxOutputTokens == 0 {
+			maxOutputTokens = configured.DefaultMaxTokens
+		}
+		break
+	}
+	options := []fireworksdsv4.Option{
+		fireworksdsv4.WithBaseURL(baseURL),
+		fireworksdsv4.WithAPIKey(apiKey),
+		fireworksdsv4.WithHeaders(headers),
+		fireworksdsv4.WithExtraBody(extraBody),
+		fireworksdsv4.WithDefaultReasoningEffort(defaultEffort),
+		fireworksdsv4.WithMaxOutputTokens(maxOutputTokens),
+	}
+	if c.cfg.Config().Options.Debug {
+		options = append(options, fireworksdsv4.WithHTTPClient(log.NewHTTPClient()))
+	}
+	return fireworksdsv4.New(options...)
+}
+
 func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers, options map[string]string) (fantasy.Provider, error) {
 	opts := []azure.Option{
 		azure.WithBaseURL(baseURL),
@@ -1436,6 +1475,8 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 			providerCfg.ExtraBody["tool_stream"] = true
 		}
 		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, isSubAgent)
+	case fireworksdsv4.Name:
+		return c.buildFireworksDSV4Provider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg, model)
 	default:
 		// Known custom providers (litellm, ollama, omlx) are
 		// openai-compat under the hood.

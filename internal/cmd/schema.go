@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"charm.land/catwalk/pkg/catwalk"
+	"github.com/charmbracelet/crush/internal/agent/fireworksdsv4"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/discover"
@@ -50,7 +51,7 @@ func setProviderTypeEnum(schema *jsonschema.Schema) {
 	for _, t := range catwalk.KnownProviderTypes() {
 		types = append(types, string(t))
 	}
-	types = append(types, string(hyper.Name))
+	types = append(types, string(hyper.Name), fireworksdsv4.Name)
 	types = append(types, discover.RegisteredProviderTypes()...)
 
 	typeProp.Enum = make([]any, len(types))

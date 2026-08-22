@@ -735,6 +735,35 @@ model add deepseek/deepseek-chat \
   --price-cache-hit 0.07
 ```
 
+#### Fireworks DeepSeek V4 constrained decoding
+
+When `FIREWORKS_API_KEY` is set, Crush also exposes a bundled
+`fireworks-dsv4` provider alongside the ordinary `fireworks` provider. The
+alias contains the DeepSeek V4 models from the current Fireworks catalog and
+uses Fireworks' raw completions endpoint with a schema-derived GBNF grammar,
+so tool names and arguments are constrained while the model is decoding.
+
+The alias is opt-in; selecting the same model under `fireworks` keeps the
+normal OpenAI-compatible transport. For example:
+
+```bash
+model large fireworks-dsv4/accounts/fireworks/models/deepseek-v4-pro \
+  --reasoning-effort high
+model small fireworks-dsv4/accounts/fireworks/models/deepseek-v4-flash \
+  --reasoning-effort low
+```
+
+The available reasoning levels are `none`, `low`, `high`, and `max`. DSV4 is
+text-only. Tool-enabled turns use constrained DSML internally; progress and
+final messages still render as ordinary assistant Markdown. Tool-free calls
+such as titles, summaries, and context compaction use direct-text output.
+
+To configure the transport explicitly (for example when default providers are
+disabled), use provider type `fireworks-dsv4`, a Fireworks base URL, and only
+DeepSeek V4 model IDs. Provider/model `provider_options` may contain
+`reasoning_effort` and `extra_body`; protocol-owned completion fields cannot
+be overridden.
+
 #### Anthropic-Compatible APIs
 
 Custom Anthropic-compatible providers follow this format:

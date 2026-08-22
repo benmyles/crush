@@ -18,6 +18,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/catwalk/pkg/embedded"
 	"github.com/charmbracelet/crush/internal/agent/codex"
+	"github.com/charmbracelet/crush/internal/agent/fireworksdsv4"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/home"
@@ -245,10 +246,25 @@ func Providers(cfg *Config, opts ...HyperTokenRefresher) ([]catwalk.Provider, er
 			// endpoint and model catalog ship with Crush rather than in
 			// the upstream catalog.
 			providerList = append([]catwalk.Provider{codex.Embedded()}, providerList...)
+			providerList = withFireworksDSV4Alias(providerList)
 		}
 		providerErr = errors.Join(catwalkErr, hyperErr)
 	})
 	return providerList, providerErr
+}
+
+func withFireworksDSV4Alias(providers []catwalk.Provider) []catwalk.Provider {
+	for index, provider := range providers {
+		alias, ok := fireworksdsv4.CatalogAlias(provider)
+		if !ok {
+			continue
+		}
+		providers = append(providers, catwalk.Provider{})
+		copy(providers[index+2:], providers[index+1:])
+		providers[index+1] = alias
+		return providers
+	}
+	return providers
 }
 
 // UpdateProviderInList replaces a provider in the memoized provider list

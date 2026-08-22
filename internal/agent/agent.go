@@ -1192,6 +1192,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			currentAssistant.AppendToolCallInput(part.ID, delta)
 			return a.messages.Update(ctx, *currentAssistant)
 		},
+		OnToolInputEnd: func(id string) error {
+			currentAssistant.FinishToolCall(id)
+			return a.messages.Update(ctx, *currentAssistant)
+		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
 			retryAttempt++
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)

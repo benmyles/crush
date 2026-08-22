@@ -715,6 +715,7 @@
             "bedrock",
             "google-vertex",
             "hyper",
+            "fireworks-dsv4",
             "litellm",
             "llamacpp",
             "lmstudio",
@@ -802,9 +803,12 @@
         "reasoning_effort": {
           "type": "string",
           "enum": [
+            "none",
             "low",
             "medium",
-            "high"
+            "high",
+            "xhigh",
+            "max"
           ],
           "description": "Reasoning effort level for OpenAI models that support it"
         },

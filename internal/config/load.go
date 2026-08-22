@@ -21,6 +21,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	codex "github.com/charmbracelet/crush/internal/agent/codex"
+	"github.com/charmbracelet/crush/internal/agent/fireworksdsv4"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/discover"
@@ -458,6 +459,7 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 		if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) &&
 			providerConfig.Type != hyper.Name &&
 			providerConfig.Type != codex.Name &&
+			providerConfig.Type != fireworksdsv4.Name &&
 			!discover.IsKnownCustomProvider(string(providerConfig.Type)) {
 			slog.Warn("Skipping custom provider due to unsupported provider type", "provider", id)
 			c.Providers.Del(id)

@@ -168,6 +168,21 @@ provider add deepseek \
   --api-key "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}"
 ```
 
+Fireworks users also get an opt-in `fireworks-dsv4` provider when
+`FIREWORKS_API_KEY` is available. It mirrors the DeepSeek V4 entries in the
+Fireworks catalog but sends raw, grammar-constrained DSV4 completions. Select
+it without declaring another provider:
+
+```bash
+model large fireworks-dsv4/accounts/fireworks/models/deepseek-v4-pro \
+  --reasoning-effort high
+```
+
+Reasoning levels are `none`, `low`, `high`, and `max`; these models are
+text-only. The normal `fireworks` provider remains available and unchanged.
+With default providers disabled, define an equivalent provider explicitly with
+`--type fireworks-dsv4` and add its DSV4 models manually.
+
 Headers whose value resolves to the empty string (an unset `$VAR`, a
 `$(...)` that prints nothing, or a literal `""`) are dropped from the
 outgoing request. This makes env-gated headers safe:
