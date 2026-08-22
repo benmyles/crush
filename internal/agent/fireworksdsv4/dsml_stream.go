@@ -516,7 +516,7 @@ func (d *dsmlDecoder) finish(complete bool) (decoderFinish, error) {
 		d.endText(&events)
 	case stateToolCalls:
 		if complete {
-			return decoderFinish{}, fmt.Errorf("expected a DSML invocation at byte %d", d.consumed+skipWhitespace(d.pending, 0))
+			return decoderFinish{}, fmt.Errorf("the completion ended before a DSML invocation at byte %d", d.consumed+skipWhitespace(d.pending, 0))
 		}
 		d.drop(len(d.pending))
 	case stateInvoke:

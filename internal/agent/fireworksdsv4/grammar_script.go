@@ -119,7 +119,7 @@ func choice(parts []string) (string, error) {
 	for i := range unique {
 		unique[i] = "(" + unique[i] + ")"
 	}
-	return strings.Join(unique, " | "), nil
+	return "(" + strings.Join(unique, " | ") + ")", nil
 }
 
 func optional(part string) string { return "(" + part + ")?" }

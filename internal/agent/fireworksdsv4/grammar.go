@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	grammarGap         = `[\t\n\r ]*`
-	grammarRequiredGap = `[\t\n\r ]+`
+	// Keep generation gaps bounded so the model cannot spend a substantial
+	// part of its output budget on whitespace. The parser remains unbounded.
+	grammarGap         = `[\t\n\r ]{0,64}`
+	grammarRequiredGap = `[\t\n\r ]{1,64}`
 )
 
 var rawStringExcludes = []string{
@@ -219,7 +221,7 @@ func grammarKey(tools []toolSpec, thinkingEnabled bool, mode string) (string, er
 		values = append(values, map[string]any{"name": tool.Name, "parameters": tool.Schema})
 	}
 	return stableJSON(map[string]any{
-		"version": 4, "thinking_enabled": thinkingEnabled, "tool_choice": mode,
+		"version": 5, "thinking_enabled": thinkingEnabled, "tool_choice": mode,
 		"max_tool_calls": maxToolCalls, "tools": values,
 	})
 }

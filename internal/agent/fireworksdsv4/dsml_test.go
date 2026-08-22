@@ -210,9 +210,30 @@ func TestBuildGrammarHandlesNestedAndAnyOrderSchemas(t *testing.T) {
 	require.Contains(t, grammar, "root ::=")
 	require.Contains(t, grammar, `dsv4-tool-calls-block`)
 	require.Contains(t, grammar, `json-property-enabled`)
-	require.Contains(t, grammar, `dsml-gap ::= [\t\n\r ]*`)
-	require.Contains(t, grammar, `dsml-required-gap ::= [\t\n\r ]+`)
-	require.NotContains(t, grammar, `{0,64}`)
+	require.Contains(t, grammar, `dsml-gap ::= [\t\n\r ]{0,64}`)
+	require.Contains(t, grammar, `dsml-required-gap ::= [\t\n\r ]{1,64}`)
+}
+
+func TestParserAllowsWhitespaceBeyondGrammarSafetyBound(t *testing.T) {
+	t.Parallel()
+
+	gap := strings.Repeat(" ", 65)
+	completion := toolCallsOpen + gap +
+		`<｜DSML｜invoke name="echo">` + gap +
+		`<｜DSML｜parameter string="true" name="value">hello` + parameterClose + gap +
+		invokeClose + gap + toolCallsClose
+	parsed, err := parseCompletion(completion, false, testToolSet(t), nil)
+	require.NoError(t, err)
+	require.Equal(t, "hello", parsed.Calls[0].Arguments["value"])
+}
+
+func TestChoiceRemainsGroupedWhenConcatenated(t *testing.T) {
+	t.Parallel()
+
+	options, err := choice([]string{literal("double-quoted"), literal("single-quoted")})
+	require.NoError(t, err)
+	rule := concat(literal("prefix"), options, literal("suffix"))
+	require.Equal(t, `"prefix" (("double-quoted") | ("single-quoted")) "suffix"`, rule)
 }
 
 func TestAnyOrderGrammarSizeGrowsLinearly(t *testing.T) {
