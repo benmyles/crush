@@ -1,0 +1,31 @@
+internal/ui/chat/assistant.go
+  s_067f351a98849a::t_44b95240f8193e 642-643,648-649,652-655,661-662,664
+internal/ui/chat/agent.go
+  s_5cbc048caa10f2::t_7d99e276d0c082 181-182,191-195,363-364,373-377
+internal/ui/chat/file_test.go
+  s_5cbc048caa10f2::t_fe29ed0bb437d4 9,72-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "d8da4637c4394c45f409aa907d85e79afad7d12c",
+  "prompts": {},
+  "sessions": {
+    "s_067f351a98849a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0291a-cc41-7f10-bc23-7b8fd3126361",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    },
+    "s_5cbc048caa10f2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a02b70-9f2e-7932-a6d4-736faf04537a",
+        "model": "unknown"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
