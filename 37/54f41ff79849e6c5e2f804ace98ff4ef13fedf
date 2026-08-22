@@ -1,0 +1,37 @@
+internal/agent/fireworksdsv4/dsml_test.go
+  s_5cbc048caa10f2::t_2df4b8e4a4e805 78,99-131
+  s_5cbc048caa10f2::t_64396321c17052 4,6,56-77,79-98,132-140,213-221,223-229,231-239
+  s_5cbc048caa10f2::t_4488c87c088fd6 222,230
+internal/agent/fireworksdsv4/grammar.go
+  s_5cbc048caa10f2::t_3263f9d1cb9000 33-47,50-64,77-81,90,113,136,148,158,164-168,177,194
+  s_5cbc048caa10f2::t_74ec582e987987 9-12
+  s_5cbc048caa10f2::t_2df4b8e4a4e805 222
+internal/agent/fireworksdsv4/dsml.go
+  s_5cbc048caa10f2::t_1bbdb97c47c1f0 50-72,74-83,85-98,101-105,107-201,204-223
+  s_5cbc048caa10f2::t_134c82f183b6db 229-230,233,242-249,251-310,316,318,329-330,334-335
+  s_5cbc048caa10f2::t_b2ca3066e3be33 364-370,390-391,394,396,410,429
+internal/agent/fireworksdsv4/schema_grammar.go
+  s_5cbc048caa10f2::t_e48a1c77a7e38d 33
+internal/agent/fireworksdsv4/dsml_stream.go
+  s_5cbc048caa10f2::t_50552f41b93038 85,89
+  s_5cbc048caa10f2::t_38a0b542a39525 208-209,212-213,258-259,263,268,278,313-315,318-319,351
+  s_5cbc048caa10f2::t_54bec30af05e26 405-414,417,421,470-471,474,482
+internal/agent/fireworksdsv4/member_grammar.go
+  s_5cbc048caa10f2::t_ae1d66fd7ca244 45-52,54-56,60-62,64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "3754f41ff79849e6c5e2f804ace98ff4ef13fedf",
+  "prompts": {},
+  "sessions": {
+    "s_5cbc048caa10f2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a02b70-9f2e-7932-a6d4-736faf04537a",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ben Myles <ben@2q31.com>"
+    }
+  }
+}
