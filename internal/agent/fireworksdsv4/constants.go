@@ -23,7 +23,6 @@ const (
 	maxDynamicItems   = 64
 	maxJSONDepth      = 8
 	maxGrammarEntries = 128
-	maxExactMembers   = 8
 	maxErrorBodyBytes = 8_192
 )
 

@@ -47,51 +47,190 @@ type openingTag struct {
 	stringFlag bool
 }
 
-func matchOpeningTag(text string, index int, kind string) (openingTag, bool) {
-	prefix := "<" + dsmlToken + kind + ` name="`
-	if !strings.HasPrefix(text[index:], prefix) {
-		return openingTag{}, false
-	}
-	start := index + len(prefix)
-	quote := strings.IndexByte(text[start:], '"')
-	if quote <= 0 {
-		return openingTag{}, false
-	}
-	quote += start
-	name := text[start:quote]
-	if kind == "invoke" {
-		if quote+1 >= len(text) || text[quote+1] != '>' {
-			return openingTag{}, false
-		}
-		return openingTag{end: quote + 2, name: name}, true
-	}
-	rest := text[quote:]
-	attribute := `" string="`
-	if !strings.HasPrefix(rest, attribute) {
-		return openingTag{}, false
-	}
-	flagStart := quote + len(attribute)
-	var flag string
-	switch {
-	case strings.HasPrefix(text[flagStart:], `true">`):
-		flag = "true"
-	case strings.HasPrefix(text[flagStart:], `false">`):
-		flag = "false"
+type openTagStatus int
+
+const (
+	openInvalid openTagStatus = iota
+	openPartial
+	openFull
+)
+
+type openTagMatch struct {
+	status     openTagStatus
+	end        int
+	name       string
+	stringFlag bool
+}
+
+func matchTagPrefix(text, prefix string) openTagStatus {
+	switch matchDelimiter(text, prefix) {
+	case delimiterPartial:
+		return openPartial
+	case delimiterFull:
+		return openFull
 	default:
+		return openInvalid
+	}
+}
+
+func expectedTagAttributes(kind string) []string {
+	switch kind {
+	case "invoke":
+		return []string{"name"}
+	case "parameter":
+		return []string{"name", "string"}
+	default:
+		return nil
+	}
+}
+
+func matchTagAttribute(text string, cursor int, expected []string, seen map[string]string) (int, openTagStatus) {
+	attribute := ""
+	partial := false
+	for _, candidate := range expected {
+		if _, duplicate := seen[candidate]; duplicate {
+			continue
+		}
+		switch matchTagPrefix(text[cursor:], candidate) {
+		case openFull:
+			attribute = candidate
+		case openPartial:
+			partial = true
+		}
+	}
+	if attribute == "" {
+		if partial {
+			return cursor, openPartial
+		}
+		return cursor, openInvalid
+	}
+	cursor += len(attribute)
+	cursor = skipWhitespace(text, cursor)
+	if cursor == len(text) {
+		return cursor, openPartial
+	}
+	if text[cursor] != '=' {
+		return cursor, openInvalid
+	}
+	cursor++
+	cursor = skipWhitespace(text, cursor)
+	if cursor == len(text) {
+		return cursor, openPartial
+	}
+	quote := text[cursor]
+	if quote != '"' && quote != '\'' {
+		return cursor, openInvalid
+	}
+	cursor++
+	end := strings.IndexByte(text[cursor:], quote)
+	if end < 0 {
+		return cursor, openPartial
+	}
+	end += cursor
+	seen[attribute] = text[cursor:end]
+	return end + 1, openFull
+}
+
+func matchDSMLTag(text, kind string, closing bool) openTagMatch {
+	prefix := "<" + dsmlToken + kind
+	if closing {
+		prefix = "</" + dsmlToken + kind
+	}
+	status := matchTagPrefix(text, prefix)
+	if status != openFull {
+		return openTagMatch{status: status}
+	}
+	cursor := len(prefix)
+	if closing || kind == "tool_calls" {
+		cursor = skipWhitespace(text, cursor)
+		if cursor == len(text) {
+			return openTagMatch{status: openPartial}
+		}
+		if text[cursor] != '>' {
+			return openTagMatch{status: openInvalid}
+		}
+		return openTagMatch{status: openFull, end: cursor + 1}
+	}
+
+	expected := expectedTagAttributes(kind)
+	if len(expected) == 0 {
+		return openTagMatch{status: openInvalid}
+	}
+	seen := make(map[string]string, len(expected))
+	for len(seen) < len(expected) {
+		spaceStart := cursor
+		cursor = skipWhitespace(text, cursor)
+		if cursor == len(text) {
+			return openTagMatch{status: openPartial}
+		}
+		if cursor == spaceStart {
+			return openTagMatch{status: openInvalid}
+		}
+		var attributeStatus openTagStatus
+		cursor, attributeStatus = matchTagAttribute(text, cursor, expected, seen)
+		if attributeStatus != openFull {
+			return openTagMatch{status: attributeStatus}
+		}
+	}
+	cursor = skipWhitespace(text, cursor)
+	if cursor == len(text) {
+		return openTagMatch{status: openPartial}
+	}
+	if text[cursor] != '>' {
+		return openTagMatch{status: openInvalid}
+	}
+	name := seen["name"]
+	if name == "" {
+		return openTagMatch{status: openInvalid}
+	}
+	result := openTagMatch{status: openFull, end: cursor + 1, name: name}
+	if kind == "parameter" {
+		switch seen["string"] {
+		case "true":
+			result.stringFlag = true
+		case "false":
+		default:
+			return openTagMatch{status: openInvalid}
+		}
+	}
+	return result
+}
+
+func matchOpeningTag(text string, index int, kind string) (openingTag, bool) {
+	match := matchDSMLTag(text[index:], kind, false)
+	if match.status != openFull {
 		return openingTag{}, false
 	}
-	return openingTag{end: flagStart + len(flag) + 2, name: name, stringFlag: flag == "true"}, true
+	return openingTag{end: index + match.end, name: match.name, stringFlag: match.stringFlag}, true
+}
+
+func findDSMLClosingTag(text, kind string) (start, end int, status openTagStatus) {
+	for cursor := 0; cursor < len(text); {
+		offset := strings.IndexByte(text[cursor:], '<')
+		if offset < 0 {
+			break
+		}
+		start = cursor + offset
+		match := matchDSMLTag(text[start:], kind, true)
+		if match.status == openFull {
+			return start, start + match.end, openFull
+		}
+		if match.status == openPartial {
+			return start, len(text), openPartial
+		}
+		cursor = start + 1
+	}
+	return -1, -1, openInvalid
 }
 
 func decodeJSON(source string) (any, error) {
 	decoder := json.NewDecoder(strings.NewReader(source))
 	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
+	value, err := decodeJSONValue(decoder)
+	if err != nil {
 		return nil, err
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return nil, fmt.Errorf("trailing JSON content")
 		}
@@ -100,24 +239,83 @@ func decodeJSON(source string) (any, error) {
 	return value, nil
 }
 
-func parseJSONParameter(text string, start int) (int, any, error) {
-	candidate := strings.Index(text[start:], parameterClose)
-	if candidate >= 0 {
-		candidate += start
+func decodeJSONValue(decoder *json.Decoder) (any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
 	}
-	for candidate >= 0 {
+	delimiter, compound := token.(json.Delim)
+	if !compound {
+		return token, nil
+	}
+	switch delimiter {
+	case '{':
+		value := make(map[string]any)
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return nil, fmt.Errorf("JSON object member name is not a string")
+			}
+			if _, duplicate := value[key]; duplicate {
+				return nil, fmt.Errorf("JSON object repeats member %q", key)
+			}
+			item, err := decodeJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			value[key] = item
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		if closing != json.Delim('}') {
+			return nil, fmt.Errorf("JSON object is missing its closing delimiter")
+		}
+		return value, nil
+	case '[':
+		var value []any
+		for decoder.More() {
+			item, err := decodeJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			value = append(value, item)
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		if closing != json.Delim(']') {
+			return nil, fmt.Errorf("JSON array is missing its closing delimiter")
+		}
+		return value, nil
+	default:
+		return nil, fmt.Errorf("unexpected JSON delimiter %q", delimiter)
+	}
+}
+
+func parseJSONParameter(text string, start int) (int, any, error) {
+	search := start
+	for search < len(text) {
+		candidate, closeEnd, status := findDSMLClosingTag(text[search:], "parameter")
+		if status != openFull {
+			break
+		}
+		candidate += search
+		closeEnd += search
 		value, err := decodeJSON(text[start:candidate])
 		if err == nil {
 			if _, stringValue := value.(string); stringValue {
 				return 0, nil, fmt.Errorf("a DSML string value must use string=\"true\"")
 			}
-			return candidate + len(parameterClose), value, nil
+			return closeEnd, value, nil
 		}
-		next := strings.Index(text[candidate+1:], parameterClose)
-		if next < 0 {
-			break
-		}
-		candidate += next + 1
+		search = candidate + 1
 	}
 	return 0, nil, fmt.Errorf("a DSML JSON parameter has no valid value followed by its closing tag")
 }
@@ -128,12 +326,13 @@ func parseParameter(text string, start int) (end int, name string, value any, er
 		return 0, "", nil, fmt.Errorf("expected a DSML parameter at byte %d", start)
 	}
 	if opening.stringFlag {
-		closeIndex := strings.Index(text[opening.end:], parameterClose)
-		if closeIndex < 0 {
+		closeIndex, closeEnd, status := findDSMLClosingTag(text[opening.end:], "parameter")
+		if status != openFull {
 			return 0, "", nil, fmt.Errorf("the DSML parameter %s is missing its closing tag", opening.name)
 		}
 		closeIndex += opening.end
-		return closeIndex + len(parameterClose), opening.name, text[opening.end:closeIndex], nil
+		closeEnd += opening.end
+		return closeEnd, opening.name, text[opening.end:closeIndex], nil
 	}
 	end, value, err = parseJSONParameter(text, opening.end)
 	return end, opening.name, value, err
@@ -162,8 +361,13 @@ func parseInvocation(text string, start int, tools map[string]toolSpec, index in
 	}
 	arguments := make(map[string]any)
 	cursor := skipWhitespace(text, opening.end)
-	for !strings.HasPrefix(text[cursor:], invokeClose) {
-		if strings.HasPrefix(text[cursor:], toolCallsClose) {
+	for {
+		closing := matchDSMLTag(text[cursor:], "invoke", true)
+		if closing.status == openFull {
+			cursor += closing.end
+			break
+		}
+		if matchDSMLTag(text[cursor:], "tool_calls", true).status == openFull {
 			return 0, parsedCall{}, fmt.Errorf("the DSML invocation %s closed the tool block before closing itself", opening.name)
 		}
 		end, name, value, err := parseParameter(text, cursor)
@@ -176,7 +380,6 @@ func parseInvocation(text string, start int, tools map[string]toolSpec, index in
 		arguments[name] = value
 		cursor = skipWhitespace(text, end)
 	}
-	cursor += len(invokeClose)
 	if err := validateArguments(tool, arguments); err != nil {
 		return 0, parsedCall{}, err
 	}
@@ -184,12 +387,13 @@ func parseInvocation(text string, start int, tools map[string]toolSpec, index in
 }
 
 func parseToolCalls(text string, start int, tools map[string]toolSpec, idFactory callIDFactory) ([]parsedCall, error) {
-	if !strings.HasPrefix(text[start:], toolCallsOpen) {
+	opening := matchDSMLTag(text[start:], "tool_calls", false)
+	if opening.status != openFull {
 		return nil, fmt.Errorf("the DSML tool completion is missing its opening tool_calls tag")
 	}
-	cursor := skipWhitespace(text, start+len(toolCallsOpen))
+	cursor := skipWhitespace(text, start+opening.end)
 	var calls []parsedCall
-	for !strings.HasPrefix(text[cursor:], toolCallsClose) {
+	for matchDSMLTag(text[cursor:], "tool_calls", true).status != openFull {
 		if len(calls) >= maxToolCalls {
 			return nil, fmt.Errorf("the DSML completion exceeds the %d-call limit", maxToolCalls)
 		}
@@ -203,7 +407,7 @@ func parseToolCalls(text string, start int, tools map[string]toolSpec, idFactory
 	if len(calls) == 0 {
 		return nil, fmt.Errorf("the DSML tool_calls block must contain an invocation")
 	}
-	cursor += len(toolCallsClose)
+	cursor += matchDSMLTag(text[cursor:], "tool_calls", true).end
 	if strings.TrimSpace(text[cursor:]) != "" {
 		return nil, fmt.Errorf("the DSML completion contains text after its tool_calls block")
 	}
@@ -222,7 +426,7 @@ func parseCompletion(completion string, thinkingEnabled bool, tools map[string]t
 		content = content[boundary+len(thinkingEnd):]
 	}
 	contentStart := skipWhitespace(content, 0)
-	if !strings.HasPrefix(content[contentStart:], toolCallsOpen) {
+	if matchDSMLTag(content[contentStart:], "tool_calls", false).status != openFull {
 		result.Text = content
 		return result, nil
 	}

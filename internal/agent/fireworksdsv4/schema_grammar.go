@@ -30,7 +30,7 @@ func newSchemaGrammar(script *grammarScript, root jsonSchema, rawTextRule, prefi
 		rawTextRule:    rawTextRule,
 		jsonRules:      make(map[string]string),
 		rawRules:       make(map[string]string),
-		jsonWhitespace: script.defineRule(prefix+"-json-ws", `[\t\n\r ]{0,64}`),
+		jsonWhitespace: script.defineRule(prefix+"-json-ws", grammarGap),
 		jsonCharacter:  script.defineRule(prefix+"-json-char", `[^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})`),
 	}
 }

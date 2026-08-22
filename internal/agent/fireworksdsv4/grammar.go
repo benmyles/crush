@@ -6,7 +6,10 @@ import (
 	"sync"
 )
 
-const grammarGap = `[\t\n\r ]{0,64}`
+const (
+	grammarGap         = `[\t\n\r ]*`
+	grammarRequiredGap = `[\t\n\r ]+`
+)
 
 var rawStringExcludes = []string{
 	"<" + dsmlToken,
@@ -27,11 +30,38 @@ type grammarLRU struct {
 
 var grammars = grammarLRU{values: make(map[string]string)}
 
-func parameterOpen(name string, stringFlag bool) string {
-	return fmt.Sprintf("<%sparameter name=%q string=%q>", dsmlToken, name, fmt.Sprint(stringFlag))
+func dsmlAttributeRule(name, value, gap string) string {
+	quoted, _ := choice([]string{literal(`"` + value + `"`), literal(`'` + value + `'`)})
+	return concat(literal(name), gap, literal("="), gap, quoted)
 }
 
-func buildParameterRule(script *grammarScript, compiler *schemaGrammar, name string, schema jsonSchema) (string, error) {
+func dsmlOpeningTagRule(kind, attributes, gap, requiredGap string) string {
+	body := literal("<" + dsmlToken + kind)
+	if attributes != "" {
+		body = concat(body, requiredGap, attributes)
+	}
+	return concat(body, gap, literal(">"))
+}
+
+func dsmlClosingTagRule(kind, gap string) string {
+	return concat(literal("</"+dsmlToken+kind), gap, literal(">"))
+}
+
+func invokeOpenRule(name, gap, requiredGap string) string {
+	return dsmlOpeningTagRule("invoke", dsmlAttributeRule("name", name, gap), gap, requiredGap)
+}
+
+func parameterOpenRule(name string, stringFlag bool, gap, requiredGap string) string {
+	nameAttribute := dsmlAttributeRule("name", name, gap)
+	stringAttribute := dsmlAttributeRule("string", fmt.Sprint(stringFlag), gap)
+	attributes, _ := choice([]string{
+		concat(nameAttribute, requiredGap, stringAttribute),
+		concat(stringAttribute, requiredGap, nameAttribute),
+	})
+	return dsmlOpeningTagRule("parameter", attributes, gap, requiredGap)
+}
+
+func buildParameterRule(script *grammarScript, compiler *schemaGrammar, name string, schema jsonSchema, gap, requiredGap, parameterClose string) (string, error) {
 	if _, err := safeAttributeValue(name, "Tool parameter"); err != nil {
 		return "", err
 	}
@@ -44,7 +74,11 @@ func buildParameterRule(script *grammarScript, compiler *schemaGrammar, name str
 	}
 	rules := make([]string, 0, len(branches))
 	for _, branch := range branches {
-		rules = append(rules, concat(literal(parameterOpen(name, branch.stringFlag)), branch.valueRule, literal(parameterClose)))
+		value := branch.valueRule
+		if !branch.stringFlag {
+			value = concat(compiler.jsonWhitespace, value, compiler.jsonWhitespace)
+		}
+		rules = append(rules, concat(parameterOpenRule(name, branch.stringFlag, gap, requiredGap), value, parameterClose))
 	}
 	body, err := choice(rules)
 	if err != nil {
@@ -53,7 +87,7 @@ func buildParameterRule(script *grammarScript, compiler *schemaGrammar, name str
 	return script.newRule("dsml-parameter-"+name, body), nil
 }
 
-func buildParameterSequence(script *grammarScript, compiler *schemaGrammar, schema jsonSchema, gap string) (string, error) {
+func buildParameterSequence(script *grammarScript, compiler *schemaGrammar, schema jsonSchema, gap, requiredGap, parameterClose string) (string, error) {
 	properties, _ := schemaMap(schema["properties"])
 	if properties == nil {
 		properties = jsonSchema{}
@@ -76,7 +110,7 @@ func buildParameterSequence(script *grammarScript, compiler *schemaGrammar, sche
 		if !ok {
 			return "", fmt.Errorf("tool parameter %q does not have a JSON Schema", name)
 		}
-		rule, err := buildParameterRule(script, compiler, name, property)
+		rule, err := buildParameterRule(script, compiler, name, property, gap, requiredGap, parameterClose)
 		if err != nil {
 			return "", err
 		}
@@ -99,7 +133,7 @@ func buildParameterSequence(script *grammarScript, compiler *schemaGrammar, sche
 	})
 }
 
-func buildToolRule(script *grammarScript, tool toolSpec, rawText, gap string) (string, error) {
+func buildToolRule(script *grammarScript, tool toolSpec, rawText, gap, requiredGap, parameterClose, invokeClose string) (string, error) {
 	name, err := safeAttributeValue(tool.Name, "Tool name")
 	if err != nil {
 		return "", err
@@ -111,7 +145,7 @@ func buildToolRule(script *grammarScript, tool toolSpec, rawText, gap string) (s
 	}
 	parameterBranches := make([]string, 0, len(branches))
 	for _, branch := range branches {
-		parameters, err := buildParameterSequence(script, compiler, branch, gap)
+		parameters, err := buildParameterSequence(script, compiler, branch, gap, requiredGap, parameterClose)
 		if err != nil {
 			return "", err
 		}
@@ -121,12 +155,17 @@ func buildToolRule(script *grammarScript, tool toolSpec, rawText, gap string) (s
 	if err != nil {
 		return "", err
 	}
-	return script.newRule("dsml-invoke-"+name, concat(literal(fmt.Sprintf("<%sinvoke name=%q>", dsmlToken, name)), gap, parameters, gap, literal(invokeClose))), nil
+	return script.newRule("dsml-invoke-"+name, concat(invokeOpenRule(name, gap, requiredGap), gap, parameters, gap, invokeClose)), nil
 }
 
 func buildUncachedGrammar(tools []toolSpec, thinkingEnabled bool, mode string) (string, error) {
 	script := newGrammarScript()
 	gap := script.defineRule("dsml-gap", grammarGap)
+	requiredGap := script.defineRule("dsml-required-gap", grammarRequiredGap)
+	parameterClose := script.defineRule("dsml-parameter-close", dsmlClosingTagRule("parameter", gap))
+	invokeClose := script.defineRule("dsml-invoke-close", dsmlClosingTagRule("invoke", gap))
+	toolCallsOpen := script.defineRule("dsml-tool-calls-open", dsmlOpeningTagRule("tool_calls", "", gap, requiredGap))
+	toolCallsClose := script.defineRule("dsml-tool-calls-close", dsmlClosingTagRule("tool_calls", gap))
 	rawText, err := defineTextWithout(script, "dsv4-safe-text", rawStringExcludes)
 	if err != nil {
 		return "", err
@@ -135,7 +174,7 @@ func buildUncachedGrammar(tools []toolSpec, thinkingEnabled bool, mode string) (
 	if len(tools) > 0 && mode != "none" {
 		invokeRules := make([]string, 0, len(tools))
 		for _, tool := range tools {
-			rule, err := buildToolRule(script, tool, rawText, gap)
+			rule, err := buildToolRule(script, tool, rawText, gap, requiredGap, parameterClose, invokeClose)
 			if err != nil {
 				return "", err
 			}
@@ -152,7 +191,7 @@ func buildUncachedGrammar(tools []toolSpec, thinkingEnabled bool, mode string) (
 			return "", err
 		}
 		batch := script.newRule("dsml-invoke-batch", batchBody)
-		block := script.newRule("dsv4-tool-calls-block", concat(literal(toolCallsOpen), gap, batch, literal(toolCallsClose)))
+		block := script.newRule("dsv4-tool-calls-block", concat(toolCallsOpen, gap, batch, toolCallsClose))
 		toolOutput := script.newRule("dsv4-tool-output", concat(gap, block, gap))
 		if mode == "required" {
 			content = toolOutput
@@ -180,7 +219,7 @@ func grammarKey(tools []toolSpec, thinkingEnabled bool, mode string) (string, er
 		values = append(values, map[string]any{"name": tool.Name, "parameters": tool.Schema})
 	}
 	return stableJSON(map[string]any{
-		"version": 3, "thinking_enabled": thinkingEnabled, "tool_choice": mode,
+		"version": 4, "thinking_enabled": thinkingEnabled, "tool_choice": mode,
 		"max_tool_calls": maxToolCalls, "tools": values,
 	})
 }

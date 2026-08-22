@@ -81,107 +81,12 @@ func heldSuffixLength(text, delimiter string) int {
 	return 0
 }
 
-const (
-	invokeOpenPrefix    = "<" + dsmlToken + `invoke name="`
-	parameterOpenPrefix = "<" + dsmlToken + `parameter name="`
-	parameterStringAttr = `" string="`
-)
-
-type openTagStatus int
-
-const (
-	openInvalid openTagStatus = iota
-	openPartial
-	openFull
-)
-
-type openTagMatch struct {
-	status     openTagStatus
-	end        int
-	name       string
-	stringFlag bool
-}
-
-func matchOpenName(text, prefix string) (cursor int, name string, status openTagStatus) {
-	quote := strings.IndexByte(text[len(prefix):], '"')
-	if quote < 0 {
-		return 0, "", openPartial
-	}
-	if quote == 0 {
-		return 0, "", openInvalid
-	}
-	quote += len(prefix)
-	return quote + 1, text[len(prefix):quote], openFull
-}
-
 func matchInvokeOpen(text string) openTagMatch {
-	prefix := matchDelimiter(text, invokeOpenPrefix)
-	if prefix != delimiterFull {
-		if prefix == delimiterPartial {
-			return openTagMatch{status: openPartial}
-		}
-		return openTagMatch{status: openInvalid}
-	}
-	cursor, name, status := matchOpenName(text, invokeOpenPrefix)
-	if status != openFull {
-		return openTagMatch{status: status}
-	}
-	if cursor >= len(text) {
-		return openTagMatch{status: openPartial}
-	}
-	if text[cursor] != '>' {
-		return openTagMatch{status: openInvalid}
-	}
-	return openTagMatch{status: openFull, end: cursor + 1, name: name}
+	return matchDSMLTag(text, "invoke", false)
 }
 
 func matchParameterOpen(text string) openTagMatch {
-	prefix := matchDelimiter(text, parameterOpenPrefix)
-	if prefix != delimiterFull {
-		if prefix == delimiterPartial {
-			return openTagMatch{status: openPartial}
-		}
-		return openTagMatch{status: openInvalid}
-	}
-	cursor, name, status := matchOpenName(text, parameterOpenPrefix)
-	if status != openFull {
-		return openTagMatch{status: status}
-	}
-	cursor--
-	attribute := matchDelimiter(text[cursor:], parameterStringAttr)
-	if attribute != delimiterFull {
-		if attribute == delimiterPartial {
-			return openTagMatch{status: openPartial}
-		}
-		return openTagMatch{status: openInvalid}
-	}
-	cursor += len(parameterStringAttr)
-	rest := text[cursor:]
-	flag := ""
-	if strings.HasPrefix(rest, "true") {
-		flag = "true"
-	} else if strings.HasPrefix(rest, "false") {
-		flag = "false"
-	} else if strings.HasPrefix("true", rest) || strings.HasPrefix("false", rest) {
-		return openTagMatch{status: openPartial}
-	} else {
-		return openTagMatch{status: openInvalid}
-	}
-	cursor += len(flag)
-	if cursor >= len(text) {
-		return openTagMatch{status: openPartial}
-	}
-	if text[cursor] != '"' {
-		return openTagMatch{status: openInvalid}
-	}
-	cursor++
-	if cursor >= len(text) {
-		return openTagMatch{status: openPartial}
-	}
-	if text[cursor] != '>' {
-		return openTagMatch{status: openInvalid}
-	}
-	return openTagMatch{status: openFull, end: cursor + 1, name: name, stringFlag: flag == "true"}
+	return matchDSMLTag(text, "parameter", false)
 }
 
 type activeInvocation struct {
@@ -300,12 +205,12 @@ func (d *dsmlDecoder) step(events *[]decoderEvent) (bool, error) {
 		if start == len(d.pending) {
 			return false, nil
 		}
-		opening := matchDelimiter(d.pending[start:], toolCallsOpen)
-		if opening == delimiterPartial {
+		opening := matchDSMLTag(d.pending[start:], "tool_calls", false)
+		if opening.status == openPartial {
 			return false, nil
 		}
-		if opening == delimiterFull {
-			d.drop(start + len(toolCallsOpen))
+		if opening.status == openFull {
+			d.drop(start + opening.end)
 			d.state = stateToolCalls
 			return true, nil
 		}
@@ -350,17 +255,17 @@ func (d *dsmlDecoder) stepToolCalls(events *[]decoderEvent) (bool, error) {
 		return true, nil
 	}
 	rest := d.pending[start:]
-	closing := matchDelimiter(rest, toolCallsClose)
-	if closing == delimiterFull {
+	closing := matchDSMLTag(rest, "tool_calls", true)
+	if closing.status == openFull {
 		if len(d.calls) == 0 {
 			return false, fmt.Errorf("the DSML tool_calls block must contain an invocation")
 		}
-		d.drop(start + len(toolCallsClose))
+		d.drop(start + closing.end)
 		d.state = stateAfterToolCalls
 		return true, nil
 	}
 	if len(d.calls) >= maxToolCalls {
-		if closing == delimiterPartial {
+		if closing.status == openPartial {
 			return false, nil
 		}
 		return false, fmt.Errorf("the DSML completion exceeds the %d-call limit", maxToolCalls)
@@ -370,7 +275,7 @@ func (d *dsmlDecoder) stepToolCalls(events *[]decoderEvent) (bool, error) {
 		return false, nil
 	}
 	if opening.status == openInvalid {
-		if closing == delimiterPartial {
+		if closing.status == openPartial {
 			return false, nil
 		}
 		return false, fmt.Errorf("expected a DSML invocation at byte %d", d.consumed+start)
@@ -405,13 +310,13 @@ func (d *dsmlDecoder) stepInvoke(events *[]decoderEvent) (bool, error) {
 		return true, nil
 	}
 	rest := d.pending[start:]
-	invokeEnd := matchDelimiter(rest, invokeClose)
-	if invokeEnd == delimiterFull {
-		d.drop(start + len(invokeClose))
+	invokeEnd := matchDSMLTag(rest, "invoke", true)
+	if invokeEnd.status == openFull {
+		d.drop(start + invokeEnd.end)
 		return true, d.endInvocation(events)
 	}
-	toolEnd := matchDelimiter(rest, toolCallsClose)
-	if toolEnd == delimiterFull {
+	toolEnd := matchDSMLTag(rest, "tool_calls", true)
+	if toolEnd.status == openFull {
 		return false, fmt.Errorf("the DSML invocation %s closed the tool block before closing itself", active.call.Name)
 	}
 	parameter := matchParameterOpen(rest)
@@ -443,7 +348,7 @@ func (d *dsmlDecoder) stepInvoke(events *[]decoderEvent) (bool, error) {
 		}
 		return true, nil
 	}
-	if parameter.status == openPartial || invokeEnd == delimiterPartial || toolEnd == delimiterPartial {
+	if parameter.status == openPartial || invokeEnd.status == openPartial || toolEnd.status == openPartial {
 		return false, nil
 	}
 	return false, fmt.Errorf("expected a DSML parameter at byte %d", d.consumed+start)
@@ -497,17 +402,23 @@ func (d *dsmlDecoder) emitString(value string, events *[]decoderEvent) {
 }
 
 func (d *dsmlDecoder) stepParameterString(events *[]decoderEvent) (bool, error) {
-	boundary := strings.Index(d.pending, parameterClose)
-	if boundary < 0 {
-		hold := heldSuffixLength(d.pending, parameterClose)
-		if hold == len(d.pending) {
+	boundary, closeEnd, status := findDSMLClosingTag(d.pending, "parameter")
+	if status != openFull {
+		if status == openPartial {
+			if boundary == 0 {
+				return false, nil
+			}
+			d.emitString(d.drop(boundary), events)
+			return true, nil
+		}
+		if d.pending == "" {
 			return false, nil
 		}
-		d.emitString(d.drop(len(d.pending)-hold), events)
+		d.emitString(d.drop(len(d.pending)), events)
 		return true, nil
 	}
 	d.emitString(d.drop(boundary), events)
-	d.drop(len(parameterClose))
+	d.drop(closeEnd - boundary)
 	if _, exists := d.active.call.Arguments[d.active.parameterName]; !exists {
 		d.emitArgument(d.active.stringValue, events)
 	}
@@ -556,11 +467,11 @@ func (d *dsmlDecoder) stepParameterJSON(events *[]decoderEvent) (bool, error) {
 			continue
 		}
 		if character == '<' {
-			closing := matchDelimiter(d.pending[scan:], parameterClose)
-			if closing == delimiterPartial {
+			closing := matchDSMLTag(d.pending[scan:], "parameter", true)
+			if closing.status == openPartial {
 				break
 			}
-			if closing == delimiterFull {
+			if closing.status == openFull {
 				candidate := active.jsonSource + d.pending[:scan]
 				value, err := decodeJSON(candidate)
 				if err == nil {
@@ -568,7 +479,7 @@ func (d *dsmlDecoder) stepParameterJSON(events *[]decoderEvent) (bool, error) {
 						return false, fmt.Errorf("a DSML string value must use string=\"true\"")
 					}
 					d.flushJSON(d.drop(scan), events)
-					d.drop(len(parameterClose))
+					d.drop(closing.end)
 					d.emitArgument(value, events)
 					d.state = stateInvoke
 					return true, nil
